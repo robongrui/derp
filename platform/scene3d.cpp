@@ -2823,10 +2823,10 @@ void watchSplashes() {
     }
     for(auto it=splashWatch.begin();it!=splashWatch.end();) it=it->second.seen?std::next(it):splashWatch.erase(it);
 }
-// Rings: up to three full circles one Doom pixel thick, the inner ones a few
-// tics behind, growing at the tic rate. They start a bit brighter than the
-// brightest texel of the liquid's flat, lit like the splash drops, step down
-// toward the liquid's own color as they age, and are gone at the end.
+// Rings: up to three full circles, the inner ones a few tics behind, growing
+// at the tic rate and thickening as they grow. They start at the brightest
+// texel of the liquid's flat, lit like the splash drops, step down toward
+// the liquid's own color as they age, and are gone at the end.
 void buildRings(Uniforms &camera) {
     if(!settings.splashes||splashLevelSerial!=r_levelserial) {rings.clear();return;}
     float now=gameSeconds();
@@ -2839,7 +2839,7 @@ void buildRings(Uniforms &camera) {
         if(flat.emissionCoverage>0.2f||sectorMist[ring.sector].hot)light=1;else light=std::max(light,0.8f);
         const auto &brightest=brightestColor(flat);const auto &base=sectorMist[ring.sector].color;
         std::array<float,3> albedo;
-        for(int c=0;c<3;++c)albedo[c]=std::min(1.0f,brightest[c]*1.2f+0.06f);
+        for(int c=0;c<3;++c)albedo[c]=brightest[c];
         // The flashlight lights the whole ring by its center.
         float beamAmount=0;std::array<float,3> beamColor={};
         if(flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
@@ -2854,8 +2854,8 @@ void buildRings(Uniforms &camera) {
         for(int j=0;j<3;++j) {
             float inner=age-j*(thick?0.2f:0.12f),step=fade*(1-0.25f*j);
             if(inner<0||step<0.12f)break;
-            float r=4+ring.speed*inner;
-            float spacing=std::max(4.0f,centerDepth-r)/(100*camera.projection[1])*0.9f;
+            float r=4+ring.speed*inner,width=(thick?2.0f:0.8f)+r*0.06f;
+            float spacing=std::max(std::max(4.0f,centerDepth-r)/(100*camera.projection[1])*0.9f,width*0.7f);
             int points=std::clamp((int)(2*doomPi*r/std::max(spacing,0.05f)),12,512);
             // Palette steps from the bright crest toward the liquid's color.
             float mixed=std::round(step*4)/4;
@@ -2866,7 +2866,7 @@ void buildRings(Uniforms &camera) {
             }
             for(int k=0;k<points;++k) {
                 float angle=k*2*doomPi/points;
-                pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,thick?2.0f:0.8f,thick?0.6f:1.0f,tint,true);
+                pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,width,thick?0.6f:1.0f,tint,true);
             }
         }
     }
