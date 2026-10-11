@@ -42,10 +42,10 @@ struct Point { float x,y; };
 // in baked_lighting.h), unorm bytes; white for surfaces, which compute their own.
 struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0; unsigned lightMask[2]={}; float sunU=-1,sunV=0; unsigned statics=0; unsigned lampTint=0xFFFFFFFFu; };
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
-// sky light level (0: off); texFilter: sharp bilinear edge softness in texels, palette mipmaps (0: off); ripple: liquid rings (x, y, radius, strength);
+// sky light level (0: off); texFilter: sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],ripple[4][4],flicker[4][4]; };
-static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==384,"Shader buffer layout");
+struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],flicker[4][4]; };
+static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==320,"Shader buffer layout");
 using Flash=doom_flash_t;
 // 63 lights keep the FlashSet uniform block under 4 KB and fit the 64-bit light masks.
 constexpr unsigned maxLights=63;

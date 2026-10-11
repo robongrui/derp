@@ -913,15 +913,6 @@ void main() {
         float t=retro?floor(c.fog.w*12.0)/12.0:c.fog.w;
         vec2 wobble=vec2(sin(vWorld.x*0.07+t*1.9)+sin(vWorld.y*0.11+t*1.3),
                          cos(vWorld.y*0.08-t*1.6)+cos(vWorld.x*0.05+t*2.1))*(retro?0.005:0.003);
-        // Splash rings push the mirror image outward along their crest.
-        for(int k=0;k<4;++k) {
-            vec4 ring=c.ripple[k];
-            if(ring.w<=0.0) continue;
-            vec2 away=vWorld.xy-ring.xy;float d=length(away);
-            float band=1.0-saturate(abs(d-ring.z)/5.0);
-            if(retro) band=step(0.5,band);
-            if(band>0.0&&d>0.001) wobble+=away/d*band*ring.w*0.02;
-        }
         // The reflection's alpha: how near the mirrored point lies to the
         // surface along its ray (1 touching it). Far things fade and break up.
         float near=textureLod(reflection,(gl_FragCoord.xy-c.water.xy)*c.water.zw+wobble,0.0).a;
