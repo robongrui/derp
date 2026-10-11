@@ -157,6 +157,17 @@ bool bakeOnlyActive=false; // ...and static lights come only from it.
 // that can reach each of its cells.
 std::vector<BakeLight> bakeSources;
 int firstWindowSource=0; // Window lights (addWindowLights) end bakeSources; they cast no thing shadows.
+// Window light reaching one point eases toward about the outdoor level, so
+// a room with windows on several sides isn't lit past it by their sum. Scales
+// rgb (by its luminance) and returns the factor.
+float capWindowLight(float rgb[3]) {
+    constexpr float cap=1.0f;
+    float l=0.299f*rgb[0]+0.587f*rgb[1]+0.114f*rgb[2];
+    if(l<=0)return 1;
+    float scale=cap*(1-std::exp(-l/cap))/l;
+    for(int c=0;c<3;++c)rgb[c]*=scale;
+    return scale;
+}
 constexpr float bakeGridCell=128;
 int bakeGridWidth=0,bakeGridHeight=0;
 std::vector<std::vector<int>> bakeGrid;
@@ -1511,21 +1522,26 @@ float luminance(const float color[3]) {return 0.299f*color[0]+0.587f*color[1]+0.
 StaticSample traceStatic(float x,float y,float z,int sector,const BakeMap &map=bakeMap) {
     StaticSample sample;
     if(bakeGrid.empty())return sample;
-    float groups[flickerGroups]={};
+    float groups[flickerGroups]={},window[3]={},windowTowards[3]={},windowAmount=0;
     int points=(int)bakeSources.size();
     for(int n:bakeGridLights(x,y)) {
         float towards[3];
         const float *color=n<points?bakeSources[n].color:bakeAreas[n-points].color;
-        float amount=n<points?addBakedLight(map,bakeSources[n],sector,x,y,z,nullptr,sample.color.data(),towards)
+        bool isWindow=n>=firstWindowSource&&n<points;
+        float amount=n<points?addBakedLight(map,bakeSources[n],sector,x,y,z,nullptr,isWindow?window:sample.color.data(),towards)
                              :addBakedArea(map,bakeAreas[n-points],sector,x,y,z,nullptr,sample.color.data(),towards);
         if(amount<=0)continue;
         float weight=amount*luminance(color);
+        if(isWindow) {for(int c=0;c<3;++c)windowTowards[c]+=towards[c]*weight;windowAmount+=weight;continue;}
         for(int c=0;c<3;++c)sample.towards[c]+=towards[c]*weight;
         sample.amount+=weight;
         if(n>=points)continue;
         groups[sourceGroups[n]]+=weight;
-        if(n<firstWindowSource&&bakeSources[n].z>z-24&&amount>sample.shadowAmount) {sample.shadowAmount=amount;sample.shadow=n;}
+        if(bakeSources[n].z>z-24&&amount>sample.shadowAmount) {sample.shadowAmount=amount;sample.shadow=n;}
     }
+    float scale=capWindowLight(window);
+    for(int c=0;c<3;++c) {sample.color[c]+=window[c];sample.towards[c]+=windowTowards[c]*scale;}
+    sample.amount+=windowAmount*scale;
     for(int g=1;g<flickerGroups;++g)if(groups[g]>0&&groups[g]>(sample.group?groups[sample.group]:0))sample.group=g;
     if(sample.group)sample.groupShare=groups[sample.group]/sample.amount;
     return sample;
@@ -2818,7 +2834,7 @@ void doorSpill(const Uniforms &camera) {
 // The light bake's inputs: 1 emissive textures, 2 bake-only lights.
 int lightBakeInputs() {return (settings.emissive?1:0)|(settings.bakeOnlyLights?2:0)|(settings.windowLight?4:0)|(settings.dimLitRooms?8:0)|
     (settings.windowLight?(int)std::lround(settings.windowStrength*4)<<4:0)|
-    (settings.dimLitRooms?(int)std::lround(settings.unlitDarkening*20)<<8:0);}
+    (settings.dimLitRooms?(int)std::lround(settings.unlitDarkening*20)<<8:0)|(settings.windowLight&&settings.sun?1<<14:0);}
 // Bake-only lights: glowing liquid floors and ceilings (lava, nukage, slime,
 // magma, or flats that mostly glow) light as pools; lamps and panels stay
 // point lights.
@@ -2925,19 +2941,25 @@ void encodeDirection(const float normal[3],const float towards[3],float total,co
 void gatherStatic(const BakeMap &map,int sector,float x,float y,float z,const float normal[3],uint8_t *out,uint8_t *direction) {
     int points=(int)bakeSources.size();
     float sum[3]={},towards[3]={},total=0,groups[flickerGroups]={},sheen=0;
+    float window[3]={},windowTowards[3]={},windowTotal=0;
     for(int n:bakeGridLights(x,y)) {
         float to[3];bool inside=false;
         const float *color=n<points?bakeSources[n].color:bakeAreas[n-points].color;
-        float amount=n<points?addBakedLight(map,bakeSources[n],sector,x,y,z,normal,sum,to)
+        bool isWindow=n>=firstWindowSource&&n<points;
+        float amount=n<points?addBakedLight(map,bakeSources[n],sector,x,y,z,normal,isWindow?window:sum,to)
                              :addBakedArea(map,bakeAreas[n-points],sector,x,y,z,normal,sum,to,&inside);
         if(!direction||amount<=0)continue;
         float weight=amount*luminance(color);
+        if(isWindow) {for(int c=0;c<3;++c)windowTowards[c]+=to[c]*weight;windowTotal+=weight;continue;}
         for(int c=0;c<3;++c)towards[c]+=to[c]*weight;
         total+=weight;
         if(n<points)groups[sourceGroups[n]]+=weight;
         // The pool's own surface (facing the way the pool glows).
         else if(inside&&normal[2]*(bakeAreas[n-points].ceiling?-1:1)>0.5f)sheen+=weight;
     }
+    float scale=capWindowLight(window);
+    for(int c=0;c<3;++c) {sum[c]+=window[c];towards[c]+=windowTowards[c]*scale;}
+    total+=windowTotal*scale;
     for(int c=0;c<3;++c)out[c]=(uint8_t)std::min(255L,std::lround(std::round(sum[c]*32)/32*0.5f*255));
     if(direction)encodeDirection(normal,towards,total,groups,sheen,direction);
 }
@@ -2977,7 +2999,9 @@ void lightStrip(const BakeMap &map,const BakeStrip &strip,bool only) {
 // drops by the static light its floors get on average (in full: a bright
 // room shows little of it until it drops), at most 60% of its level, so the
 // light visibly comes from its lamps, screens and windows and far corners
-// fall darker. Every region drops by at least settings.unlitDarkening of its
+// fall darker, but no further than leaves its least-lit floor point 60% of
+// the level (E1M1 and E1M2 had 6% of their indoor floors under half their
+// level). Every region drops by at least settings.unlitDarkening of its
 // level, or a room nothing visibly lights would keep its full even light and
 // look brighter and flatter than the lit rooms around it (E1M3's sector 98).
 // This needs no dimmer neighbor; only regions mostly open to the sky keep
@@ -3015,11 +3039,18 @@ void classifyLampSectors() {
             int s=members[r][k];
             dimmest=std::min(dimmest,least[s]);sky|=sectors[s].ceilingpic==skyflatnum;
             sum+=shown[s];count+=cells[s];if(sectors[s].ceilingpic==skyflatnum)open+=cells[s];
-            neighbors(s,[&](int o){if(regionOf[o]<0&&std::abs(level[o]-level[s])<0.01f){regionOf[o]=r;members[r].push_back(o);}});
+            // Dimming keeps indoor sectors out of sky regions: a window
+            // frame at the outdoor level would stay at it with the outdoors.
+            neighbors(s,[&](int o){if(regionOf[o]<0&&std::abs(level[o]-level[s])<0.01f&&
+                (!dim||(sectors[o].ceilingpic==skyflatnum)==(sectors[s].ceilingpic==skyflatnum))){regionOf[o]=r;members[r].push_back(o);}});
         }
         if(dim&&count>0) {
-            float lit=std::max(std::min(sum/count,0.6f*level[i]),settings.unlitDarkening*level[i]);
-            regionLeast.push_back(std::max(dimmest==INFINITY?0.0f:dimmest,lit));fixed.push_back(open*2>count);
+            // Its least-lit floor point keeps at least 60% of the level: the
+            // drop goes no further than the static light that point gets.
+            float least=dimmest==INFINITY?0.0f:dimmest;
+            float lit=std::min({sum/count,0.6f*level[i],least+0.4f*level[i]});
+            lit=std::max(lit,settings.unlitDarkening*level[i]);
+            regionLeast.push_back(std::max(least,lit));fixed.push_back(open*2>count);
         } else {regionLeast.push_back(dimmest);fixed.push_back(sky||dimmest==INFINITY);}
     }
     std::vector<float> base=level;
@@ -3059,12 +3090,19 @@ std::array<float,3> skyColor() {
 // shows it, not as its dark textures would bounce it. A panel's strength
 // follows its area (and settings.windowStrength): a long window lights the
 // floor beside it well past the outdoor level before the headroom eases it,
-// a slot barely; light fades out over 448 units.
+// a slot barely; light fades out over 448 units. With sun shadows, each
+// 32-unit column is weighted by the sun on the outdoor floor 16-80 units
+// outside it against its sunniest neighbors (below), so the sunny side of a
+// room leads; capWindowLight keeps several windows from adding past the
+// outdoor level.
 void addWindowLights(std::vector<BakeLight> &sources) {
+    bool sunny=settings.sun&&sunBaked&&sunLevel>0&&!contactCells.empty()&&!seamCells.empty();
     std::array<float,3> tint=skyColor();
     for(float &c:tint)c=0.5f+0.5f*c;
     float peak=std::max({tint[0],tint[1],tint[2]});
     for(float &c:tint)c/=peak;
+    struct Window { float x,y,nx,ny,low,height,strength,sunlit;int rows; };
+    std::vector<Window> windows;
     for(int i=0;i<numlines;++i) {
         const line_t &line=lines[i];
         if(!line.frontsector||!line.backsector)continue;
@@ -3082,11 +3120,36 @@ void addWindowLights(std::vector<BakeLight> &sources) {
         float width=length/columns,height=(high-low)/rows;
         float level=std::clamp(out->lightlevel/255.0f,0.12f,1.0f);
         float strength=1.6f*settings.windowStrength*level*width/128*height/96;
-        for(int column=0;column<columns;++column)for(int row=0;row<rows;++row) {
-            float along=(column+0.5f)*width;
-            sources.push_back({ax+dx*along+nx*2,ay+dy*along+ny*2,low+(row+0.5f)*height,448,strength,0.5f,
-                               {tint[0],tint[1],tint[2]},height*0.5f,nx,ny});
+        int outside=int(out-sectors);
+        for(int column=0;column<columns;++column) {
+            float along=(column+0.5f)*width,px=ax+dx*along,py=ay+dy*along;
+            // How sunlit the ground just outside is (0-1; -1 unknown).
+            float seen=0,count=0;
+            if(sunny)for(float reach:{16.0f,40.0f,80.0f}) {
+                int cx=(int)std::floor((px-nx*reach-mapOrigin[0])/mapCell),cy=(int)std::floor((py-ny*reach-mapOrigin[1])/mapCell);
+                if(cx<0||cy<0||cx>=mapWidth||cy>=mapHeight)continue;
+                size_t cell=(size_t)cy*mapWidth+cx;
+                if(seamCells[cell].own!=outside)continue;
+                seen+=contactCells[4*cell+2]/255.0f;++count;
+            }
+            windows.push_back({px,py,nx,ny,low,height,strength,count>0?seen/count:-1,rows});
         }
+    }
+    // A window onto a sunny courtyard takes over the room from those onto
+    // shade: each column against the sunniest within its reach, 0.35 for
+    // full shade beside full sun. Where all are alike (all shaded, or no sun)
+    // they keep their strength, so a room's light still leans on its windows.
+    for(const Window &w:windows) {
+        float sunlit=1;
+        if(w.sunlit>=0) {
+            float best=w.sunlit;
+            for(const Window &o:windows)
+                if(o.sunlit>best&&(o.x-w.x)*(o.x-w.x)+(o.y-w.y)*(o.y-w.y)<448.0f*448)best=o.sunlit;
+            if(best>0.05f)sunlit=0.35f+0.65f*w.sunlit/best;
+        }
+        for(int row=0;row<w.rows;++row)
+            sources.push_back({w.x+w.nx*2,w.y+w.ny*2,w.low+(row+0.5f)*w.height,448,w.strength*sunlit,0.5f,
+                               {tint[0],tint[1],tint[2]},w.height*0.5f,w.nx,w.ny});
     }
 }
 // Static lights, baked into the floor/ceiling map and the wall atlas rgb:
@@ -3466,6 +3529,9 @@ void bakeAmbient() {
     uploadWallBake();
     fprintf(stderr,"3D sky light and occlusion: sky level %.2f, baked in %.0f ms.\n",skyLevel,(SDL_GetTicksNS()-start)/1e6);
 }
+// What flow was baked from: decoration shadows, and 2 with window light,
+// which brings the outdoor light in itself, so flow then skips sky sectors.
+int flowInputs() {return bakeThingsKey+(settings.windowLight&&settings.bakedLights?2:0);}
 // Sector light flow: from points every ~16 units, at chest height, 12 level
 // rays check which other sectors are in plain view at 48, 96 and 160 units.
 // The most visible one is stored per cell as its flow neighbor (seam map,
@@ -3474,7 +3540,8 @@ void bakeAmbient() {
 // flicker faintly beyond their openings. Doors count as they start (closed).
 void bakeFlow() {
     finishRelight();
-    flowKey=bakeThingsKey;
+    flowKey=flowInputs();
+    bool windows=flowKey&2;
     if(seamCells.empty())return;
     uint64_t start=SDL_GetTicksNS();
     for(auto &cell:seamCells)cell.flow=noSector;
@@ -3502,6 +3569,7 @@ void bakeFlow() {
                     float ex=px+direction[0]*length,ey=py+direction[1]*length;
                     int end=int(R_PointInSubsector((fixed_t)(ex*FRACUNIT),(fixed_t)(ey*FRACUNIT))->sector-sectors);
                     if(end==sector)continue;
+                    if(windows&&sectors[end].ceilingpic==skyflatnum&&sectors[sector].ceilingpic!=skyflatnum)continue;
                     auto found=std::find_if(score.begin(),score.end(),[&](const auto &e){return e.first==end;});
                     if(found==score.end())score.push_back({end,weight});else found->second+=weight;
                 }
@@ -4296,13 +4364,13 @@ FrameView prepareFrame(int w,int h) {
     // Bit flags: 1 surface detail, 2 retro reflections, 4 caustics, 8 texel-aligned bake,
     // 16 ceiling caustics, 32 light flow, 64 baked occlusion, 128 glossy screens,
     // caustics: 256 computed layers, 512 growing shapes, 1024 reflection angle, 2048 sway, 4096 sprites,
-    // 8192 shots; 16384 damp shores; 32768 varied highlights.
+    // 8192 shots; 16384 damp shores; 32768 varied highlights; 65536 window light (no indoor sky lift).
     camera.flashlightTint[3]=(settings.detail?1:0)+(settings.retroReflections?2:0)+(settings.caustics&&causticTexture?4:0)+(settings.texelLight?8:0)+
-        (settings.caustics&&settings.ceilingCaustics&&causticTexture?16:0)+(settings.lightFlow&&flowKey>=0&&flowKey==bakeThingsKey?32:0)+
+        (settings.caustics&&settings.ceilingCaustics&&causticTexture?16:0)+(settings.lightFlow&&flowKey>=0&&flowKey==flowInputs()?32:0)+
         (settings.bakedAO&&ambientKey>=0&&ambientKey==bakeThingsKey?64:0)+(settings.glossyScreens?128:0)+
         (settings.causticsComputed?256:0)+(settings.causticsGrow?512:0)+(settings.causticsAngle?1024:0)+(settings.causticsSway?2048:0)+
         (settings.causticsSprites?4096:0)+(settings.causticsShots?8192:0)+(settings.dampShores&&shoreTexture?16384:0)+
-        (settings.detail&&settings.variedHighlights?32768:0);
+        (settings.detail&&settings.variedHighlights?32768:0)+(settings.windowLight&&bakedLightsActive?65536:0);
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;
     camera.materials[2]=settings.fog&&worldPending;
@@ -4369,7 +4437,7 @@ FrameView prepareFrame(int w,int h) {
         if(settings.bakedLights&&settings.gridSpriteLight&&lightBakeKey==lightBakeInputs()&&staticSerial!=lightBakeSerial)bakeStaticGrid();
         if(settings.bounce&&bounceKey!=bounceInputs())bakeBounce();
         if((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)bakeAmbient();
-        if(settings.lightFlow&&flowKey!=bakeThingsKey)bakeFlow();
+        if(settings.lightFlow&&flowKey!=flowInputs())bakeFlow();
         camera.bake[1]=settings.bounce&&bounceKey>=0?bounceStrength:0;
         bool ambient=ambientKey==bakeThingsKey;
         camera.fx2[1]=settings.skyLight&&ambient?skyLevel:0;
@@ -4410,9 +4478,93 @@ std::vector<std::array<float,4>> sectorInfo() {
             sectors[i].ceilingpic==skyflatnum?packOutdoor(&sectors[i]):0.0f};
     return info;
 }
+// What the relit weapon sees around it, in the view's frame: ahead, behind,
+// right, left, up and down (rgb, w unused). Five rays a direction walk the
+// bake map from the eye; each hit shows its surface's average color under
+// its sector and baked light, plus its glow, as world.frag draws it. Eased
+// over about a tenth of a second so single rays changing what they hit don't
+// flicker. The shader lights the weapon with it as an ambient cube, and its
+// glossy and grazing edges mirror it, so a bright wall ahead creeps over the
+// weapon's outline even when no light reaches the player.
+float weaponProbe[24]={};
+std::array<float,18> weaponProbeTarget={};
+uint64_t weaponProbeTime=0;unsigned weaponProbeSerial=~0u;
+void updateWeaponProbe(const Uniforms &camera,sector_t *sector) {
+    uint64_t now=SDL_GetTicksNS();
+    bool fresh=weaponProbeSerial!=r_levelserial;
+    weaponProbeSerial=r_levelserial;
+    if(bakeMap.sectors.size()!=(size_t)numsectors)return;
+    const float *axes[3]={camera.forward,camera.right,camera.up};
+    float eye[3]={camera.eye[0],camera.eye[1],camera.eye[2]};
+    const BakeSector &own=bakeMap.sectors[sector-sectors];
+    eye[2]=std::clamp(eye[2],own.floor+1,std::max(own.floor+1,own.ceiling-1));
+    bool glow=settings.emissive;
+    auto lit=[&](const std::array<float,3> &albedo,const Image *image,int at,const uint8_t *baked,float out[3]) {
+        float level=lighting(&sectors[at]),shown[3]={};
+        if(baked) {for(int c=0;c<3;++c)shown[c]=baked[c]/255.0f*2;fillHeadroom(shown,level);}
+        float cover=glow&&image&&image->emissionWeight>0?image->emissionCoverage:0;
+        for(int c=0;c<3;++c)out[c]=albedo[c]*(level+shown[c])*(1-cover)+(cover>0?image->emissionColor[c]*cover*0.9f:0);
+    };
+    auto radiance=[&](const BakeHit &hit,float out[3]) {
+        if(hit.kind==BakeHit::thing) {lit({0.4f,0.4f,0.4f},nullptr,hit.sector,nullptr,out);return;}
+        if(hit.kind==BakeHit::wall) {
+            const line_t &line=lines[hit.line];
+            int side=line.frontsector==&sectors[hit.sector]?0:1;
+            if(line.sidenum[side]<0) side^=1;
+            const side_t &facing=sides[line.sidenum[side]];
+            short texture=hit.part==1?facing.toptexture:hit.part==2?facing.bottomtexture:facing.midtexture;
+            Image *image=texture>0?&wallImage(texturetranslation[texture]):nullptr;
+            const uint8_t *baked=nullptr;
+            const BakeStrip &strip=bakeStrips.size()>(size_t)hit.line*2+side?bakeStrips[(size_t)hit.line*2+side]:BakeStrip{};
+            if(!wallBakeCells.empty()&&strip.x>=0) {
+                float along=(hit.x-strip.ax)*strip.dx+(hit.y-strip.ay)*strip.dy;
+                int column=std::clamp((int)std::floor(along*strip.scale),0,strip.width-1);
+                int row=std::clamp((int)std::floor((hit.z-strip.low)*strip.scale),0,strip.height-1);
+                baked=&wallBakeCells[4*((size_t)(strip.y+row)*atlasStride+strip.x+column)];
+            }
+            lit(image?averageColor(*image):std::array<float,3>{0.5f,0.5f,0.5f},image,hit.sector,baked,out);
+            return;
+        }
+        bool ceiling=hit.kind==BakeHit::ceiling;
+        int pic=ceiling?sectors[hit.sector].ceilingpic:sectors[hit.sector].floorpic;
+        Image &image=lumpImage(firstflat+flattranslation[pic],true);
+        const uint8_t *baked=nullptr;
+        if(!flatLightCells.empty()) {
+            int cx=std::clamp((int)std::floor((hit.x-mapOrigin[0])/mapCell),0,mapWidth-1);
+            int cy=std::clamp((int)std::floor((hit.y-mapOrigin[1])/mapCell),0,mapHeight-1);
+            baked=flatCell(ceiling?ceilingLight:floorLight,(size_t)cy*mapWidth+cx);
+        }
+        lit(averageColor(image),&image,hit.sector,baked,out);
+    };
+    std::array<float,18> target={};
+    for(int axis=0;axis<6;++axis) {
+        float sign=axis&1?-1.0f:1.0f;const float *main=axes[axis/2],*a=axes[(axis/2+1)%3],*b=axes[(axis/2+2)%3];
+        // The axis and four rays tilted 35 degrees around it.
+        static const float tilt[5][2]={{0,0},{0.7f,0},{-0.7f,0},{0,0.7f},{0,-0.7f}};
+        for(const auto &t:tilt) {
+            float direction[3],length=0,out[3]={};
+            for(int c=0;c<3;++c){direction[c]=main[c]*sign+a[c]*t[0]+b[c]*t[1];length+=direction[c]*direction[c];}
+            length=std::sqrt(length);for(float &c:direction)c/=length;
+            BakeHit hit;
+            if(traceRay(bakeMap,(int)(sector-sectors),eye[0],eye[1],eye[2],direction,2048,SkyCeiling::escape,&hit)||hit.kind==BakeHit::none) {
+                // Open sky above, or nothing within reach: the sky's light, or the room's.
+                float level=lighting(sector);
+                for(int c=0;c<3;++c)out[c]=direction[2]>0.3f&&skyLevel>0?skyTint[c]*skyLevel:0.5f*level;
+            } else radiance(hit,out);
+            for(int c=0;c<3;++c)target[axis*3+c]+=out[c]/5;
+        }
+    }
+    float seconds=fresh||!weaponProbeTime?1.0f:std::min(0.1f,(now-weaponProbeTime)/1e9f);
+    weaponProbeTime=now;float blend=1-std::exp(-seconds/0.1f);
+    for(int i=0;i<18;++i) {
+        weaponProbeTarget[i]+=(target[i]-weaponProbeTarget[i])*blend;
+        weaponProbe[(i/3)*4+i%3]=weaponProbeTarget[i];
+    }
+}
 std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
     std::vector<SpriteDraw> draws;
     player_t *player=&players[displayplayer];
+    if(settings.weaponLighting&&camera.effects[2]==0&&player->mo)updateWeaponProbe(camera,player->mo->subsector->sector);
     for(int i=0;i<NUMPSPRITES;++i) {
         auto psp=player->psprites[i];if(!psp.state)continue;
         auto sf=sprites[psp.state->sprite].spriteframes[psp.state->frame&FF_FRAMEMASK];

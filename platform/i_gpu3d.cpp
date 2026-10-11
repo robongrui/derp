@@ -442,7 +442,9 @@ void drawOverlays(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,const Fr
     setView(pass,view.uiX,view.uiY,view.uiWidth,view.uiHeight,&full);
     if(worldPending&&!weapons.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,depth?weaponPipeline:overlayWeaponPipeline);bindWorld(pass,nullptr);
-        float noBlend[4]={};SDL_PushGPUFragmentUniformData(command,3,noBlend,sizeof(noBlend));
+        // No crossfade, then what the weapon sees around it.
+        float blend[28]={};std::copy(weaponProbe,weaponProbe+24,blend+4);
+        SDL_PushGPUFragmentUniformData(command,3,blend,sizeof(blend));
         for(const auto &draw:weapons) {
             SDL_GPUTextureSamplerBinding image[]={{gpu(draw.image->texture),linearRepeat},{paletteTexture,nearestClamp},{gpu(draw.image->texture),linearRepeat}};
             SDL_BindGPUFragmentSamplers(pass,0,image,3);drawVertices(pass,draw.vertices);

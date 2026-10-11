@@ -55,8 +55,10 @@ layout(std430,set=2,binding=SECTOR_BINDING) readonly buffer Sectors { vec4 secto
 layout(std140,set=3,binding=0) uniform Camera CAMERA_BLOCK c;
 layout(std140,set=3,binding=1) uniform Lights FLASH_BLOCK;
 layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
-// blend: the crossfade toward the animation's next frame.
-layout(std140,set=3,binding=3) uniform Blend { float blend; };
+// blend: the crossfade toward the animation's next frame. weaponProbe, for
+// the relit weapon only: what it sees ahead, behind, right, left, up and
+// down in the view's frame (rgb; weaponProbe in scene3d.cpp).
+layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; };
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
 #include "indexed.glsl"
@@ -484,6 +486,24 @@ float shoreWet(vec3 world,vec3 normal,uint sector,float luma,out vec3 tint) {
     vec2 wander=wall?vec2(along,0):floor(world.xy),texel=wall?vec2(along,floor(world.z)):floor(world.xy);
     return dampness(max(height,0.0),abs(d),wander,texel,luma);
 }
+// The relit weapon looking toward a light (ahead: 1 dead ahead): the light
+// creeps in from the silhouette, more on the side nearer it, with a faint
+// veil over the rest; glossy edges mirror it at grazing angles (mirror).
+float weaponCreep(vec3 n,vec3 view,vec3 toLight,out float mirror) {
+    float ahead=saturate(dot(toLight,-view));
+    float edge=1.0-saturate(dot(n,view));
+    float around=saturate((dot(n,toLight)+1.0)*0.5);
+    mirror=pow(saturate(dot(reflect(-view,n),toLight)),12.0)*edge*ahead;
+    mirror=mirror>0.4?1.4:mirror>0.15?0.5:0.0;
+    return ahead*ahead*around*(0.1+0.9*edge*edge);
+}
+// The weapon's surroundings toward a direction in the view's frame (x
+// right, y up, z ahead), blended as an ambient cube.
+vec3 weaponSurroundings(vec3 d) {
+    vec3 w=d*d;
+    return w.x*(d.x>0.0?weaponProbe[2]:weaponProbe[3]).rgb+w.y*(d.y>0.0?weaponProbe[4]:weaponProbe[5]).rgb+
+           w.z*(d.z>0.0?weaponProbe[0]:weaponProbe[1]).rgb;
+}
 void main() {
     bool sprite=(vMode&2u)!=0u;
     vec3 dp1=dFdx(vWorld),dp2=dFdy(vWorld);vec2 duv1=dFdx(vUV),duv2=dFdy(vUV);
@@ -547,7 +567,9 @@ void main() {
     // alcoves) drop light steps and the rest take a little of the sky's tint;
     // indoors, surfaces that see sky through openings rise toward the sky
     // sectors' light, the lift taking the tint; enclosed sky sectors blend
-    // toward the indoor rule by their enclosure. All in 1/16 steps.
+    // toward the indoor rule by their enclosure. All in 1/16 steps. With
+    // window light (flag 65536) the openings light indoor surfaces from the
+    // bake, with direction, so they take no lift here.
     float skyShare=0.0;
     if(mapped&&c.fx2.y>0.0) {
         float lift=round(max(0.0,c.fx2.y-light)*saturate(ambient.x*1.2)*0.7*16.0)/16.0;
@@ -557,7 +579,7 @@ void main() {
             float shaded=light-round(light*0.25*(1.0-ambient.x)*16.0)/16.0;
             light=round(mix(shaded,light+lift,enclosed)*16.0)/16.0;
             skyShare=mix(0.3*ambient.x,indoorShare,enclosed);
-        } else {skyShare=indoorShare;light+=lift;}
+        } else if((bakeFlags&65536u)==0u) {skyShare=indoorShare;light+=lift;}
     }
     light=max(light,outdoorFloor);
     // Baked occlusion (flag 64) darkens the sector and baked light, not dynamic lights.
@@ -665,13 +687,20 @@ void main() {
         if(weapon) {
             // Lights around the player tint and shape the weapon with a
             // capped share, so they never wash out the artwork; the side
-            // facing a light takes most of it. Highlights
+            // facing a light takes most of it, and a light ahead creeps
+            // over it from the silhouette (weaponCreep). Highlights
             // come in two hard steps on the gloss map, sharper where it is
             // glossier: polish over dark metal, not an even sheen. The light
             // from above gives one too, sliding over the metal as the view
             // pitches and the weapon bobs.
             vec3 n=weaponNormal,view=weaponView;
             float shininess=10.0+30.0*weaponGloss;
+            // The sprite's rounded normals describe its camera-facing skin,
+            // not the top of the barrel. Approximate that upper plane for
+            // broad metal highlights, fading it out on downward-facing parts.
+            float upper=smoothstep(-0.25,0.25,dot(n,c.up.xyz));
+            vec3 upperNormal=normalize(c.up.xyz+0.35*n);
+            float upperShininess=8.0+16.0*weaponGloss;
             float top=pow(saturate(dot(n,normalize(vec3(0,0,1)+view))),shininess);
             specular+=vec3(light*weaponGloss*(top>0.5?0.35:top>0.2?0.15:0.0));
             if(c.bake.z>0.0&&vStatic!=0u) {
@@ -679,10 +708,32 @@ void main() {
                 vec3 toLight=normalize(statics.xyz*2.0-1.0);
                 float facing=saturate(dot(n,toLight));
                 float rim=pow(1.0-saturate(dot(n,view)),2.0)*facing*saturate(0.35-dot(toLight,view));
-                float highlight=pow(saturate(dot(n,normalize(toLight+view))),shininess);
-                specular+=pulse*statics.w*weaponGloss*(highlight>0.5?1.6:highlight>0.2?0.6:0.0);
-                pulse*=mix(1.0,0.25+1.0*facing+1.6*rim,statics.w);
+                float highlight=pow(saturate(dot(n,normalize(toLight+view))),shininess),mirror;
+                float creep=weaponCreep(n,view,toLight,mirror);
+                specular+=pulse*statics.w*weaponGloss*((highlight>0.5?1.6:highlight>0.2?0.6:0.0)+mirror);
+                vec3 halfDirection=(toLight+view)/max(length(toLight+view),0.001);
+                specular+=pulse*statics.w*weaponGloss*upper*pow(saturate(dot(upperNormal,halfDirection)),upperShininess)*0.8;
+                pulse*=mix(1.0,0.25+1.0*facing+1.6*rim+1.2*creep,statics.w);
             }
+            // The room around it, even with no light near: a fill from each
+            // side; glossy faces and every grazing edge mirror what lies
+            // that way (mostly dark, bright where a lit wall is), in 1/16
+            // steps; and a bright view ahead creeps over the outline.
+            // surroundings: the strength of everything taken from the probe.
+            const float surroundings=0.7;
+            mat3 frame=transpose(mat3(c.right.xyz,c.up.xyz,c.forward.xyz));
+            vec3 environment=weaponSurroundings(frame*n)*0.3;
+            float edge=1.0-saturate(dot(n,view)),base=0.02+0.12*weaponGloss;
+            vec3 mirrored=weaponSurroundings(frame*reflect(-view,n))*(base+(1.0-base)*pow(edge,4.0));
+            specular+=round(mirrored*0.8*surroundings*16.0)/16.0;
+            // Like a glossy floor, the upper metal reflects a bright panel
+            // ahead. The ambient cube represents a broad source, rather than
+            // a sharp point highlight. Keep the reflection in palette steps.
+            vec3 upperReflection=weaponSurroundings(frame*reflect(-view,upperNormal));
+            specular+=round(upperReflection*weaponGloss*upper*0.8*surroundings*16.0)/16.0;
+            float aheadMirror;
+            environment+=weaponProbe[0].rgb*(0.12+0.6*weaponCreep(n,view,c.forward.xyz,aheadMirror));
+            specular+=weaponProbe[0].rgb*weaponGloss*aheadMirror*0.4*surroundings;
             uvec2 mask=vLightMask;
             while(any(notEqual(mask,uvec2(0)))) {
                 uint word=mask.x!=0u?0u:1u;
@@ -700,10 +751,16 @@ void main() {
                 // the same total, so it shapes the weapon even in bright rooms.
                 float bakedShare=c.bake.x>0.0?lights[i].baked:0.0;
                 pulse+=lights[i].color.rgb*amount*(0.15+1.1*facing+1.6*rim-0.6*bakedShare);
-                float highlight=pow(saturate(dot(n,normalize(toLight+view))),shininess);
-                specular+=lights[i].color.rgb*amount*weaponGloss*(highlight>0.5?1.6:highlight>0.2?0.6:0.0);
+                float highlight=pow(saturate(dot(n,normalize(toLight+view))),shininess),mirror;
+                // Looking toward the light, it also spills over the weapon.
+                pulse+=lights[i].color.rgb*amount*1.2*weaponCreep(n,view,toLight,mirror);
+                specular+=lights[i].color.rgb*amount*weaponGloss*((highlight>0.5?1.6:highlight>0.2?0.6:0.0)+mirror);
+                vec3 halfDirection=(toLight+view)/max(length(toLight+view),0.001);
+                specular+=lights[i].color.rgb*amount*weaponGloss*upper*pow(saturate(dot(upperNormal,halfDirection)),upperShininess)*0.8;
             }
-            pulse=max(pulse,vec3(0));
+            // Static-light redistribution may subtract its own baked tint,
+            // but must not consume the independent light from the room.
+            pulse=max(pulse,vec3(0))+environment*surroundings;
         }
         if(!sprite) {
             uvec2 mask=vLightMask;

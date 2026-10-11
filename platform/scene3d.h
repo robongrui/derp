@@ -132,6 +132,8 @@ extern FlashSet flashes;
 extern FlashSet gpuFlashes;
 extern std::vector<std::array<uint32_t,4>> lightWords;
 extern FogLights fogLights;
+// The relit weapon's surroundings: ahead, behind, right, left, up, down (weaponDraws).
+extern float weaponProbe[24];
 extern std::vector<LightBlocker> lightBlockers;
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
 extern std::unordered_map<int,Image> images;
