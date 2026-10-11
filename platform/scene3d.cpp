@@ -2151,6 +2151,18 @@ std::array<float,3> paletteColor(const std::array<float,3> &color) {
     }
     return {palette[index*3]/255.0f,palette[index*3+1]/255.0f,palette[index*3+2]/255.0f};
 }
+// The brightest opaque texel's color.
+const std::array<float,3> &brightestColor(Image &image) {
+    if(image.brightened)return image.brightest;
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    int best=-1,bestSum=-1;
+    for(size_t i=0;i+1<image.pixels.size();i+=2) if(image.pixels[i+1]) {
+        int index=image.pixels[i],sum=palette[index*3]+palette[index*3+1]+palette[index*3+2];
+        if(sum>bestSum){bestSum=sum;best=index;}
+    }
+    image.brightest=best<0?averageColor(image):std::array<float,3>{palette[best*3]/255.0f,palette[best*3+1]/255.0f,palette[best*3+2]/255.0f};
+    image.brightened=true;return image.brightest;
+}
 std::array<float,3> texelColor(Image &image) {
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     size_t count=image.pixels.size()/2;
@@ -2723,7 +2735,7 @@ void splash(float x,float y,int sector,float size,int drops,bool shot=false) {
     float now=leveltime/(float)TICRATE;
     bool thick=sectorMist[sector].thick;
     if(rings.size()>=24)rings.erase(rings.begin());
-    rings.push_back({x,y,now,thick?10+size*0.2f:30+size*0.6f,thick?1.3f+size*0.015f:0.8f+size*0.01f,std::min(1.0f,size/40),sector});
+    rings.push_back({x,y,now,thick?10+size*0.2f:30+size*0.6f,thick?1.3f+size*0.015f:0.8f+size*0.01f,shot?1.0f:std::min(1.0f,size/40),sector});
     if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
     Image &flat=lumpImage(firstflat+flattranslation[sectors[sector].floorpic],true);
     float light=flat.emissionCoverage>0.2f||sectorMist[sector].hot?1.0f:std::max(lighting(&sectors[sector]),0.8f);
@@ -2816,17 +2828,27 @@ void buildRings(Uniforms &camera) {
         float age=std::max(0.0f,std::floor((now-ring.born)*TICRATE)/TICRATE),radius=4+ring.speed*age,fade=1-age/ring.life;
         const sector_t &sector=sectors[ring.sector];
         float z=floorZ(&sector)+decalLift(ring.x,ring.y,camera)+0.1f,light=lighting(&sector),alpha=0.55f*ring.strength*fade;
-        const auto &color=sectorMist[ring.sector].color;
-        std::array<float,3> tint;for(int c=0;c<3;++c)tint[c]=std::min(1.0f,color[c]*1.6f+0.08f)*light;
-        // A ring of single pixels, one every few units, that loses dots
-        // as it fades instead of turning see-through.
-        int dots=std::clamp((int)(2*doomPi*radius/4),8,48);
+        // A bit brighter than the brightest texel of the liquid's flat, lit
+        // like the splash drops.
+        Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
+        if(flat.emissionCoverage>0.2f||sectorMist[ring.sector].hot)light=1;else light=std::max(light,0.8f);
+        const auto &brightest=brightestColor(flat);
+        std::array<float,3> tint;for(int c=0;c<3;++c)tint[c]=std::min(1.0f,(brightest[c]*1.2f+0.06f)*light);
+        // Concentric rings of single pixels, one every few units: each inner
+        // ring follows a few tics behind the last and is a little sparser.
+        // They lose dots as they fade instead of turning see-through.
+        bool thick=sectorMist[ring.sector].thick;
         unsigned seed=(unsigned)(ring.born*TICRATE)*2654435761u^(unsigned)(ring.x*7+ring.y*13);
-        for(int k=0;k<dots;++k) {
-            if(hashUnit(k,(int)seed,seed^5u)>alpha/0.55f)continue;
-            float angle=(k+0.5f)*2*doomPi/dots;
-            pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*radius,ring.y+std::sin(angle)*radius,z,
-                       sectorMist[ring.sector].thick?2.0f:1.2f,sectorMist[ring.sector].thick?0.6f:1.0f,tint,true);
+        for(int j=0;j<3;++j) {
+            float inner=age-j*(thick?0.2f:0.12f);
+            if(inner<0)break;
+            float r=4+ring.speed*inner,keep=alpha/0.55f*(1-0.25f*j);
+            int dots=std::clamp((int)(2*doomPi*r/4),8,48);
+            for(int k=0;k<dots;++k) {
+                if(hashUnit(k,(int)seed+j*977,seed^5u)>keep)continue;
+                float angle=(k+0.5f*j+0.5f)*2*doomPi/dots;
+                pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,thick?2.0f:1.2f,thick?0.6f:1.0f,tint,true);
+            }
         }
         if(slot<4&&std::hypot(ring.x-camera.eye[0],ring.y-camera.eye[1])<1500) {
             float *uniform=camera.ripple[slot++];
