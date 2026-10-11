@@ -172,7 +172,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "Walls and banks just above water, nukage, slime and blood turn darker and damp up to a ragged line, "
                     "a little stained by the liquid. Lava stays dry."),
                 check("Splashes",&s.splashes,"Droplets and ripple rings where things land, explode, wade or are shot in liquids. "
-                    "Nukage, slime, blood and lava splash thick, bubble, and swallow the feet of things standing in their pits.")}}}},
+                    "Things standing in liquids sink in; nukage, slime, blood and lava splash thick and bubble.")}}}},
         {"Performance",{
             {"Cheaper light work",{
                 check("Bake-only static lights",&s.bakeOnlyLights,

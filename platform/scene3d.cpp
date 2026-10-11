@@ -659,8 +659,8 @@ void classifySectorMist() {
         // Only water mirrors the room: nukage, slime, blood and lava are too
         // murky for the toned-down reflection to read as more than a smudge.
         mist.reflective=mist.liquid&&!strncmp(lumpinfo[lump].name,"FWATER",6);
-        // Every liquid but water is thick: heavy splashes, bubbles, and
-        // things standing in its pits sink in.
+        // Every liquid but water is thick: heavy splashes, bubbles, and a
+        // collar of goo around things standing in it.
         mist.thick=mist.liquid&&!mist.reflective;
         mist.toxic=sector.special==4||sector.special==5||sector.special==7||sector.special==11||sector.special==16;
         if(mist.liquid&&W_LumpLength(lump)>=4096) {
@@ -4257,12 +4257,15 @@ void geometry(const Uniforms &camera,float fraction) {
         if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;shadowLight=fixedLight;}
         if(strongest>0.025f) addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera,&shadowLight);
         float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
-        // Things standing in a thick liquid's pit sink in a little (the floor
-        // hides their feet), with a wobbling collar of goo where they meet it.
-        if(settings.splashes&&(size_t)i<sectorMist.size()&&sectorMist[i].thick&&sectorMist[i].pit&&thing->z<=sectors[i].floorheight&&
-           !(thing->flags&(MF_SPECIAL|MF_MISSILE|MF_NOBLOCKMAP|MF_FLOAT))&&sectors[i].floorpic!=skyflatnum) {
+        // Things standing in a liquid sink in a little, like Heretic's
+        // footclip (the floor hides their feet; small pickups only a
+        // little), and thick liquids wrap a wobbling collar of goo around
+        // them. Pools are often several sectors at one height, so every
+        // liquid floor counts, not only pits.
+        if(settings.splashes&&(size_t)i<sectorMist.size()&&sectorMist[i].liquid&&thing->z<=sectors[i].floorheight&&
+           !(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_FLOAT))&&sectors[i].floorpic!=skyflatnum) {
             float sink=std::min(8.0f,image.height*0.35f);top-=sink;bottom-=sink;
-            if(std::hypot(x-camera.eye[0],y-camera.eye[1])<1024) {
+            if(sectorMist[i].thick&&!(thing->flags&MF_SPECIAL)&&std::hypot(x-camera.eye[0],y-camera.eye[1])<1024) {
                 float r=units(thing->radius)*0.55f;int tic=leveltime/4;
                 uint32_t seed=(uint32_t)(uintptr_t)thing;
                 auto color=gooColor(i,seed);
