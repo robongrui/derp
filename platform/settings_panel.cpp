@@ -171,7 +171,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("Damp shores",&s.dampShores,
                     "Walls and banks just above water, nukage, slime and blood turn darker and damp up to a ragged line, "
                     "a little stained by the liquid. Lava stays dry."),
-                check("Splashes",&s.splashes,"Droplets and ripple rings where things land, explode, wade or are shot in liquids; rings disturb reflections. "
+                check("Splashes",&s.splashes,"Droplets and ripple rings where things land, explode, wade or are shot in liquids. "
                     "Nukage, slime, blood and lava splash thick, bubble, and swallow the feet of things standing in their pits.")}}}},
         {"Performance",{
             {"Cheaper light work",{

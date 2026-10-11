@@ -2726,8 +2726,8 @@ void updateExposure(Uniforms &camera) {
 
 // Splashes: per tic, things in liquid sectors are watched for landing,
 // projectiles exploding at the surface, and wading. Each event throws
-// droplets in the liquid's average flat color and an expanding ring that
-// also pushes the mirror image aside.
+// droplets in the colors of the liquid's flat and expanding rings; the
+// reflection stays as it is.
 struct SplashWatch { float z;bool missile,seen;int ripple; };
 struct Ring { float x,y,born,speed,life,strength;int sector; };
 std::unordered_map<const mobj_t*,SplashWatch> splashWatch;
@@ -2823,49 +2823,51 @@ void watchSplashes() {
     }
     for(auto it=splashWatch.begin();it!=splashWatch.end();) it=it->second.seen?std::next(it):splashWatch.erase(it);
 }
-// Rings: twelve-sided, growing at the tic rate, in the liquid's color lifted
-// toward white; the four youngest near the eye also reach the reflection.
+// Rings: up to three full circles one Doom pixel thick, the inner ones a few
+// tics behind, growing at the tic rate. They start a bit brighter than the
+// brightest texel of the liquid's flat, lit like the splash drops, step down
+// toward the liquid's own color as they age, and are gone at the end.
 void buildRings(Uniforms &camera) {
     if(!settings.splashes||splashLevelSerial!=r_levelserial) {rings.clear();return;}
     float now=gameSeconds();
     rings.erase(std::remove_if(rings.begin(),rings.end(),[&](const Ring &r){return now-r.born>r.life||now<r.born-0.1f;}),rings.end());
-    int slot=0;
-    for(auto it=rings.rbegin();it!=rings.rend();++it) {
-        const Ring &ring=*it;
-        float age=std::max(0.0f,std::floor((now-ring.born)*TICRATE)/TICRATE),radius=4+ring.speed*age,fade=1-age/ring.life;
+    for(const Ring &ring:rings) {
+        float age=std::max(0.0f,std::floor((now-ring.born)*TICRATE)/TICRATE),fade=(1-age/ring.life)*std::max(ring.strength,0.5f);
         const sector_t &sector=sectors[ring.sector];
-        float z=floorZ(&sector)+decalLift(ring.x,ring.y,camera)+0.1f,light=lighting(&sector),alpha=0.55f*ring.strength*fade;
-        // A bit brighter than the brightest texel of the liquid's flat, lit
-        // like the splash drops.
+        float z=floorZ(&sector)+decalLift(ring.x,ring.y,camera)+0.1f,light=lighting(&sector);
         Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
         if(flat.emissionCoverage>0.2f||sectorMist[ring.sector].hot)light=1;else light=std::max(light,0.8f);
-        const auto &brightest=brightestColor(flat);
-        std::array<float,3> albedo,tint;
-        for(int c=0;c<3;++c){albedo[c]=std::min(1.0f,brightest[c]*1.2f+0.06f);tint[c]=albedo[c]*light;}
+        const auto &brightest=brightestColor(flat);const auto &base=sectorMist[ring.sector].color;
+        std::array<float,3> albedo;
+        for(int c=0;c<3;++c)albedo[c]=std::min(1.0f,brightest[c]*1.2f+0.06f);
         // The flashlight lights the whole ring by its center.
+        float beamAmount=0;std::array<float,3> beamColor={};
         if(flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
-            const Flash &beam=flashes.lights[0];float amount=flashAt(ring.x,ring.y,z+1,beam);
-            if(amount>0)for(int c=0;c<3;++c)tint[c]=std::min(1.0f,tint[c]+albedo[c]*amount*beam.color[c]);
+            const Flash &beam=flashes.lights[0];beamAmount=flashAt(ring.x,ring.y,z+1,beam);
+            for(int c=0;c<3;++c)beamColor[c]=beam.color[c];
         }
-        // Concentric rings of single pixels, one every few units: each inner
-        // ring follows a few tics behind the last and is a little sparser.
-        // They lose dots as they fade instead of turning see-through.
+        // Points along each circle close enough to touch at the nearest
+        // depth it can have on screen, so it reads as one unbroken line.
+        float cx=ring.x-camera.eye[0],cy=ring.y-camera.eye[1],cz=z-camera.eye[2];
+        float centerDepth=cx*camera.forward[0]+cy*camera.forward[1]+cz*camera.forward[2];
         bool thick=sectorMist[ring.sector].thick;
-        unsigned seed=(unsigned)(ring.born*TICRATE)*2654435761u^(unsigned)(ring.x*7+ring.y*13);
         for(int j=0;j<3;++j) {
-            float inner=age-j*(thick?0.2f:0.12f);
-            if(inner<0)break;
-            float r=4+ring.speed*inner,keep=alpha/0.55f*(1-0.25f*j);
-            int dots=std::clamp((int)(2*doomPi*r/4),8,48);
-            for(int k=0;k<dots;++k) {
-                if(hashUnit(k,(int)seed+j*977,seed^5u)>keep)continue;
-                float angle=(k+0.5f*j+0.5f)*2*doomPi/dots;
-                pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,thick?2.0f:1.2f,thick?0.6f:1.0f,tint,true);
+            float inner=age-j*(thick?0.2f:0.12f),step=fade*(1-0.25f*j);
+            if(inner<0||step<0.12f)break;
+            float r=4+ring.speed*inner;
+            float spacing=std::max(4.0f,centerDepth-r)/(100*camera.projection[1])*0.9f;
+            int points=std::clamp((int)(2*doomPi*r/std::max(spacing,0.05f)),12,512);
+            // Palette steps from the bright crest toward the liquid's color.
+            float mixed=std::round(step*4)/4;
+            std::array<float,3> albedoNow,tint;
+            for(int c=0;c<3;++c) {
+                albedoNow[c]=base[c]+(albedo[c]-base[c])*mixed;
+                tint[c]=std::min(1.0f,albedoNow[c]*light+albedoNow[c]*beamAmount*beamColor[c]);
             }
-        }
-        if(slot<4&&std::hypot(ring.x-camera.eye[0],ring.y-camera.eye[1])<1500) {
-            float *uniform=camera.ripple[slot++];
-            uniform[0]=ring.x;uniform[1]=ring.y;uniform[2]=radius;uniform[3]=ring.strength*fade;
+            for(int k=0;k<points;++k) {
+                float angle=k*2*doomPi/points;
+                pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,thick?2.0f:0.8f,thick?0.6f:1.0f,tint,true);
+            }
         }
     }
 }
