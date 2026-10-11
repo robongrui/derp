@@ -34,6 +34,7 @@ extern int viewwindowx, viewwindowy;
 extern boolean menuactive, automapactive, paused;
 extern int numflats;
 extern float tourpitch;
+extern boolean freeaim;
 int P_PicAnimationNext(boolean istexture,int pic,int *next);
 }
 #include <SDL3/SDL.h>
@@ -2114,7 +2115,8 @@ void buildMist(const Uniforms &camera) {
 struct WallDecal { int line,side,section; float along,dz,born,size; bool flip; };
 struct Debris { float x,y,z,vx,vy,vz,born,life,size; std::array<float,3> color; };
 struct Scorch { float x,y,born,size;int sector; };
-std::vector<WallDecal> wallDecals;std::vector<Debris> debris;std::vector<Scorch> scorches;
+struct FlatDecal { float x,y,born,size;int sector;bool ceiling,flip; };
+std::vector<WallDecal> wallDecals;std::vector<FlatDecal> flatDecals;std::vector<Debris> debris;std::vector<Scorch> scorches;
 unsigned decalLevelSerial;std::minstd_rand impactRandom(1993);
 float gameSeconds() {return (leveltime+renderFraction)/(float)TICRATE;}
 float randomRange(float low,float high) {return std::uniform_real_distribution<float>(low,high)(impactRandom);}
@@ -2146,7 +2148,7 @@ bool wallSpan(const line_t &line,int side,int section,WallSpan &span) {
 }
 void wallImpact(line_t *line,int side,fixed_t fx,fixed_t fy,fixed_t fz) {
     if(!line||gamestate!=GS_LEVEL)return;
-    if(decalLevelSerial!=r_levelserial){wallDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
+    if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
     float x=units(fx),y=units(fy),z=units(fz);
     const sector_t *back=side?line->frontsector:line->backsector;
     int section=!back?0:z>=ceilZ(back)?1:z<=floorZ(back)?2:-1;
@@ -2170,7 +2172,7 @@ void wallImpact(line_t *line,int side,fixed_t fx,fixed_t fy,fixed_t fz) {
     }
 }
 void barrelBlast(const mobj_t &thing,float x,float y,float z) {
-    if(decalLevelSerial!=r_levelserial){wallDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
+    if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
     float now=gameSeconds();
     if(scorches.size()>=48)scorches.erase(scorches.begin());
     scorches.push_back({x,y,now,randomRange(60,76),int(thing.subsector->sector-sectors)});
@@ -2181,10 +2183,26 @@ void barrelBlast(const mobj_t &thing,float x,float y,float z) {
             randomRange(0.6f,1.3f),randomRange(1.0f,2.2f),{1.0f,0.45f+0.5f*heat,0.08f+0.3f*heat*heat}});
     }
 }
+// A square decal on a sector's floor or ceiling, clipped to its leaves.
+void flatDecal(int sectorIndex,float x,float y,float h,float z,int lump,const Image &image,float fade,bool flip) {
+    std::vector<Point> square={{x-h,y-h},{x+h,y-h},{x+h,y+h},{x-h,y+h}};
+    for(int leaf:sectorFloors[sectorIndex]) {
+        const auto &b=floorBounds[leaf];
+        if(b[2]<x-h||b[0]>x+h||b[3]<y-h||b[1]>y+h)continue;
+        auto polygon=floors[leaf];
+        for(size_t n=0;n<square.size()&&!polygon.empty();++n) {
+            Point a=square[n],c=square[(n+1)%square.size()];
+            polygon=clip(polygon,a,{c.x-a.x,c.y-a.y},false);
+        }
+        auto vertex=[&](Point p){float u=(p.x-x+h)/(2*h);return Vertex{p.x,p.y,z,(flip?1-u:u)*image.width,(y+h-p.y)/(2*h)*image.height,fade,0};};
+        for(size_t n=1;n+1<polygon.size();++n)
+            for(Point p:{polygon[0],polygon[n],polygon[n+1]})decalBatches[lump].push_back(vertex(p));
+    }
+}
 void buildImpacts(const Uniforms &camera) {
     for(auto &batch:decalBatches)batch.second.clear();
     particleVertices.clear();
-    if(decalLevelSerial!=r_levelserial){wallDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
+    if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
     float now=gameSeconds();
     scorches.erase(std::remove_if(scorches.begin(),scorches.end(),[&](const Scorch &d){return now-d.born>60||now<d.born;}),scorches.end());
     const auto &blast=sprites[SPR_BEXP];
@@ -2193,26 +2211,22 @@ void buildImpacts(const Uniforms &camera) {
         int lump=firstspritelump+blast.spriteframes[2].lump[0];Image &image=lumpImage(lump,false);
         for(const auto &d:scorches) {
             const sector_t &sector=sectors[d.sector];if(sector.floorpic==skyflatnum)continue;
-            float h=d.size*0.5f,fade=std::clamp((60-(now-d.born))/8,0.0f,1.0f)*0.7f,z=floorZ(&sector)+0.08f;
-            std::vector<Point> square={{d.x-h,d.y-h},{d.x+h,d.y-h},{d.x+h,d.y+h},{d.x-h,d.y+h}};
-            for(int leaf:sectorFloors[d.sector]) {
-                const auto &b=floorBounds[leaf];
-                if(b[2]<d.x-h||b[0]>d.x+h||b[3]<d.y-h||b[1]>d.y+h)continue;
-                auto polygon=floors[leaf];
-                for(size_t n=0;n<square.size()&&!polygon.empty();++n) {
-                    Point a=square[n],c=square[(n+1)%square.size()];
-                    polygon=clip(polygon,a,{c.x-a.x,c.y-a.y},false);
-                }
-                auto vertex=[&](Point p){return Vertex{p.x,p.y,z,(p.x-d.x+h)/(2*h)*image.width,(d.y+h-p.y)/(2*h)*image.height,fade,0};};
-                for(size_t n=1;n+1<polygon.size();++n)
-                    for(Point p:{polygon[0],polygon[n],polygon[n+1]})decalBatches[lump].push_back(vertex(p));
-            }
+            float fade=std::clamp((60-(now-d.born))/8,0.0f,1.0f)*0.7f;
+            flatDecal(d.sector,d.x,d.y,d.size*0.5f,floorZ(&sector)+0.08f,lump,image,fade,false);
         }
     }
     wallDecals.erase(std::remove_if(wallDecals.begin(),wallDecals.end(),[&](const WallDecal &d){return now-d.born>40||now<d.born;}),wallDecals.end());
+    flatDecals.erase(std::remove_if(flatDecals.begin(),flatDecals.end(),[&](const FlatDecal &d){return now-d.born>40||now<d.born;}),flatDecals.end());
     const auto &puff=sprites[SPR_PUFF];
     if(puff.numframes>2) {
         int lump=firstspritelump+puff.spriteframes[2].lump[0];Image &image=lumpImage(lump,false);
+        for(const auto &d:flatDecals) {
+            const sector_t &sector=sectors[d.sector];
+            if((d.ceiling?sector.ceilingpic:sector.floorpic)==skyflatnum)continue;
+            if(d.ceiling?camera.eye[2]>ceilZ(&sector):camera.eye[2]<floorZ(&sector))continue; // Back of the flat.
+            float fade=std::clamp((40-(now-d.born))/4,0.0f,1.0f)*0.6f;
+            flatDecal(d.sector,d.x,d.y,d.size*0.5f,d.ceiling?ceilZ(&sector)-0.08f:floorZ(&sector)+0.08f,lump,image,fade,d.flip);
+        }
         for(const auto &d:wallDecals) {
             WallSpan span;if(!wallSpan(lines[d.line],d.side,d.section,span))continue;
             float ex=span.b.x-span.a.x,ey=span.b.y-span.a.y,len=std::hypot(ex,ey);
@@ -2652,7 +2666,7 @@ void splash(float x,float y,int sector,float size,int drops) {
     float now=leveltime/(float)TICRATE;
     if(rings.size()>=24)rings.erase(rings.begin());
     rings.push_back({x,y,now,30+size*0.6f,0.8f+size*0.01f,std::min(1.0f,size/40),sector});
-    if(decalLevelSerial!=r_levelserial){wallDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
+    if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
     const auto &color=sectorMist[sector].color;float light=lighting(&sectors[sector]);
     float floor=units(sectors[sector].floorheight),lift=std::clamp(size/40,0.6f,1.4f);
     if(debris.size()>480)debris.erase(debris.begin(),debris.begin()+(debris.size()-480));
@@ -2661,6 +2675,37 @@ void splash(float x,float y,int sector,float size,int drops) {
         debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(90,220)*lift,now,randomRange(0.35f,0.6f),randomRange(1.0f,1.8f),
             {std::min(1.0f,color[0]*shade*light*1.3f),std::min(1.0f,color[1]*shade*light*1.3f),std::min(1.0f,color[2]*shade*light*1.3f)}});
     }
+}
+// Free-aimed hitscan shots stopping on a floor or ceiling (R_PlaneImpact):
+// liquids splash, the pellets of one blast sharing a ring where they land
+// close together; other flats take a bullet mark and chips in their color.
+boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed_t fz) {
+    if(gamestate!=GS_LEVEL||levelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return false;
+    if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
+    int index=int(sector-sectors);float x=units(fx),y=units(fy),z=units(fz),now=gameSeconds();
+    if(!ceiling&&sectorMist[index].liquid) {
+        if(!settings.splashes)return false;
+        float tic=leveltime/(float)TICRATE; // As splash() stamps its rings.
+        bool shared=std::any_of(rings.begin(),rings.end(),[&](const Ring &r){return r.born==tic&&std::hypot(r.x-x,r.y-y)<32;});
+        size_t before=rings.size();
+        splash(x,y,index,12,3);
+        if(shared&&rings.size()>before)rings.pop_back();
+        return true;
+    }
+    if(flatDecals.size()>=96)flatDecals.erase(flatDecals.begin());
+    flatDecals.push_back({x,y,now,randomRange(5.0f,7.5f),index,(bool)ceiling,randomRange(0,1)<0.5f});
+    int pic=ceiling?sector->ceilingpic:sector->floorpic;
+    Image &image=lumpImage(firstflat+flattranslation[pic],true);
+    float light=lighting(sector);
+    auto color=averageColor(image);for(float &c:color)c*=light;
+    if(debris.size()>512)debris.erase(debris.begin(),debris.begin()+(debris.size()-512));
+    for(int i=0;i<6;++i) {
+        float angle=randomRange(0,2*doomPi),out=randomRange(20,70),shade=randomRange(0.7f,1.15f);
+        debris.push_back({x,y,ceiling?z+3:z+1,std::cos(angle)*out,std::sin(angle)*out,ceiling?randomRange(-40,0):randomRange(60,140),now,
+            randomRange(0.45f,0.8f),randomRange(0.9f,1.7f),
+            {std::min(1.0f,color[0]*shade),std::min(1.0f,color[1]*shade),std::min(1.0f,color[2]*shade)}});
+    }
+    return false;
 }
 void watchSplashes() {
     if(!settings.splashes||levelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return;
@@ -4234,6 +4279,8 @@ void applySettings() {
     R_MuzzleFlash=settings.accelerated?muzzleFlash:nullptr;
     R_WallImpact=settings.accelerated?wallImpact:nullptr;
     R_BloodHit=settings.accelerated?bloodHit:nullptr;
+    R_PlaneImpact=settings.accelerated?planeImpact:nullptr;
+    freeaim=settings.accelerated&&settings.look;
     if(!settings.accelerated) flashPulses.clear();
     r_uncapped=settings.accelerated;
     if(!settings.look) pitch=0;
@@ -4526,7 +4573,7 @@ FrameView prepareFrame(int w,int h) {
             }
         }
         float look=demoplayback?0:pitch;
-        tourpitch=look;
+        tourpitch=look;freeaim=settings.look&&!demoplayback;
         camera.right[0]=sin(yaw);camera.right[1]=-cos(yaw);
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
         camera.up[0]=-cos(yaw)*sin(look);camera.up[1]=-sin(yaw)*sin(look);camera.up[2]=cos(look);

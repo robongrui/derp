@@ -69,6 +69,7 @@ extern boolean	gamekeydown[];
 extern int	key_speed;
 
 float		tourpitch;
+boolean		freeaim;
 
 boolean P_DebugAllowed (void)
 {

@@ -903,6 +903,51 @@ PTR_AimTraverse (intercept_t* in)
 
 
 //
+// PTR_ShootPlane
+// A free-aimed shot (la_freeaim) also stops on floors and ceilings: before
+// each line or thing, and at the end of its range, it checks whether it
+// already left la_sector, the sector it is passing through, vertically.
+// Returns false when it did.
+//
+boolean		la_freeaim;
+static sector_t* la_sector;
+
+static boolean PTR_ShootPlane (fixed_t frac)
+{
+    fixed_t	z = shootz + FixedMul (aimslope, FixedMul (frac, attackrange));
+    fixed_t	plane;
+    fixed_t	dist;
+    fixed_t	x;
+    fixed_t	y;
+    boolean	ceiling;
+
+    if (z < la_sector->floorheight)
+	plane = la_sector->floorheight, ceiling = false;
+    else if (z > la_sector->ceilingheight)
+	plane = la_sector->ceilingheight, ceiling = true;
+    else
+	return true;
+
+    // don't shoot the sky!
+    if ((ceiling ? la_sector->ceilingpic : la_sector->floorpic) == skyflatnum)
+	return false;
+
+    dist = aimslope ? FixedDiv (plane - shootz, aimslope) : 0;
+    if (dist < 0)
+	dist = 0;
+    if (dist < FixedMul (frac, attackrange))
+	frac = FixedDiv (dist, attackrange);
+    x = trace.x + FixedMul (trace.dx, frac);
+    y = trace.y + FixedMul (trace.dy, frac);
+    z = ceiling ? plane - 4*FRACUNIT : plane;
+
+    if (!R_PlaneImpact || !R_PlaneImpact (la_sector, ceiling, x, y, z))
+	P_SpawnPuff (x, y, z);
+    return false;
+}
+
+
+//
 // PTR_ShootTraverse
 //
 boolean PTR_ShootTraverse (intercept_t* in)
@@ -921,6 +966,9 @@ boolean PTR_ShootTraverse (intercept_t* in)
     fixed_t		thingtopslope;
     fixed_t		thingbottomslope;
 		
+    if (la_freeaim && !PTR_ShootPlane (in->frac))
+	return false;
+
     if (in->isaline)
     {
 	li = in->d.line;
@@ -951,6 +999,9 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	}
 
 	// shot continues
+	if (la_freeaim)
+	    la_sector = P_PointOnLineSide (trace.x, trace.y, li)
+		? li->frontsector : li->backsector;
 	return true;
 	
 	
@@ -1093,11 +1144,20 @@ P_LineAttack
     shootz = t1->z + (t1->height>>1) + 8*FRACUNIT;
     attackrange = distance;
     aimslope = slope;
+    if (la_freeaim)
+    {
+	// From the eye, where the crosshair sits.
+	shootz = t1->player->viewz;
+	la_sector = t1->subsector->sector;
+    }
 		
-    P_PathTraverse ( t1->x, t1->y,
-		     x2, y2,
-		     PT_ADDLINES|PT_ADDTHINGS,
-		     PTR_ShootTraverse );
+    if (P_PathTraverse ( t1->x, t1->y,
+			 x2, y2,
+			 PT_ADDLINES|PT_ADDTHINGS,
+			 PTR_ShootTraverse )
+	&& la_freeaim)
+	PTR_ShootPlane (FRACUNIT);
+    la_freeaim = false;
 }
  
 

@@ -25,6 +25,8 @@
 static const char
 rcsid[] = "$Id: p_pspr.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
+#include <math.h>
+
 #include "doomdef.h"
 #include "d_event.h"
 
@@ -603,6 +605,9 @@ A_FirePlasma
 // the height of the intended target
 //
 fixed_t		bulletslope;
+// With nothing to autoaim at, a mouselook shot follows the view instead of
+// flying level. Demos and netgames keep vanilla aiming.
+static boolean	bulletfree;
 
 
 void P_BulletSlope (mobj_t*	mo)
@@ -623,6 +628,10 @@ void P_BulletSlope (mobj_t*	mo)
 	    bulletslope = P_AimLineAttack (mo, an, 16*64*FRACUNIT);
 	}
     }
+    bulletfree = !linetarget && freeaim && mo->player
+	&& !demoplayback && !demorecording && !netgame;
+    if (bulletfree)
+	bulletslope = (fixed_t)(tan (tourpitch)*FRACUNIT);
 }
 
 
@@ -643,6 +652,7 @@ P_GunShot
     if (!accurate)
 	angle += (P_Random()-P_Random())<<18;
 
+    la_freeaim = bulletfree;
     P_LineAttack (mo, angle, MISSILERANGE, bulletslope, damage);
 }
 
@@ -731,6 +741,7 @@ A_FireShotgun2
 	damage = 5*(P_Random ()%3+1);
 	angle = player->mo->angle;
 	angle += (P_Random()-P_Random())<<19;
+	la_freeaim = bulletfree;
 	P_LineAttack (player->mo,
 		      angle,
 		      MISSILERANGE,

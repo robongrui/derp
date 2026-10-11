@@ -94,6 +94,12 @@ void P_SetCheat (player_t* player, boolean* setting, boolean on);
 void P_SetTour (player_t* player, boolean on);
 // View pitch in radians, written by the 3D renderer; flight follows it.
 extern float tourpitch;
+// Mouselook is on (3D renderer): a player's shot with nothing to autoaim at
+// follows tourpitch (P_BulletSlope).
+extern boolean freeaim;
+// The next P_LineAttack is such a shot: it starts at the eye and also stops
+// on floors and ceilings. P_LineAttack clears it.
+extern boolean la_freeaim;
 
 
 //
