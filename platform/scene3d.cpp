@@ -83,7 +83,7 @@ std::vector<std::vector<Point>> floors;
 std::vector<std::vector<int>> sectorFloors;
 std::vector<std::array<float,4>> floorBounds;
 // hot: lava, or a damaging floor whose flat is mostly red or orange (heat haze).
-struct SectorMist { bool pit=false,liquid=false,toxic=false,outdoor=false,reflective=false,hot=false; std::array<float,3> color={0.24f,0.29f,0.32f}; };
+struct SectorMist { bool pit=false,liquid=false,toxic=false,outdoor=false,reflective=false,hot=false,thick=false; std::array<float,3> color={0.24f,0.29f,0.32f}; };
 std::vector<SectorMist> sectorMist;
 float fogReferenceHeight=0;
 unsigned levelSerial;
@@ -659,6 +659,9 @@ void classifySectorMist() {
         // Only water mirrors the room: nukage, slime, blood and lava are too
         // murky for the toned-down reflection to read as more than a smudge.
         mist.reflective=mist.liquid&&!strncmp(lumpinfo[lump].name,"FWATER",6);
+        // Every liquid but water is thick: heavy splashes, bubbles, and
+        // things standing in its pits sink in.
+        mist.thick=mist.liquid&&!mist.reflective;
         mist.toxic=sector.special==4||sector.special==5||sector.special==7||sector.special==11||sector.special==16;
         if(mist.liquid&&W_LumpLength(lump)>=4096) {
             const byte *flat=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
@@ -2296,6 +2299,8 @@ void buildImpacts(const Uniforms &camera) {
         float t=std::floor((now-p.born)*TICRATE)/TICRATE,x=p.x+p.vx*t,y=p.y+p.vy*t,z=p.z+p.vz*t-210*t*t;
         const sector_t *sector=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
         float floor=floorZ(sector)+0.2f;
+        size_t index=sector-sectors;
+        if(z<floor&&index<sectorMist.size()&&sectorMist[index].liquid&&!sectorMist[index].thick)continue; // Back into the water.
         z=std::min(z,ceilZ(sector)-p.size*0.5f);
         float size=t>p.life*0.75f?p.size*0.5f:p.size,tall=std::abs(p.vz-420*t)>220?2.0f:1.0f;
         pixelBlock(particleVertices,camera,x,y,std::max(z,floor),size,tall,p.color,z<=floor+p.size*0.5f);
@@ -2708,18 +2713,24 @@ struct Ring { float x,y,born,speed,life,strength;int sector; };
 std::unordered_map<const mobj_t*,SplashWatch> splashWatch;
 std::vector<Ring> rings;
 unsigned splashLevelSerial;
+// Water throws many small, quick drops that vanish into it and a ring that
+// races out; thick liquids throw a few fat drops that rise less, sit on the
+// surface a while, and a ring that spreads slowly and not far.
 void splash(float x,float y,int sector,float size,int drops) {
     float now=leveltime/(float)TICRATE;
+    bool thick=sectorMist[sector].thick;
     if(rings.size()>=24)rings.erase(rings.begin());
-    rings.push_back({x,y,now,30+size*0.6f,0.8f+size*0.01f,std::min(1.0f,size/40),sector});
+    rings.push_back({x,y,now,thick?10+size*0.2f:30+size*0.6f,thick?1.3f+size*0.015f:0.8f+size*0.01f,std::min(1.0f,size/40),sector});
     if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
     Image &flat=lumpImage(firstflat+flattranslation[sectors[sector].floorpic],true);float light=lighting(&sectors[sector]);
     float floor=units(sectors[sector].floorheight),lift=std::clamp(size/40,0.6f,1.4f);
     if(debris.size()>480)debris.erase(debris.begin(),debris.begin()+(debris.size()-480));
+    if(thick)drops=std::max(1,(drops+1)/2);
     for(int i=0;i<drops;++i) {
-        float angle=randomRange(0,2*doomPi),out=randomRange(20,80);
+        float angle=randomRange(0,2*doomPi),out=thick?randomRange(10,40):randomRange(20,80);
         auto color=texelColor(flat);for(float &c:color)c=std::min(1.0f,c*light*1.3f);
-        debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(90,220)*lift,now,randomRange(0.35f,0.6f),randomRange(1.0f,1.8f),color});
+        if(thick) debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(70,150)*lift,now,randomRange(0.8f,1.2f),randomRange(2.4f,3.6f),color});
+        else debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(90,220)*lift,now,randomRange(0.35f,0.6f),randomRange(0.8f,1.2f),color});
     }
 }
 // Free-aimed hitscan shots stopping on a floor or ceiling (R_PlaneImpact):
@@ -2801,7 +2812,8 @@ void buildRings(Uniforms &camera) {
         for(int k=0;k<dots;++k) {
             if(hashUnit(k,(int)seed,seed^5u)>alpha/0.55f)continue;
             float angle=(k+0.5f)*2*doomPi/dots;
-            pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*radius,ring.y+std::sin(angle)*radius,z,1.2f,1,tint,true);
+            pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*radius,ring.y+std::sin(angle)*radius,z,
+                       sectorMist[ring.sector].thick?2.0f:1.2f,sectorMist[ring.sector].thick?0.6f:1.0f,tint,true);
         }
         if(slot<4&&std::hypot(ring.x-camera.eye[0],ring.y-camera.eye[1])<1500) {
             float *uniform=camera.ripple[slot++];
@@ -2810,6 +2822,70 @@ void buildRings(Uniforms &camera) {
     }
 }
 
+// A thick liquid's color for its bubbles and collars: the brightest of a few
+// texels of its flat picked by hash, lit no darker than its glow allows.
+std::array<float,3> gooColor(int sector,uint32_t seed) {
+    Image &flat=lumpImage(firstflat+flattranslation[sectors[sector].floorpic],true);
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    int best=0,bestSum=-1;
+    for(int k=0;k<4;++k) {
+        int texel=std::min(4095,(int)(hashUnit(k,(int)seed,seed^0xb0bu)*4096));
+        int index=flat.pixels[2*texel],sum=palette[index*3]+palette[index*3+1]+palette[index*3+2];
+        if(sum>bestSum){bestSum=sum;best=index;}
+    }
+    float light=std::max(lighting(&sectors[sector]),0.55f);
+    return {std::min(1.0f,palette[best*3]/255.0f*light*1.15f),std::min(1.0f,palette[best*3+1]/255.0f*light*1.15f),std::min(1.0f,palette[best*3+2]/255.0f*light*1.15f)};
+}
+// Bubbles on thick liquids near the eye, stateless like the dust: about a
+// third of the 32-unit cells over them bubble once every few seconds, at a
+// new spot each time. A bubble domes up in three steps, hangs, then bursts
+// into four specks and a small dotted ring. Tic-stepped.
+void buildBubbles(const Uniforms &camera) {
+    if(!settings.splashes||camera.effects[2]!=0||sectorMist.size()!=(size_t)numsectors)return;
+    constexpr float cell=32,reach=640;
+    float now=std::floor(gameSeconds()*TICRATE)/TICRATE;
+    for(int i=0;i<numsectors;++i) {
+        if(!sectorMist[i].thick||sectors[i].floorpic==skyflatnum)continue;
+        float floor=floorZ(&sectors[i]);
+        if(camera.eye[2]<floor+1)continue;
+        for(int leaf:sectorFloors[i]) {
+            const auto &b=floorBounds[leaf];const auto &poly=floors[leaf];
+            if(poly.size()<3)continue;
+            float dx=std::max({b[0]-camera.eye[0],0.0f,camera.eye[0]-b[2]}),dy=std::max({b[1]-camera.eye[1],0.0f,camera.eye[1]-b[3]});
+            if(std::hypot(dx,dy)>reach)continue;
+            for(int gy=(int)std::floor(b[1]/cell);gy<=(int)std::floor(b[3]/cell);++gy)
+            for(int gx=(int)std::floor(b[0]/cell);gx<=(int)std::floor(b[2]/cell);++gx) {
+                if(hashUnit(gx,gy,0xb0b1u)>0.35f)continue;
+                float period=2.5f+4*hashUnit(gx,gy,0xb0b2u),clock=now+hashUnit(gx,gy,0xb0b3u)*period;
+                int cycle=(int)std::floor(clock/period);float s=clock-cycle*period;
+                if(s>=1.4f)continue;
+                uint32_t seed=(uint32_t)cycle*2654435761u^(uint32_t)(gx*73856093)^(uint32_t)(gy*19349663);
+                float x=(gx+0.15f+0.7f*hashUnit(gx,gy,seed))*cell,y=(gy+0.15f+0.7f*hashUnit(gx,gy,seed^1u))*cell;
+                if(x<b[0]||x>b[2]||y<b[1]||y>b[3])continue;
+                bool inside=true;
+                for(size_t n=0;n<poly.size()&&inside;++n) {
+                    Point a=poly[n],c=poly[(n+1)%poly.size()];
+                    inside=(c.x-a.x)*(y-a.y)-(c.y-a.y)*(x-a.x)>=0;
+                }
+                if(!inside||std::hypot(x-camera.eye[0],y-camera.eye[1])>reach)continue;
+                auto color=gooColor(i,seed);
+                if(s<1.15f) {
+                    float step=s<0.3f?1:s<0.6f?2:3;
+                    pixelBlock(particleVertices,camera,x,y,floor+0.2f,1.6f*step,s<0.9f?0.6f:0.8f,color,true);
+                } else {
+                    float q=(s-1.15f)/0.25f,r=2+8*q,z=floor+0.2f+5*std::sin(doomPi*q);
+                    for(int k=0;k<4;++k)
+                        pixelBlock(particleVertices,camera,x+(k&1?r:-r)*0.7f,y+(k&2?r:-r)*0.7f,z,1.2f,1,color);
+                    for(int k=0;k<8;++k) {
+                        if(hashUnit(k,(int)seed,seed^7u)<q)continue;
+                        float angle=(k+0.5f)*doomPi/4;
+                        pixelBlock(particleVertices,camera,x+std::cos(angle)*r,y+std::sin(angle)*r,floor+0.2f,1.2f,1,color,true);
+                    }
+                }
+            }
+        }
+    }
+}
 // Dust motes: one speck in about half of the 48-unit cells around the eye,
 // world-anchored with a slow tic-stepped drift, shown only where the
 // flashlight beam or a sunbeam (in beamAir) catches it: a point is sunlit when the
@@ -4131,6 +4207,21 @@ void geometry(const Uniforms &camera,float fraction) {
         if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;shadowLight=fixedLight;}
         if(strongest>0.025f) addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera,&shadowLight);
         float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
+        // Things standing in a thick liquid's pit sink in a little (the floor
+        // hides their feet), with a wobbling collar of goo where they meet it.
+        if(settings.splashes&&(size_t)i<sectorMist.size()&&sectorMist[i].thick&&sectorMist[i].pit&&thing->z<=sectors[i].floorheight&&
+           !(thing->flags&(MF_SPECIAL|MF_MISSILE|MF_NOBLOCKMAP|MF_FLOAT))&&sectors[i].floorpic!=skyflatnum) {
+            float sink=std::min(8.0f,image.height*0.35f);top-=sink;bottom-=sink;
+            if(std::hypot(x-camera.eye[0],y-camera.eye[1])<1024) {
+                float r=units(thing->radius)*0.55f;int tic=leveltime/4;
+                uint32_t seed=(uint32_t)(uintptr_t)thing;
+                auto color=gooColor(i,seed);
+                for(int k=0;k<6;++k) {
+                    float angle=(k+hashUnit(k,tic,seed)*0.5f)*doomPi/3,wobble=r*(0.9f+0.25f*hashUnit(k,tic,seed^3u));
+                    pixelBlock(particleVertices,camera,x+std::cos(angle)*wobble,y+std::sin(angle)*wobble,floorZ(&sectors[i])+0.2f,2.0f,0.6f,color,true);
+                }
+            }
+        }
         float u0=sf.flip[rotation]?image.width:0,u1=sf.flip[rotation]?0:image.width;
         float light=lighting(&sectors[i],thing->frame&FF_FULLBRIGHT); unsigned mode=2|(thing->flags&MF_SHADOW?4:0);
         // Mode 8: per-pixel lighting from silhouette normals; 16: mirrored frame.
@@ -4222,6 +4313,7 @@ void geometry(const Uniforms &camera,float fraction) {
     buildBlood(camera);
     buildHeat(camera);
     buildDust(camera);
+    buildBubbles(camera);
 }
 // One target-color ray at 30 Hz supplies a smooth, subtle ambient tint.
 // It creates no virtual lights, portal blocker lists, or per-pixel bounce work.
