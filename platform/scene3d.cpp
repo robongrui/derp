@@ -4227,6 +4227,11 @@ void geometry(const Uniforms &camera,float fraction) {
     float rx=camera.right[0],ry=camera.right[1];
     struct Caster { const mobj_t *thing;const Image *image;int lump;bool flip;float x,y,z,distance; };
     std::vector<Caster> casters;
+    // Wet feet: when each thing last stood in a liquid; dry after 8 seconds.
+    static std::unordered_map<const mobj_t*,float> wetFeet;static unsigned wetLevel;
+    float wetNow=gameSeconds();
+    if(wetLevel!=r_levelserial){wetFeet.clear();wetLevel=r_levelserial;}
+    for(auto it=wetFeet.begin();it!=wetFeet.end();) it=wetNow-it->second>8||wetNow<it->second?wetFeet.erase(it):std::next(it);
     const Flash *beam=settings.flashlightShadows&&flashlightOn&&camera.effects[2]==0&&flashes.count&&flashes.lights[0].direction[3]>0?&flashes.lights[0]:nullptr;
     uint64_t spritesStart=profileStart();
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
@@ -4269,8 +4274,9 @@ void geometry(const Uniforms &camera,float fraction) {
         // little), and thick liquids wrap a wobbling collar of goo around
         // them. Pools are often several sectors at one height, so every
         // liquid floor counts, not only pits.
-        if(settings.splashes&&(size_t)i<sectorMist.size()&&sectorMist[i].liquid&&thing->z<=sectors[i].floorheight&&
-           !(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_FLOAT))&&sectors[i].floorpic!=skyflatnum) {
+        bool wading=settings.splashes&&(size_t)i<sectorMist.size()&&sectorMist[i].liquid&&thing->z<=sectors[i].floorheight&&
+           !(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_FLOAT))&&sectors[i].floorpic!=skyflatnum;
+        if(wading) {
             float sink=std::min(8.0f,image.height*0.35f);top-=sink;bottom-=sink;
             if(sectorMist[i].thick&&!(thing->flags&MF_SPECIAL)&&std::hypot(x-camera.eye[0],y-camera.eye[1])<1024) {
                 float r=units(thing->radius)*0.55f;int tic=leveltime/4;
@@ -4298,10 +4304,35 @@ void geometry(const Uniforms &camera,float fraction) {
             float phase=(float)((uintptr_t)thing%997)*0.37f;
             light=std::max(light,0.5f+0.08f*std::sin(gameSeconds()*3.0f+phase));mode|=64;
         }
-        quad(batches[-1-lump],{x+rx*left,y+ry*left,top,u0,0,light,mode},
-            {x+rx*right,y+ry*right,top,u1,0,light,mode},
-            {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,mode},
-            {x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,mode});
+        // Wet feet, like the damp shores: things that wade darken a band 8
+        // units above the waterline, and out of the liquid it dries back
+        // down in steps. The sprite splits there; the lower part is darker.
+        float split=bottom;
+        if(settings.splashes&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_FLOAT|MF_SPECIAL))&&!(thing->frame&FF_FULLBRIGHT)) {
+            if(wading)wetFeet[thing]=wetNow;
+            auto found=wetFeet.find(thing);
+            if(found!=wetFeet.end()) {
+                float dry=std::floor((wetNow-found->second)*TICRATE/8)*8/TICRATE/8;
+                if(dry<1)split=std::clamp(z+8*(1-dry),bottom,top);
+            }
+        }
+        constexpr float wetShade=0.62f;
+        size_t firstVertex=batches[-1-lump].size();
+        if(split<top) {
+            float v=top-split;
+            quad(batches[-1-lump],{x+rx*left,y+ry*left,top,u0,0,light,mode},
+                {x+rx*right,y+ry*right,top,u1,0,light,mode},
+                {x+rx*right,y+ry*right,split,u1,v,light,mode},
+                {x+rx*left,y+ry*left,split,u0,v,light,mode});
+        }
+        size_t wetVertex=batches[-1-lump].size();
+        if(split>bottom) {
+            float v=top-split,dark=light*wetShade;
+            quad(batches[-1-lump],{x+rx*left,y+ry*left,split,u0,v,dark,mode},
+                {x+rx*right,y+ry*right,split,u1,v,dark,mode},
+                {x+rx*right,y+ry*right,bottom,u1,(float)image.height,dark,mode},
+                {x+rx*left,y+ry*left,bottom,u0,(float)image.height,dark,mode});
+        }
         // Emissive WAD frames keep their original white cores and artwork;
         // their light still illuminates surrounding surfaces and other sprites.
         // Detail sprites light themselves per pixel from the light mask, so
@@ -4322,8 +4353,9 @@ void geometry(const Uniforms &camera,float fraction) {
         bool grounded=settings.detail&&grounding>0&&!(thing->frame&FF_FULLBRIGHT)&&!soft&&thing->type!=MT_BLOOD&&
             !(thing->flags&(MF_SHADOW|MF_MISSILE|MF_SPAWNCEILING));
         auto &vertices=batches[-1-lump];
-        for(size_t n=vertices.size()-6;n<vertices.size();++n) {
-            vertices[n].red=pulse[0];vertices[n].green=pulse[1];vertices[n].blue=pulse[2];vertices[n].statics=packedStatics;
+        for(size_t n=firstVertex;n<vertices.size();++n) {
+            float wet=n>=wetVertex?wetShade:1;
+            vertices[n].red=pulse[0]*wet;vertices[n].green=pulse[1]*wet;vertices[n].blue=pulse[2]*wet;vertices[n].statics=packedStatics;
             vertices[n].lampTint=tint;
             if(grounded) {vertices[n].mode|=128;vertices[n].sunU=grounding;vertices[n].sunV=vertices[n].z-z+lift;}
             if(soft)vertices[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
