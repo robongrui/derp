@@ -2715,17 +2715,30 @@ std::vector<Ring> rings;
 unsigned splashLevelSerial;
 // Water throws many small, quick drops that vanish into it and a ring that
 // races out; thick liquids throw a few fat drops that rise less, sit on the
-// surface a while, and a ring that spreads slowly and not far.
-void splash(float x,float y,int sector,float size,int drops) {
+// surface a while, and a ring that spreads slowly and not far. A shot
+// throws a tall column instead: drops straight up, most of a storey high on
+// water, a little lower and fatter on thick liquids. Drops catch the light,
+// so they stay bright in dark rooms, and glowing liquids throw glowing drops.
+void splash(float x,float y,int sector,float size,int drops,bool shot=false) {
     float now=leveltime/(float)TICRATE;
     bool thick=sectorMist[sector].thick;
     if(rings.size()>=24)rings.erase(rings.begin());
     rings.push_back({x,y,now,thick?10+size*0.2f:30+size*0.6f,thick?1.3f+size*0.015f:0.8f+size*0.01f,std::min(1.0f,size/40),sector});
     if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
-    Image &flat=lumpImage(firstflat+flattranslation[sectors[sector].floorpic],true);float light=lighting(&sectors[sector]);
+    Image &flat=lumpImage(firstflat+flattranslation[sectors[sector].floorpic],true);
+    float light=flat.emissionCoverage>0.2f||sectorMist[sector].hot?1.0f:std::max(lighting(&sectors[sector]),0.8f);
     float floor=units(sectors[sector].floorheight),lift=std::clamp(size/40,0.6f,1.4f);
     if(debris.size()>480)debris.erase(debris.begin(),debris.begin()+(debris.size()-480));
     if(thick)drops=std::max(1,(drops+1)/2);
+    if(shot) {
+        for(int i=0;i<drops;++i) {
+            float angle=randomRange(0,2*doomPi),out=randomRange(0,thick?20:30),up=thick?randomRange(170,260):randomRange(220,330);
+            auto color=texelColor(flat);for(float &c:color)c=std::min(1.0f,c*light*1.3f);
+            debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,up,now,2*up/420+(thick?randomRange(0.4f,0.7f):0.2f),
+                thick?randomRange(2.2f,3.2f):randomRange(1.0f,1.6f),color});
+        }
+        return;
+    }
     for(int i=0;i<drops;++i) {
         float angle=randomRange(0,2*doomPi),out=thick?randomRange(10,40):randomRange(20,80);
         auto color=texelColor(flat);for(float &c:color)c=std::min(1.0f,c*light*1.3f);
@@ -2745,7 +2758,7 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
         float tic=leveltime/(float)TICRATE; // As splash() stamps its rings.
         bool shared=std::any_of(rings.begin(),rings.end(),[&](const Ring &r){return r.born==tic&&std::hypot(r.x-x,r.y-y)<32;});
         size_t before=rings.size();
-        splash(x,y,index,12,3);
+        splash(x,y,index,16,8,true);
         if(shared&&rings.size()>before)rings.pop_back();
         return true;
     }
@@ -2823,7 +2836,7 @@ void buildRings(Uniforms &camera) {
 }
 
 // A thick liquid's color for its bubbles and collars: the brightest of a few
-// texels of its flat picked by hash, lit no darker than its glow allows.
+// texels of its flat picked by hash, lit like splash drops.
 std::array<float,3> gooColor(int sector,uint32_t seed) {
     Image &flat=lumpImage(firstflat+flattranslation[sectors[sector].floorpic],true);
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
@@ -2833,7 +2846,7 @@ std::array<float,3> gooColor(int sector,uint32_t seed) {
         int index=flat.pixels[2*texel],sum=palette[index*3]+palette[index*3+1]+palette[index*3+2];
         if(sum>bestSum){bestSum=sum;best=index;}
     }
-    float light=std::max(lighting(&sectors[sector]),0.55f);
+    float light=flat.emissionCoverage>0.2f||sectorMist[sector].hot?1.0f:std::max(lighting(&sectors[sector]),0.8f);
     return {std::min(1.0f,palette[best*3]/255.0f*light*1.15f),std::min(1.0f,palette[best*3+1]/255.0f*light*1.15f),std::min(1.0f,palette[best*3+2]/255.0f*light*1.15f)};
 }
 // Bubbles on thick liquids near the eye, stateless like the dust: about a
