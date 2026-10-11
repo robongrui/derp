@@ -701,6 +701,14 @@ void main() {
             float upper=smoothstep(-0.25,0.25,dot(n,c.up.xyz));
             vec3 upperNormal=normalize(c.up.xyz+0.35*n);
             float upperShininess=8.0+16.0*weaponGloss;
+            // That upper plane also takes light: a lamp ahead and above falls
+            // on the top of the barrel, which the eye-facing normals turn
+            // away from. A lamp ahead at eye level still misses it (creep and
+            // the grazing mirror cover that); the stronger of the two wins,
+            // so a light both see is not counted twice. Only light from ahead
+            // counts: overhead the sector's light already shades the weapon,
+            // and the open sky outside would flood the barrel.
+            const float upperDiffuse=0.5;
             float top=pow(saturate(dot(n,normalize(vec3(0,0,1)+view))),shininess);
             specular+=vec3(light*weaponGloss*(top>0.5?0.35:top>0.2?0.15:0.0));
             if(c.bake.z>0.0&&vStatic!=0u) {
@@ -713,7 +721,8 @@ void main() {
                 specular+=pulse*statics.w*weaponGloss*((highlight>0.5?1.6:highlight>0.2?0.6:0.0)+mirror);
                 vec3 halfDirection=(toLight+view)/max(length(toLight+view),0.001);
                 specular+=pulse*statics.w*weaponGloss*upper*pow(saturate(dot(upperNormal,halfDirection)),upperShininess)*0.8;
-                pulse*=mix(1.0,0.25+1.0*facing+1.6*rim+1.2*creep,statics.w);
+                float lit=max(facing,upper*upperDiffuse*saturate(dot(upperNormal,toLight))*smoothstep(0.1,0.6,dot(toLight,c.forward.xyz)));
+                pulse*=mix(1.0,0.25+1.0*lit+1.6*rim+1.2*creep,statics.w);
             }
             // The room around it, even with no light near: a fill from each
             // side; glossy faces and every grazing edge mirror what lies
@@ -750,7 +759,8 @@ void main() {
                 // moves that light toward the side facing it, keeping about
                 // the same total, so it shapes the weapon even in bright rooms.
                 float bakedShare=c.bake.x>0.0?lights[i].baked:0.0;
-                pulse+=lights[i].color.rgb*amount*(0.15+1.1*facing+1.6*rim-0.6*bakedShare);
+                float lit=max(facing,upper*upperDiffuse*saturate(dot(upperNormal,toLight))*smoothstep(0.1,0.6,dot(toLight,c.forward.xyz)));
+                pulse+=lights[i].color.rgb*amount*(0.15+1.1*lit+1.6*rim-0.6*bakedShare);
                 float highlight=pow(saturate(dot(n,normalize(toLight+view))),shininess),mirror;
                 // Looking toward the light, it also spills over the weapon.
                 pulse+=lights[i].color.rgb*amount*1.2*weaponCreep(n,view,toLight,mirror);
