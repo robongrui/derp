@@ -654,7 +654,9 @@ void classifySectorMist() {
         mist.pit=hasNeighbor&&lowestNeighbor-units(sector.floorheight)>=24;
         int lump=firstflat+sector.floorpic;
         mist.liquid=liquidFlat(sector.floorpic);
-        mist.reflective=mist.liquid&&strncmp(lumpinfo[lump].name,"LAVA",4)!=0;
+        // Only water mirrors the room: nukage, slime, blood and lava are too
+        // murky for the toned-down reflection to read as more than a smudge.
+        mist.reflective=mist.liquid&&!strncmp(lumpinfo[lump].name,"FWATER",6);
         mist.toxic=sector.special==4||sector.special==5||sector.special==7||sector.special==11||sector.special==16;
         if(mist.liquid&&W_LumpLength(lump)>=4096) {
             const byte *flat=(const byte*)W_CacheLumpNum(lump,PU_CACHE);

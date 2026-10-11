@@ -141,7 +141,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("Soft effect sprites",&s.softSprites,"Explosions, puffs and teleport fog stop slicing into walls and dissolve on a dither at floors.")}},
             {"Liquids",{
                 check("Reflections",&s.reflections,
-                    "Mirror the scene in nearby water, nukage, slime and blood; renders the view a second time at half resolution."),
+                    "Mirror the scene in nearby water; renders the view a second time at half resolution."),
                 check("Retro reflections (PS1 style)",&s.retroReflections,
                     "Eighth resolution, hard pixels, Doom palette colors and a stepped wobble.",
                     [](const Settings &d){return d.reflections!=0;}),

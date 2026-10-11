@@ -68,7 +68,7 @@ struct Settings {
     int detail=1; // Derived normal maps and palette gloss.
     int variedHighlights=1; // Gloss highlights tighten on smooth artwork and spread on busy artwork, per palette ramp.
     int softLight=1; // Light seam blending and edge contact shading.
-    int reflections=1; // Mirrored scene on water, nukage, slime and blood.
+    int reflections=1; // Mirrored scene on water.
     int retroReflections=1; // Eighth resolution, palette colors, stepped wobble.
     int spriteFilter=0; // 0: crisp, 1: bilinear, 2: xBR pixel-art reconstruction.
     int sun=1; // Sun shadows baked at level load from the sky texture.
