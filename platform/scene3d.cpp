@@ -2116,7 +2116,7 @@ void buildMist(const Uniforms &camera) {
 // tinted by the wall texture's average color. Render-only: no game state,
 // own random numbers, cleared on level changes and loads.
 struct WallDecal { int line,side,section; float along,dz,born,size; bool flip; };
-struct Debris { float x,y,z,vx,vy,vz,born,life,size; std::array<float,3> color; };
+struct Debris { float x,y,z,vx,vy,vz,born,life,size; std::array<float,3> color; float light=1; }; // color unlit.
 struct Scorch { float x,y,born,size;int sector; };
 struct FlatDecal { float x,y,born,size;int sector;bool ceiling,flip; };
 std::vector<WallDecal> wallDecals;std::vector<FlatDecal> flatDecals;std::vector<Debris> debris;std::vector<Scorch> scorches;
@@ -2176,8 +2176,10 @@ std::array<float,3> texelColor(Image &image) {
 // Doom pixel, set on the Doom-pixel grid at its depth: a pixel of an old
 // sprite rather than a soft speck. The color is lit, then put in the palette.
 // A resting block stands on the point instead of centering on it, so a floor
-// does not swallow half of it.
-void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting=false) {
+// does not swallow half of it. Given its unlit color, the flashlight beam
+// lights it too.
+void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting=false,
+                const std::array<float,3> *albedo=nullptr) {
     float d[3]={x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]};
     float depth=d[0]*camera.forward[0]+d[1]*camera.forward[1]+d[2]*camera.forward[2];
     if(depth<4)return;
@@ -2186,7 +2188,13 @@ void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,
     float py=(d[0]*camera.up[0]+d[1]*camera.up[1]+d[2]*camera.up[2])/unit;
     float w=std::max(1.0f,std::round(size/unit)),h=std::max(1.0f,std::round(size*tall/unit));
     float left=std::round(px+across-w*0.5f)-across,bottom=std::round(py+100-(resting?0:h*0.5f))-100;
-    auto lit=paletteColor(color);
+    std::array<float,3> shade=color;
+    if(albedo&&flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
+        const Flash &beam=flashes.lights[0];
+        float amount=flashAt(x,y,z,beam);
+        if(amount>0)for(int c=0;c<3;++c)shade[c]=std::min(1.0f,shade[c]+(*albedo)[c]*amount*beam.color[c]);
+    }
+    auto lit=paletteColor(shade);
     auto vertex=[&](float sx,float sz) {
         float r=(sx-px)*unit,u=(sz-py)*unit;
         Vertex v={x+camera.right[0]*r+camera.up[0]*u,y+camera.right[1]*r+camera.up[1]*u,z+camera.right[2]*r+camera.up[2]*u,0,0,1,0};
@@ -2229,8 +2237,7 @@ void wallImpact(line_t *line,int side,fixed_t fx,fixed_t fy,fixed_t fz) {
     if(debris.size()>512)debris.erase(debris.begin(),debris.begin()+(debris.size()-512));
     for(int i=0;i<6;++i) {
         float out=randomRange(50,140),slide=randomRange(-55,55);
-        auto color=texelColor(image);for(float &c:color)c*=light;
-        debris.push_back({wx,wy,z,nx*out+tx*slide,ny*out+ty*slide,randomRange(20,120),now,randomRange(0.45f,0.8f),randomRange(1.2f,2.0f),color});
+        debris.push_back({wx,wy,z,nx*out+tx*slide,ny*out+ty*slide,randomRange(20,120),now,randomRange(0.45f,0.8f),randomRange(1.2f,2.0f),texelColor(image),light});
     }
 }
 void barrelBlast(const mobj_t &thing,float x,float y,float z) {
@@ -2315,7 +2322,8 @@ void buildImpacts(const Uniforms &camera) {
         if(z<floor&&index<sectorMist.size()&&sectorMist[index].liquid&&!sectorMist[index].thick)continue; // Back into the water.
         z=std::min(z,ceilZ(sector)-p.size*0.5f);
         float size=t>p.life*0.75f?p.size*0.5f:p.size,tall=std::abs(p.vz-420*t)>220?2.0f:1.0f;
-        pixelBlock(particleVertices,camera,x,y,std::max(z,floor),size,tall,p.color,z<=floor+p.size*0.5f);
+        std::array<float,3> lit;for(int c=0;c<3;++c)lit[c]=std::min(1.0f,p.color[c]*p.light);
+        pixelBlock(particleVertices,camera,x,y,std::max(z,floor),size,tall,lit,z<=floor+p.size*0.5f,&p.color);
     }
 }
 // The first wall a ray from (x,y,z) along the unit horizontal (dx,dy) meets
@@ -2745,17 +2753,17 @@ void splash(float x,float y,int sector,float size,int drops,bool shot=false) {
     if(shot) {
         for(int i=0;i<drops;++i) {
             float angle=randomRange(0,2*doomPi),out=randomRange(0,thick?20:30),up=thick?randomRange(170,260):randomRange(220,330);
-            auto color=texelColor(flat);for(float &c:color)c=std::min(1.0f,c*light*1.3f);
+            auto color=texelColor(flat);for(float &c:color)c=std::min(1.0f,c*1.3f);
             debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,up,now,2*up/420+(thick?randomRange(0.4f,0.7f):0.2f),
-                thick?randomRange(2.2f,3.2f):randomRange(1.0f,1.6f),color});
+                thick?randomRange(2.2f,3.2f):randomRange(1.0f,1.6f),color,light});
         }
         return;
     }
     for(int i=0;i<drops;++i) {
         float angle=randomRange(0,2*doomPi),out=thick?randomRange(10,40):randomRange(20,80);
-        auto color=texelColor(flat);for(float &c:color)c=std::min(1.0f,c*light*1.3f);
-        if(thick) debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(70,150)*lift,now,randomRange(0.8f,1.2f),randomRange(2.4f,3.6f),color});
-        else debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(90,220)*lift,now,randomRange(0.35f,0.6f),randomRange(0.8f,1.2f),color});
+        auto color=texelColor(flat);for(float &c:color)c=std::min(1.0f,c*1.3f);
+        if(thick) debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(70,150)*lift,now,randomRange(0.8f,1.2f),randomRange(2.4f,3.6f),color,light});
+        else debris.push_back({x,y,floor+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(90,220)*lift,now,randomRange(0.35f,0.6f),randomRange(0.8f,1.2f),color,light});
     }
 }
 // Free-aimed hitscan shots stopping on a floor or ceiling (R_PlaneImpact):
@@ -2782,9 +2790,8 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
     if(debris.size()>512)debris.erase(debris.begin(),debris.begin()+(debris.size()-512));
     for(int i=0;i<5;++i) {
         float angle=randomRange(0,2*doomPi),out=randomRange(20,70);
-        auto color=texelColor(image);for(float &c:color)c*=light;
         debris.push_back({x,y,ceiling?z-3:z+1,std::cos(angle)*out,std::sin(angle)*out,ceiling?randomRange(-40,0):randomRange(60,140),now,
-            randomRange(0.45f,0.8f),randomRange(1.2f,2.0f),color});
+            randomRange(0.45f,0.8f),randomRange(1.2f,2.0f),texelColor(image),light});
     }
     return false;
 }
@@ -2833,7 +2840,13 @@ void buildRings(Uniforms &camera) {
         Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
         if(flat.emissionCoverage>0.2f||sectorMist[ring.sector].hot)light=1;else light=std::max(light,0.8f);
         const auto &brightest=brightestColor(flat);
-        std::array<float,3> tint;for(int c=0;c<3;++c)tint[c]=std::min(1.0f,(brightest[c]*1.2f+0.06f)*light);
+        std::array<float,3> albedo,tint;
+        for(int c=0;c<3;++c){albedo[c]=std::min(1.0f,brightest[c]*1.2f+0.06f);tint[c]=albedo[c]*light;}
+        // The flashlight lights the whole ring by its center.
+        if(flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
+            const Flash &beam=flashes.lights[0];float amount=flashAt(ring.x,ring.y,z+1,beam);
+            if(amount>0)for(int c=0;c<3;++c)tint[c]=std::min(1.0f,tint[c]+albedo[c]*amount*beam.color[c]);
+        }
         // Concentric rings of single pixels, one every few units: each inner
         // ring follows a few tics behind the last and is a little sparser.
         // They lose dots as they fade instead of turning see-through.
@@ -2906,15 +2919,15 @@ void buildBubbles(const Uniforms &camera) {
                 auto color=gooColor(i,seed);
                 if(s<1.15f) {
                     float step=s<0.3f?1:s<0.6f?2:3;
-                    pixelBlock(particleVertices,camera,x,y,floor+0.2f,1.6f*step,s<0.9f?0.6f:0.8f,color,true);
+                    pixelBlock(particleVertices,camera,x,y,floor+0.2f,1.6f*step,s<0.9f?0.6f:0.8f,color,true,&color);
                 } else {
                     float q=(s-1.15f)/0.25f,r=2+8*q,z=floor+0.2f+5*std::sin(doomPi*q);
                     for(int k=0;k<4;++k)
-                        pixelBlock(particleVertices,camera,x+(k&1?r:-r)*0.7f,y+(k&2?r:-r)*0.7f,z,1.2f,1,color);
+                        pixelBlock(particleVertices,camera,x+(k&1?r:-r)*0.7f,y+(k&2?r:-r)*0.7f,z,1.2f,1,color,false,&color);
                     for(int k=0;k<8;++k) {
                         if(hashUnit(k,(int)seed,seed^7u)<q)continue;
                         float angle=(k+0.5f)*doomPi/4;
-                        pixelBlock(particleVertices,camera,x+std::cos(angle)*r,y+std::sin(angle)*r,floor+0.2f,1.2f,1,color,true);
+                        pixelBlock(particleVertices,camera,x+std::cos(angle)*r,y+std::sin(angle)*r,floor+0.2f,1.2f,1,color,true,&color);
                     }
                 }
             }
@@ -4253,7 +4266,7 @@ void geometry(const Uniforms &camera,float fraction) {
                 auto color=gooColor(i,seed);
                 for(int k=0;k<6;++k) {
                     float angle=(k+hashUnit(k,tic,seed)*0.5f)*doomPi/3,wobble=r*(0.9f+0.25f*hashUnit(k,tic,seed^3u));
-                    pixelBlock(particleVertices,camera,x+std::cos(angle)*wobble,y+std::sin(angle)*wobble,floorZ(&sectors[i])+0.2f,2.0f,0.6f,color,true);
+                    pixelBlock(particleVertices,camera,x+std::cos(angle)*wobble,y+std::sin(angle)*wobble,floorZ(&sectors[i])+0.2f,2.0f,0.6f,color,true,&color);
                 }
             }
         }
