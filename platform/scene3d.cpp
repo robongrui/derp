@@ -2725,10 +2725,11 @@ void updateExposure(Uniforms &camera) {
 }
 
 // Splashes: per tic, things in liquid sectors are watched for landing,
-// projectiles exploding at the surface, and wading. Each event throws
+// projectiles exploding at the surface, wading, and bodies coming to rest
+// in it (a corpse's last death frame). Each event throws
 // droplets in the colors of the liquid's flat and expanding rings; the
 // reflection stays as it is.
-struct SplashWatch { float z;bool missile,seen;int ripple; };
+struct SplashWatch { float z;bool missile,seen;int ripple;bool down; };
 struct Ring { float x,y,born,speed,life,strength;int sector; };
 std::unordered_map<const mobj_t*,SplashWatch> splashWatch;
 std::vector<Ring> rings;
@@ -2807,10 +2808,16 @@ void watchSplashes() {
             if((thing->flags&MF_NOBLOCKMAP)&&!missile)continue;
             float x=units(thing->x),y=units(thing->y),z=units(thing->z);
             bool surface=z<=floor+1;
+            bool down=(thing->flags&MF_CORPSE)&&thing->tics==-1;
             auto found=splashWatch.find(thing);
-            if(found==splashWatch.end()) {splashWatch[thing]={z,missile,true,leveltime};continue;}
+            if(found==splashWatch.end()) {splashWatch[thing]={z,missile,true,leveltime,down};continue;}
             SplashWatch &watch=found->second;watch.seen=true;
             float size=units(thing->radius)*2;
+            if(down&&!watch.down&&surface) {
+                splash(x,y,i,std::clamp(size*0.8f+16,24.0f,56.0f),6);
+                watch.down=true;watch.ripple=leveltime;watch.z=z;continue;
+            }
+            watch.down=down;
             if(watch.missile&&!missile&&z<=floor+8)splash(x,y,i,48,12);
             else if(surface&&watch.z>floor+3) {
                 splash(x,y,i,std::clamp(size*0.5f+(watch.z-z)*0.8f,12.0f,64.0f),std::clamp(int(4+(watch.z-z)*0.25f),4,16));
