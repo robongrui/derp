@@ -2725,11 +2725,11 @@ void updateExposure(Uniforms &camera) {
 }
 
 // Splashes: per tic, things in liquid sectors are watched for landing,
-// projectiles exploding at the surface, wading, and bodies coming to rest
-// in it (a corpse's last death frame). Each event throws
+// projectiles exploding at the surface, wading (rings only), and bodies
+// coming to rest in it (a corpse's last death frame). Each event throws
 // droplets in the colors of the liquid's flat and expanding rings; the
 // reflection stays as it is.
-struct SplashWatch { float z;bool missile,seen;int ripple;bool down; };
+struct SplashWatch { float z;bool missile,seen;int ripple;bool down;float x,y; };
 struct Ring { float x,y,born,speed,life,strength;int sector; };
 std::unordered_map<const mobj_t*,SplashWatch> splashWatch;
 std::vector<Ring> rings;
@@ -2740,11 +2740,17 @@ unsigned splashLevelSerial;
 // throws a tall column instead: drops straight up, most of a storey high on
 // water, a little lower and fatter on thick liquids. Drops catch the light,
 // so they stay bright in dark rooms, and glowing liquids throw glowing drops.
-void splash(float x,float y,int sector,float size,int drops,bool shot=false) {
+// Rings alone, for things wading through.
+void ripple(float x,float y,int sector,float size,bool shot=false) {
     float now=leveltime/(float)TICRATE;
     bool thick=sectorMist[sector].thick;
     if(rings.size()>=24)rings.erase(rings.begin());
     rings.push_back({x,y,now,thick?10+size*0.2f:30+size*0.6f,thick?1.3f+size*0.015f:0.8f+size*0.01f,shot?1.0f:std::min(1.0f,size/40),sector});
+}
+void splash(float x,float y,int sector,float size,int drops,bool shot=false) {
+    float now=leveltime/(float)TICRATE;
+    bool thick=sectorMist[sector].thick;
+    ripple(x,y,sector,size,shot);
     if(decalLevelSerial!=r_levelserial){wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();decalLevelSerial=r_levelserial;}
     Image &flat=lumpImage(firstflat+flattranslation[sectors[sector].floorpic],true);
     float light=flat.emissionCoverage>0.2f||sectorMist[sector].hot?1.0f:std::max(lighting(&sectors[sector]),0.8f);
@@ -2810,22 +2816,24 @@ void watchSplashes() {
             bool surface=z<=floor+1;
             bool down=(thing->flags&MF_CORPSE)&&thing->tics==-1;
             auto found=splashWatch.find(thing);
-            if(found==splashWatch.end()) {splashWatch[thing]={z,missile,true,leveltime,down};continue;}
+            if(found==splashWatch.end()) {splashWatch[thing]={z,missile,true,leveltime,down,x,y};continue;}
             SplashWatch &watch=found->second;watch.seen=true;
             float size=units(thing->radius)*2;
             if(down&&!watch.down&&surface) {
                 splash(x,y,i,std::clamp(size*0.8f+16,24.0f,56.0f),6);
-                watch.down=true;watch.ripple=leveltime;watch.z=z;continue;
+                watch.down=true;watch.ripple=leveltime;watch.z=z;watch.x=x;watch.y=y;continue;
             }
             watch.down=down;
             if(watch.missile&&!missile&&z<=floor+8)splash(x,y,i,48,12);
             else if(surface&&watch.z>floor+3) {
                 splash(x,y,i,std::clamp(size*0.5f+(watch.z-z)*0.8f,12.0f,64.0f),std::clamp(int(4+(watch.z-z)*0.25f),4,16));
                 watch.ripple=leveltime;
-            } else if(surface&&std::hypot(units(thing->momx),units(thing->momy))>1&&leveltime-watch.ripple>=12) {
-                splash(x,y,i,size*0.4f,2);watch.ripple=leveltime;
+            } else if(surface&&!down&&std::hypot(x-watch.x,y-watch.y)>1&&leveltime-watch.ripple>=12) {
+                // Monsters step without momentum, so movement is the change
+                // in position since the last tic.
+                ripple(x,y,i,size*0.4f);watch.ripple=leveltime;
             }
-            watch.z=z;watch.missile=missile;
+            watch.z=z;watch.missile=missile;watch.x=x;watch.y=y;
         }
     }
     for(auto it=splashWatch.begin();it!=splashWatch.end();) it=it->second.seen?std::next(it):splashWatch.erase(it);
