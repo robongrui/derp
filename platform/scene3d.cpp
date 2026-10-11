@@ -29,6 +29,7 @@ extern "C" {
 #include "m_argv.h"
 #include "i_system.h"
 #include "r_main.h"
+#include "m_bbox.h"
 extern int viewwindowx, viewwindowy;
 extern boolean menuactive, automapactive, paused;
 extern int numflats;
@@ -3786,22 +3787,131 @@ void relightMovingSectors() {
     }
     if(!relight.running&&!relightPending.empty())startRelight();
 }
+// The mirrored pass draws the world a second time, so it runs only while a
+// reflective floor can be on screen. Doom's own visibility answers that: the
+// BSP front to back from the eye, one-sided walls and closed doors covering
+// the view angles behind them until the whole view is covered. Walls are full
+// height and the sky hides what lies past it, so the map's plan is enough; a
+// closed door under a sky ceiling still counts as open, since sky ceilings
+// rise above their walls (skyTop). Angles run from the view direction.
+struct ViewCover {
+    std::vector<std::pair<float,float>> spans; // Sorted, merged.
+    // A span from lo across width radians, split where it wraps past behind.
+    template<class F> static bool parts(float lo,float width,F &&f) {
+        float hi=lo+width;
+        if(hi<=doomPi) return f(lo,hi);
+        return f(lo,(float)doomPi)&&f((float)-doomPi,hi-2*(float)doomPi);
+    }
+    bool hidden(float lo,float width) const {
+        return parts(lo,width,[&](float a,float b){
+            for(const auto &s:spans) if(s.first<=a&&s.second>=b) return true;
+            return false;
+        });
+    }
+    void cover(float lo,float width) {
+        parts(lo,width,[&](float a,float b){
+            spans.push_back({a,b});std::sort(spans.begin(),spans.end());
+            std::vector<std::pair<float,float>> merged;
+            for(const auto &s:spans)
+                if(!merged.empty()&&s.first<=merged.back().second) merged.back().second=std::max(merged.back().second,s.second);
+                else merged.push_back(s);
+            spans=std::move(merged);return true;
+        });
+    }
+    bool full() const {return spans.size()==1&&spans[0].first<=-doomPi&&spans[0].second>=doomPi;}
+};
+// Which of the candidate leaves the eye can see (visible[leaf] set).
+void visibleLeaves(const Uniforms &camera,const std::vector<char> &candidate,std::vector<char> &visible) {
+    float ex=camera.eye[0],ey=camera.eye[1];
+    float yaw=std::atan2(camera.right[0],-camera.right[1]);
+    auto relative=[&](float x,float y){return std::remainder(std::atan2(y-ey,x-ex)-yaw,2*(float)doomPi);};
+    // Looking up or down widens the view's footprint on the map: the frustum's
+    // corners lean back toward the eye, and once its lower or upper edge passes
+    // straight down or up the footprint is the whole circle.
+    float tanH=1/camera.projection[0],tanV=1/camera.projection[1];
+    float flat=std::hypot(camera.forward[0],camera.forward[1]),reach=flat-tanV*std::abs(camera.forward[2]);
+    float half=reach>0.05f?std::min((float)doomPi,std::atan2(tanH,reach)+0.05f):(float)doomPi;
+    ViewCover view;
+    if(half<doomPi){view.spans={{-(float)doomPi,-half},{half,(float)doomPi}};}
+    // A convex shape's angles from the eye, a little wider so a wall's end
+    // never quite hides a floor running up to it; false when the eye is inside.
+    auto extent=[&](const Point *points,size_t count,float &lo,float &width) {
+        float base=relative(points[0].x,points[0].y),low=0,high=0;
+        for(size_t i=1;i<count;++i) {
+            float d=std::remainder(relative(points[i].x,points[i].y)-base,2*(float)doomPi);
+            low=std::min(low,d);high=std::max(high,d);
+        }
+        if(high-low>=doomPi-0.01f) return false;
+        lo=std::remainder(base+low-0.01f,2*(float)doomPi);width=high-low+0.02f;return true;
+    };
+    auto seen=[&](const Point *points,size_t count) {
+        float lo,width;
+        return !extent(points,count,lo,width)||!view.hidden(lo,width);
+    };
+    std::function<void(unsigned)> walk=[&](unsigned node) {
+        if(view.full()) return;
+        if(node&NF_SUBSECTOR) {
+            unsigned leaf=node&~NF_SUBSECTOR;
+            if(leaf>=(unsigned)numsubsectors) return;
+            const auto &poly=floors[leaf];
+            if(candidate[leaf]&&poly.size()>=3&&seen(poly.data(),poly.size())) visible[leaf]=1;
+            const subsector_t &sub=subsectors[leaf];
+            for(int i=0;i<sub.numlines;++i) {
+                const seg_t &seg=segs[sub.firstline+i];
+                const sector_t *front=seg.frontsector,*back=seg.backsector;
+                bool solid=!back||(front->ceilingpic!=skyflatnum&&back->ceilingpic!=skyflatnum&&
+                    (ceilZ(back)<=floorZ(front)||floorZ(back)>=ceilZ(front)));
+                if(!solid) continue;
+                float a1=relative(units(seg.v1->x),units(seg.v1->y)),a2=relative(units(seg.v2->x),units(seg.v2->y));
+                float span=std::remainder(a1-a2,2*(float)doomPi);
+                if(span>0) view.cover(a2,span);
+            }
+            return;
+        }
+        if(node>=(unsigned)numnodes) return;
+        const node_t &n=nodes[node];
+        float px=ex-units(n.x),py=ey-units(n.y);
+        int side=units(n.dy)*px-units(n.dx)*py>0?0:1;
+        walk(n.children[side]);
+        // The far side only if some of its box is still in view.
+        const fixed_t *box=n.bbox[side^1];
+        Point corners[4]={{units(box[BOXLEFT]),units(box[BOXTOP])},{units(box[BOXRIGHT]),units(box[BOXTOP])},
+                          {units(box[BOXRIGHT]),units(box[BOXBOTTOM])},{units(box[BOXLEFT]),units(box[BOXBOTTOM])}};
+        bool inside=ex>=corners[0].x&&ex<=corners[1].x&&ey>=corners[2].y&&ey<=corners[0].y;
+        if(inside||seen(corners,4)) walk(n.children[side^1]);
+    };
+    walk(numnodes?unsigned(numnodes-1):unsigned(NF_SUBSECTOR));
+}
 void geometry(const Uniforms &camera,float fraction) {
     for(auto &batch:batches)batch.second.clear();
     for(auto &batch:shadowBatches)batch.second.clear();
     surfaceLights.clear();
     std::copy(camera.eye,camera.eye+3,surfaceEye);collectFlashes(fraction,camera);
     collectFlatLights();
-    // The nearest reflective liquid below the eye sets this frame's mirror plane.
-    reflectionActive=false;float nearest=1024;
-    if(settings.reflections&&!(profile.skip&I_RENDER3D_SKIP_REFLECTIONS)&&camera.effects[2]==0)for(int i=0;i<numsectors;++i) {
-        if(!sectorMist[i].reflective||sectors[i].floorpic==skyflatnum)continue;
-        float z=floorZ(&sectors[i]);if(camera.eye[2]<z+1)continue;
-        for(int leaf:sectorFloors[i]) {
-            const auto &b=floorBounds[leaf];
-            float dx=std::max({b[0]-camera.eye[0],0.0f,camera.eye[0]-b[2]}),dy=std::max({b[1]-camera.eye[1],0.0f,camera.eye[1]-b[3]});
-            float d=std::hypot(dx,dy);
-            if(d<nearest){nearest=d;reflectionPlane=z;reflectionActive=true;}
+    // The nearest reflective liquid below the eye that it can see sets this
+    // frame's mirror plane (visibleLeaves).
+    reflectionActive=false;
+    if(settings.reflections&&!(profile.skip&I_RENDER3D_SKIP_REFLECTIONS)&&camera.effects[2]==0) {
+        static std::vector<char> candidate,visible;
+        std::vector<std::pair<float,int>> near;
+        for(int i=0;i<numsectors;++i) {
+            if(!sectorMist[i].reflective||sectors[i].floorpic==skyflatnum)continue;
+            float z=floorZ(&sectors[i]);if(camera.eye[2]<z+1)continue;
+            for(int leaf:sectorFloors[i]) {
+                const auto &b=floorBounds[leaf];
+                float dx=std::max({b[0]-camera.eye[0],0.0f,camera.eye[0]-b[2]}),dy=std::max({b[1]-camera.eye[1],0.0f,camera.eye[1]-b[3]});
+                float d=std::hypot(dx,dy);
+                if(d<1024)near.push_back({d,leaf});
+            }
+        }
+        if(!near.empty()) {
+            candidate.assign(numsubsectors,0);visible.assign(numsubsectors,0);
+            for(const auto &n:near)candidate[n.second]=1;
+            visibleLeaves(camera,candidate,visible);
+            float nearest=1024;
+            for(const auto &[d,leaf]:near) if(visible[leaf]&&d<nearest) {
+                nearest=d;reflectionPlane=floorZ(subsectors[leaf].sector);reflectionActive=true;
+            }
         }
     }
     // Vanilla draws sky wherever a sky flat would be, hiding everything past
