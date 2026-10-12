@@ -68,6 +68,13 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "Gloss highlights are tight and bright where the artwork runs smooth and broad and dim where it is busy, "
                     "with slime and blue panels sharper than worn grey metal.",
                     [](const Settings &d){return d.detail!=0;}),
+                check("uneven_tiles","Uneven floor tiles",&s.unevenTiles,
+                    "Tiles, plates and stones painted into floors each lie a little crooked, as if laid by hand: "
+                    "lights catch some and miss others, and a thin lip lights up or falls into shadow where neighbors meet. Found from the artwork's seams at load.",
+                    [](const Settings &d){return d.detail!=0;}),
+                check("uneven_walls","Uneven wall and ceiling tiles",&s.unevenWalls,
+                    "The same for the plates, panels and bricks painted into walls and ceilings; walls split only into straight rows and joints.",
+                    [](const Settings &d){return d.detail!=0;}),
                 check("weapon_lighting","Relit weapon",&s.weaponLighting,
                     "The sheen and light painted into the weapon artwork are taken out, and the lights around you relight it: "
                     "their color, darker rounded edges, glowing rims against lights behind it, and highlights that slide over "
@@ -120,6 +127,9 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("eye_adaptation","Eye adaptation",&s.eyeAdaptation,"Brief stepped over- or underexposure when you move between bright and dark areas.")}},
             {"Flashlight and shadows",{
                 slider("flashlight_tint","Flashlight tint",&s.flashlightTintGain,0,2,0.5,"Subtle target-color tint: left is off, middle is the default, right is stronger."),
+                check("classic_flashlight","Classic flashlight",&s.classicFlashlight,
+                    "A shorter, warmer beam that works like Doom's own light levels: it brightens what it hits in "
+                    "hard steps to a little past full brightness and no further, so monsters keep their palette colors."),
                 check("flashlight_shadows","Flashlight silhouettes",&s.flashlightShadows,"Things caught in the flashlight throw their sprite outline onto the wall behind them."),
                 check("player_shadow","Player shadow",&s.playerShadow,"Your own sprite's shadow from the sun or the strongest light above you.")}}}},
         {"Atmosphere",{
@@ -174,6 +184,21 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "a little stained by the liquid. Lava stays dry."),
                 check("splashes","Splashes",&s.splashes,"Ripple rings where things land, wade or are shot in liquids, and spouts where shots and projectiles hit them. "
                     "Things standing in liquids sink in; nukage, slime, blood and lava splash thick and bubble.")}}}},
+        {"Sound",{
+            {"Rooms",{
+                check("room_acoustics","Room acoustics",&s.roomAcoustics,
+                    "Sounds echo off the walls around you and ring on in a tail measured from the room: corridors slap back, "
+                    "big metal halls boom, wooden rooms stay dull and the outdoors almost dry."),
+                slider("reverb_amount","Echo and reverb",&s.reverbAmount,0.25,2,0.25,
+                    "How loud the echoes and the tail are next to the sound itself.",
+                    [](const Settings &d){return d.roomAcoustics!=0;},
+                    {"25%","50%","75%","100%","125%","150%","175%","200%"})}},
+            {"Hearing",{
+                check("muffle_walls","Muffled behind walls",&s.muffleWalls,
+                    "Sounds you can't see come through muffled: a little round a corner or through an open door, "
+                    "a lot behind closed doors and solid walls. Their loudness stays as in vanilla DOOM."),
+                check("muffle_distance","Duller with distance",&s.muffleDistance,
+                    "Far sounds lose their treble, the way they do through air.")}}}},
         {"Performance",{
             {"Cheaper light work",{
                 check("bake_only_lights","Bake-only static lights",&s.bakeOnlyLights,

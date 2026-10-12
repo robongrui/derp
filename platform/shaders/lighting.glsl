@@ -91,6 +91,14 @@ float flashFacing(vec3 point,vec3 normal,uint i) {
     float lambert=distance>0.001?max(0.0,dot(normal,toLight)/distance):1.0;
     return mix(1.0,lambert,lights[i].color.w);
 }
+// FEATURE_CLASSIC_FLASHLIGHT: the flashlight (the only light with a cone)
+// works like Doom's extralight. Its light comes in hard 1/8 steps, and the
+// world shader lifts illumination toward BEAM_CEILING by it, never past: a
+// tick above full brightness, so the beam reads without washing colors out.
+#define BEAM_STEPS 8.0
+#define BEAM_CEILING 1.2
+bool classicBeam(uint i) {return (uint(c.flashlightTint.w)&FEATURE_CLASSIC_FLASHLIGHT)!=0u&&lights[i].direction.w>0.0;}
+float beamSteps(float amount) {return floor(saturate(amount)*BEAM_STEPS+0.5)/BEAM_STEPS;}
 // Fog: analytic exponential height extinction, an analytic headlamp glow, and
 // one soft ray/sphere glow per nearby light. No marching through the volume.
 // Use the denser endpoint for downward rays to avoid an overflowing exp(-x).

@@ -59,6 +59,7 @@ void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
 {
     (void)handle; (void)vol; (void)sep; (void)pitch;
 }
+void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z) { (void)handle; (void)x; (void)y; (void)z; }
 void I_InitMusic(void) { }
 void I_ShutdownMusic(void) { }
 void I_SetMusicVolume(int volume) { (void)volume; }

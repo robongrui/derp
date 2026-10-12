@@ -169,8 +169,12 @@ static Image &withGlassFrame(Image &image,const std::vector<byte> &frame) {
 // averaged 11 texels along each axis before taking its slope across, so long
 // straight bands stand out while blotches a few texels wide wash out instead
 // of turning into craters. A weak per-texel Sobel adds only fine pitting.
-// Repeats like the texture.
-static Image &withRelief(Image &image) {
+// Repeats like the texture. tiles: finds the painted tiles of a wall or flat
+// (painted_tiles.h) so each gets a crooked lie; the relief is then stored at
+// 16 bits with the anchor offset in alpha (noPaintedTile: none), the other
+// channels as at 8 bits.
+using Tiler=std::vector<uint16_t>(*)(const std::vector<float> &,int,int);
+static Image &withRelief(Image &image,Tiler tiles=nullptr) {
     int w=image.width,h=image.height;size_t count=(size_t)w*h;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<float> height(count),across(count),down(count),broad(count),grain(count),rough(count),scratch(count);
@@ -208,7 +212,15 @@ static Image &withRelief(Image &image) {
         cell[0]=(byte)std::lround(128+127*sx*soften);cell[1]=(byte)std::lround(128+127*sy*soften);
         cell[2]=(byte)std::lround(std::clamp(rough[(size_t)y*w+x]/0.25f,0.0f,1.0f)*255);cell[3]=255;
     }
-    image.relief=gpuCreateTexture(GpuFormat::RGBA8,w,h,cells.data(),w*4);
+    std::vector<uint16_t> anchors=tiles?tiles(height,w,h):std::vector<uint16_t>();
+    if(std::any_of(anchors.begin(),anchors.end(),[](uint16_t a){return a!=noPaintedTile;})) {
+        std::vector<uint16_t> wide(count*4);
+        for(size_t i=0;i<count;++i) {
+            for(int c=0;c<3;++c)wide[i*4+c]=(uint16_t)(cells[i*4+c]*257);
+            wide[i*4+3]=anchors[i];
+        }
+        image.relief=gpuCreateTexture(GpuFormat::RGBA16Uint,w,h,wide.data(),w*8);
+    } else image.relief=gpuCreateTexture(GpuFormat::RGBA8,w,h,cells.data(),w*4);
     if(!image.relief)I_Error((char*)"Could not allocate a GPU texture");
     return image;
 }
@@ -251,8 +263,12 @@ Image &wallImage(int index) {
     auto mask=emissionMask(name,false,w,h,pixels.data());
     bool glowing=std::any_of(mask.begin(),mask.end(),[](byte p){return p!=0;});
     std::vector<byte> frame;auto glass=screenGlass(name,false,w,h,pixels.data(),frame);
-    return withRelief(withGlassFrame(images.emplace(index,upload(w,h,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
-        glass.empty()?nullptr:glass.data(),true)).first->second,frame));
+    // Masked walls (bars, fences) show what lies behind instead of tiles;
+    // animated ones would change tiles every frame.
+    int next;bool animated=P_PicAnimationNext(true,index,&next)>0;
+    Image &image=images.emplace(index,upload(w,h,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
+        glass.empty()?nullptr:glass.data(),true)).first->second;
+    return withRelief(withGlassFrame(image,frame),image.opaque&&!animated?wallTiles:nullptr);
 }
 Image &lumpImage(int lump,bool flat) {
     int key=-1-lump; auto found=images.find(key); if(found!=images.end()) return found->second;
@@ -266,8 +282,10 @@ Image &lumpImage(int lump,bool flat) {
         auto mask=emissionMask(name,true,64,64,pixels.data());
         bool glowing=std::any_of(mask.begin(),mask.end(),[](byte p){return p!=0;});
         std::vector<byte> frame;auto glass=screenGlass(name,true,64,64,pixels.data(),frame);
+        // Animated flats (liquids, lights) change their tiles every frame.
+        int next;bool animated=P_PicAnimationNext(false,lump-firstflat,&next)>0;
         return withRelief(withGlassFrame(images.emplace(key,upload(64,64,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
-            glass.empty()?nullptr:glass.data(),true)).first->second,frame));
+            glass.empty()?nullptr:glass.data(),true)).first->second,frame),animated?nullptr:flatTiles);
     }
     if(size<8) I_Error((char*)"Invalid sprite texture");
     const patch_t *patch=(const patch_t*)data;

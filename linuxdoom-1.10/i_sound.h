@@ -86,6 +86,10 @@ I_UpdateSoundParams
   int		sep,
   int		pitch );
 
+// Where a positioned sound is in the map, for muffling and distance.
+// Handle 0 places the sound the next I_StartSound starts.
+void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z);
+
 
 //
 //  MUSIC I/O

@@ -30,6 +30,7 @@ layout(location=5) flat VARYING vec3 vTint;
 layout(location=6) flat VARYING uvec2 vLightMask;
 layout(location=7) VARYING vec2 vSun;
 // Sprites with bake-only lights: static light direction (xyz) and share (w), unorm bytes.
+// Walls: a seed per wall section for their uneven tiles (tiles.glsl).
 layout(location=8) flat VARYING uint vStatic;
 // Sprites: the sector light's lamp color (lampTint in baked_lighting.h), unorm bytes.
 layout(location=9) flat VARYING uint vLampTint;

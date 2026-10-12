@@ -402,8 +402,11 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	} 
     } 
  
-    forward += mousey; 
-    if (strafe) 
+    forward += mousey;
+    // A tic's summed motion must fit angleturn (a short) or a flick turns backwards.
+    if (mousex > 4095) mousex = 4095;
+    else if (mousex < -4095) mousex = -4095;
+    if (strafe)
 	side += mousex*2; 
     else 
 	cmd->angleturn -= mousex*0x8; 
@@ -574,8 +577,10 @@ boolean G_Responder (event_t* ev)
 	mousebuttons[0] = ev->data1 & 1; 
 	mousebuttons[1] = ev->data1 & 2; 
 	mousebuttons[2] = ev->data1 & 4; 
-	mousex = ev->data2*(mouseSensitivity+5)/10; 
-	mousey = ev->data3*(mouseSensitivity+5)/10; 
+	// Uncapped frames post one mouse event each, several per tic:
+	// sum them until G_BuildTiccmd uses and clears the motion.
+	mousex += ev->data2*(mouseSensitivity+5)/10;
+	mousey += ev->data3*(mouseSensitivity+5)/10;
 	return true;    // eat events 
  
       case ev_joystick: 

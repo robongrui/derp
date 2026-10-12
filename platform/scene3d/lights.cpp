@@ -147,7 +147,12 @@ void collectFlashes(float fraction,const Uniforms &camera) {
             aim[c]=camera.eye[c]+camera.forward[c]*256-lamp[c];length+=aim[c]*aim[c];
         }
         length=std::sqrt(length);
-        appendLight(lamp[0],lamp[1],lamp[2],900,1.9f,{1.0f,0.96f,0.86f},nullptr,0.85f,true,0,{aim[0]/length,aim[1]/length,aim[2]/length,0.90f});
+        // The classic beam is shorter and weaker, in an old bulb's warm
+        // color; the shaders apply it like extralight (FEATURE_CLASSIC_FLASHLIGHT).
+        bool classic=settings.classicFlashlight;
+        appendLight(lamp[0],lamp[1],lamp[2],classic?640:900,classic?1.1f:1.9f,
+                    classic?std::array<float,3>{1.0f,0.86f,0.62f}:std::array<float,3>{1.0f,0.96f,0.86f},nullptr,0.85f,true,0,
+                    {aim[0]/length,aim[1]/length,aim[2]/length,0.90f});
     }
     if(flashLevelSerial!=r_levelserial) {flashPulses.clear();flashLevelSerial=r_levelserial;}
     flashPulses.erase(std::remove_if(flashPulses.begin(),flashPulses.end(),[](const FlashPulse &p) {

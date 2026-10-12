@@ -49,7 +49,8 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
         // A static light's flat share already arrives as baked tint;
         // this keeps only its shaping across the silhouette.
         float bakedShare=c.bake.x>0.0?lights[i].baked:0.0;
-        pulse+=lights[i].color.rgb*amount*(0.4+0.6*facing+1.6*rim-bakedShare);
+        if(classicBeam(i)) beamLight+=lights[i].color.rgb*beamSteps(amount)*(0.4+0.6*facing);
+        else pulse+=lights[i].color.rgb*amount*(0.4+0.6*facing+1.6*rim-bakedShare);
         if(wetSprite) {
             float highlight=pow(saturate(dot(n,normalize(toLight+view))),24.0);
             highlight=highlight>0.5?1.0:highlight>0.2?0.5:0.0;

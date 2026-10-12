@@ -190,8 +190,10 @@ if(DOOM_BUILD_SDL)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
         target_compile_definitions(${target} PRIVATE DOOM_RENDER3D)
     endfunction()
+    # Sound in the map for the SDL mixer: room reverb, muffling and the map reads they share.
+    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/reverb.c platform/audio/room.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
-        platform/i_sdl_sound.c platform/i_opl_music.c platform/i_singleplayer.c
+        platform/i_sdl_sound.c platform/i_opl_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
     target_link_libraries(doom PRIVATE doom_core SDL3::SDL3 nuked_opl3)
     target_compile_definitions(doom PRIVATE DOOM_NATIVE)
@@ -220,7 +222,7 @@ if(DOOM_BUILD_SDL)
     if(BUILD_TESTING)
         function(doom_add_smoke target renderer)
             add_executable(${target} ${ARGN} platform/i_sdl_video.c
-                platform/i_sdl_sound.c platform/i_opl_music.c platform/i_singleplayer.c
+                platform/i_sdl_sound.c platform/i_opl_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
                 platform/i_portable_system.c)
             target_compile_definitions(${target} PRIVATE DOOM_TEST_DRIVER)
             target_link_libraries(${target} PRIVATE doom_core SDL3::SDL3 nuked_opl3)

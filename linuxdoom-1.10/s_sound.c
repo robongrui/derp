@@ -384,6 +384,10 @@ S_StartSoundAtVolume
   if (sfx->usefulness++ < 0)
     sfx->usefulness = 1;
   
+  // Where a positioned sound is, for the mixer to muffle it.
+  if (origin && origin != players[consoleplayer].mo)
+    I_SoundAt(0, origin->x, origin->y, origin->z);
+
   // Assigns the handle to one of the channels in the
   //  mix/output buffer.
   channels[cnum].handle = I_StartSound(sfx_id,
@@ -594,7 +598,11 @@ void S_UpdateSounds(void* listener_p)
 			S_StopChannel(cnum);
 		    }
 		    else
+		    {
+			mobj_t* origin = (mobj_t *) c->origin;
 			I_UpdateSoundParams(c->handle, volume, sep, pitch);
+			I_SoundAt(c->handle, origin->x, origin->y, origin->z);
+		    }
 		}
 	    }
 	    else

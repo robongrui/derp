@@ -15,7 +15,9 @@ static void addWall(const line_t &line,int side,Point a,Point b,float bottom,flo
     auto &out=batches[tex];unsigned mode=sectorMode(sides[line.sidenum[side]].sector);
     Vertex corners[4]={{a.x,a.y,top,u,anchor-top,light,mode},{b.x,b.y,top,u+len,anchor-top,light,mode},
                        {b.x,b.y,bottom,u+len,anchor-bottom,light,mode},{a.x,a.y,bottom,u,anchor-bottom,light,mode}};
-    for(int n=0;n<4;++n)bakeWallCoordinates(line,side,n==1||n==2?len:0,corners[n],true);
+    // Wall coordinates restart on every line, so each section seeds its own tiles.
+    unsigned seed=(unsigned)(&line-lines)*8u+(unsigned)side*4u+(unsigned)span+1u;
+    for(int n=0;n<4;++n) {bakeWallCoordinates(line,side,n==1||n==2?len:0,corners[n],true);corners[n].statics=seed;}
     quad(out,corners[0],corners[1],corners[2],corners[3]);
 }
 // The mirrored pass draws the world a second time, so it runs only while a
@@ -241,15 +243,21 @@ static unsigned spriteRotation(float dx,float dy,angle_t facing) {
     return (angle-facing+(unsigned)(ANG45/2)*9)>>29;
 }
 // The dynamic light on a thing (pulse, rgb) and the strongest light above it
-// that can cast its shadow; returns that light's strength.
-static float dynamicThingLight(const mobj_t *thing,float x,float y,float z,std::array<float,3> &pulse,ShadowLight &shadowLight) {
+// that can cast its shadow; returns that light's strength. The classic
+// flashlight goes to beam instead, in the shaders' 1/8 steps (beamSteps).
+static float dynamicThingLight(const mobj_t *thing,float x,float y,float z,std::array<float,3> &pulse,std::array<float,3> &beam,ShadowLight &shadowLight) {
     float strongest=0;
     for(unsigned n=0;n<flashes.count;++n) {
         if(fogOnly[n])continue;
         float contribution=flashAt(x,y,z+units(thing->height)*0.5f,flashes.lights[n]);
-        // Static lights reach sprites through the baked light at their feet.
-        float dynamic=contribution*(1-(bakedLightsActive?flashes.lights[n].baked:0));
-        for(int c=0;c<3;++c) pulse[c]+=dynamic*flashes.lights[n].color[c];
+        if(settings.classicFlashlight&&flashes.lights[n].direction[3]>0) {
+            float stepped=std::floor(std::min(contribution,1.0f)*8+0.5f)/8;
+            for(int c=0;c<3;++c) beam[c]+=stepped*flashes.lights[n].color[c];
+        } else {
+            // Static lights reach sprites through the baked light at their feet.
+            float dynamic=contribution*(1-(bakedLightsActive?flashes.lights[n].baked:0));
+            for(int c=0;c<3;++c) pulse[c]+=dynamic*flashes.lights[n].color[c];
+        }
         if(lightSources[n]!=thing&&flashes.lights[n].position[2]>z+8&&contribution>strongest) {
             strongest=contribution;const Flash &f=flashes.lights[n];
             shadowLight={f.position[0],f.position[1],f.position[2],contribution};
@@ -290,8 +298,8 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera);
     if(beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(thing->frame&FF_FULLBRIGHT))
         casters.push_back({thing,&image,lump,(bool)sf.flip[rotation],x,y,z,std::hypot(x-camera.eye[0],y-camera.eye[1])});
-    std::array<float,3> pulse={};ShadowLight shadowLight={};
-    float strongest=dynamicThingLight(thing,x,y,z,pulse,shadowLight);
+    std::array<float,3> pulse={},beamLight={};ShadowLight shadowLight={};
+    float strongest=dynamicThingLight(thing,x,y,z,pulse,beamLight,shadowLight);
     // Static light at the thing's center; with bake-only lights or the
     // grid its strongest light also competes to cast the shadow.
     StaticSample statics;
@@ -326,7 +334,9 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     // Detail sprites light themselves per pixel from the light mask, so
     // their tint carries only the baked light. With bake-only lights they
     // shape it by where it comes from (statics).
-    if(mode&MODE_RELIT)pulse=baked;else for(int c=0;c<3;++c)pulse[c]+=baked[c];
+    // The classic beam lifts toward BEAM_CEILING (lighting.glsl), never past it, as in world.frag.
+    if(mode&MODE_RELIT)pulse=baked;
+    else for(int c=0;c<3;++c) {pulse[c]+=baked[c];pulse[c]+=beamLight[c]*std::max(0.0f,1.2f-light-pulse[c]);}
     unsigned packedStatics=0;
     float towards=std::sqrt(statics.towards[0]*statics.towards[0]+statics.towards[1]*statics.towards[1]+statics.towards[2]*statics.towards[2]);
     if(bakeOnlyActive&&(mode&MODE_RELIT)&&statics.amount>0&&towards>1e-6f) {

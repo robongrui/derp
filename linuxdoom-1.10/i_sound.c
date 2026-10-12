@@ -687,6 +687,12 @@ I_UpdateSoundParams
   handle = vol = sep = pitch = 0;
 }
 
+// Positions only matter to the portable mixer.
+void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
+{
+  handle = x = y = z = 0;
+}
+
 
 
 

@@ -21,7 +21,8 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     // Glass is smooth: its bulge replaces the artwork's bump detail,
     // and it takes a tighter, stronger highlight than painted metal.
     float busy=0.0;
-    vec3 bumped=glassy?screenNormal:detail?detailNormal(vUV,normal,dp1,dp2,duv1,duv2,busy):normal;
+    bool tiles=(bakeFlags&(normal.z>0.5?FEATURE_UNEVEN_TILES:FEATURE_UNEVEN_WALLS))!=0u&&!blood;
+    vec3 bumped=glassy?screenNormal:detail?detailNormal(vUV,normal,dp1,dp2,duv1,duv2,tiles,busy):normal;
     float gloss=0.0,shininess=glassy?64.0:24.0;
     if(glassy) gloss=0.9;
     else if(detail) {
@@ -94,7 +95,8 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
         if(amount<=0.0) continue;
         float bakedShare=useBake?lights[i].baked:0.0;
         amount*=mix(1.0,staticKept,bakedShare);
-        pulse+=lights[i].color.rgb*amount*(flashFacing(vWorld,bumped,i)-bakedShare*flashFacing(vWorld,normal,i));
+        if(classicBeam(i)) beamLight+=lights[i].color.rgb*beamSteps(amount)*flashFacing(vWorld,bumped,i);
+        else pulse+=lights[i].color.rgb*amount*(flashFacing(vWorld,bumped,i)-bakedShare*flashFacing(vWorld,normal,i));
         if(gloss>0.0) {
             vec3 toLight=normalize(lights[i].position.xyz-vWorld);
             float highlight=pow(saturate(dot(bumped,normalize(toLight+view))),shininess);

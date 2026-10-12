@@ -42,11 +42,15 @@ vec3 tiltNormal(vec3 normal,vec2 slope,vec3 dp1,vec3 dp2,vec2 duv1,vec2 duv2) {
 }
 // Surface detail: the texel's relief slope tilts the face normal, so lights
 // rake across mortar and panel seams. busy: how grainy the artwork is around
-// the texel (0 smooth, 1 coarse).
-vec3 detailNormal(vec2 uv,vec3 normal,vec3 dp1,vec3 dp2,vec2 duv1,vec2 duv2,out float busy) {
-    vec4 cell=texelFetch(relief,wrapTexel(ivec2(floor(uv)),textureSize(relief,0)),0);
+// the texel (0 smooth, 1 coarse). tiles: lay the surface's painted tiles
+// unevenly (tiles.glsl).
+vec3 detailNormal(vec2 uv,vec3 normal,vec3 dp1,vec3 dp2,vec2 duv1,vec2 duv2,bool tiles,out float busy) {
+    ivec2 p=ivec2(floor(uv)),size=textureSize(relief,0);
+    vec4 cell=texelFetch(relief,wrapTexel(p,size),0);
     busy=smoothstep(0.06,0.36,cell.b);
-    return tiltNormal(normal,(cell.rg*255.0-128.0)/127.0,dp1,dp2,duv1,duv2);
+    vec2 slope=(cell.rg*255.0-128.0)/127.0;
+    if(tiles) slope+=tileSlope(p,size,(vMode&MODE_SPRITE)==0u?vStatic:0u);
+    return tiltNormal(normal,slope,dp1,dp2,duv1,duv2);
 }
 // Crude materials from the palette's ramps: greys and blues read as metal,
 // greens as wet slime or panels; browns, tans and flesh stay matte.

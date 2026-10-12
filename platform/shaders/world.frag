@@ -38,7 +38,8 @@ layout(set=2,binding=13) uniform sampler2D glassFrame;
 // liquid edge in r (sampled linearly), that edge's liquid sector and tint.
 layout(set=2,binding=14) uniform sampler2D shore;
 // Bump relief of walls and flats (withRelief in scene3d/images.cpp): slope along u
-// and v in rg (0.5 level), grain in b; level elsewhere.
+// and v in rg (0.5 level), grain in b; level elsewhere. Tiled flats are 16-bit
+// with each texel's tile in a (tiles.glsl); 1.0 there means none.
 layout(set=2,binding=15) uniform sampler2D relief;
 // Storage buffers follow the samplers in SPIR-V but the four uniform blocks in
 // SDL_gpu's Metal layout; METAL selects the second numbering.
@@ -66,6 +67,7 @@ layout(location=0) out vec4 outColor;
 #include "lighting.glsl"
 
 // The parts of the shading main() runs, by topic.
+#include "world/tiles.glsl"
 #include "world/surface.glsl"
 #include "world/glass.glsl"
 #include "world/bake.glsl"
@@ -74,6 +76,8 @@ layout(location=0) out vec4 outColor;
 #include "world/shore.glsl"
 #include "world/weapon.glsl"
 #include "world/mirror.glsl"
+// The classic flashlight's light, gathered apart from pulse (classicBeam).
+vec3 beamLight=vec3(0);
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
@@ -154,6 +158,9 @@ void main() {
         if(weapon) weaponLight(relit,light,pulse,specular);
         if(!sprite) surfaceLight(lit,mapped,normal,screenNormal,glassy,blood,color,dp1,dp2,duv1,duv2,pulse,specular);
         illumination=clamp(illumination+pulse+c.flashlightTint.rgb,vec3(0),vec3(2.2));
+        // Like extralight, the classic beam brightens toward a little past
+        // the palette's own colors and never beyond that.
+        illumination+=beamLight*max(BEAM_CEILING-illumination,vec3(0));
         if(glassy) {
             // Where the pane curves away from the eye it catches the room's
             // light as a thin sheen, in brightness only, in 1/16 steps.

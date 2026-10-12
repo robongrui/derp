@@ -2,6 +2,9 @@
    (prepareFrame), plus the backend-independent I_Render3D calls. */
 #include "internal.h"
 #include "../shaders/feature_flags.h"
+extern "C" {
+#include "../audio/sound_options.h"
+}
 
 namespace doom3d {
 Profile profile;
@@ -70,6 +73,7 @@ void applySettings() {
     r_uncapped=settings.accelerated;
     if(!settings.look) pitch=0;
     R_SetViewSize(10,0);
+    I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance);
 }
 void sceneInit(SDL_Window *window) {
     gameWindow=window;
@@ -170,7 +174,9 @@ FrameView prepareFrame(int w,int h) {
         (settings.causticsSway?FEATURE_CAUSTICS_SWAY:0)|(settings.causticsSprites?FEATURE_CAUSTICS_SPRITES:0)|
         (settings.causticsShots?FEATURE_CAUSTICS_SHOTS:0)|(settings.dampShores&&shoreTexture?FEATURE_DAMP_SHORES:0)|
         (settings.detail&&settings.variedHighlights?FEATURE_VARIED_HIGHLIGHTS:0)|
-        (settings.windowLight&&bakedLightsActive?FEATURE_WINDOW_LIGHT:0);
+        (settings.windowLight&&bakedLightsActive?FEATURE_WINDOW_LIGHT:0)|
+        (settings.detail&&settings.unevenTiles?FEATURE_UNEVEN_TILES:0)|(settings.detail&&settings.unevenWalls?FEATURE_UNEVEN_WALLS:0)|
+        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0);
     camera.flashlightTint[3]=(float)features; // see shaders/feature_flags.h
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;

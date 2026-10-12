@@ -38,7 +38,8 @@ inline float units(int value) { return value/65536.0f; }
 struct Point { float x,y; };
 // sunU/sunV: texel in the wall bake atlas, or -1 for surfaces without one.
 // statics: on sprites with bake-only lights, the static light's direction
-// (x, y, z as unorm bytes) and how much of it comes from that direction (w).
+// (x, y, z as unorm bytes) and how much of it comes from that direction (w);
+// on walls, a seed per wall section so their uneven tiles differ (tiles.glsl).
 // lampTint: the sector light's color from the lamps around a sprite (lampTint
 // in baked_lighting.h), unorm bytes; white for surfaces, which compute their own.
 struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0; unsigned lightMask[2]={}; float sunU=-1,sunV=0; unsigned statics=0; unsigned lampTint=0xFFFFFFFFu; };
@@ -68,6 +69,8 @@ struct Settings {
     int emissive=1, fog=1, palette=0;
     int detail=1; // Derived normal maps and palette gloss.
     int variedHighlights=1; // Gloss highlights tighten on smooth artwork and spread on busy artwork, per palette ramp.
+    int unevenTiles=1; // Tiles painted into floors each lie a little crooked, with a lit or shadowed lip where they meet.
+    int unevenWalls=1; // The same for the tiles, plates and bricks painted into walls and ceilings.
     int softLight=1; // Light seam blending and edge contact shading.
     int reflections=1; // Mirrored scene on water.
     int retroReflections=1; // Eighth resolution, palette colors, stepped wobble.
@@ -84,6 +87,7 @@ struct Settings {
     int blood=1; // Splats on floors and walls from hitscan hits; pools under corpses.
     int bloodShine=1; // Fresh blood glints under dynamic lights, then dries matte.
     int flashlightShadows=1; // Things in the flashlight beam cast their silhouette on the wall behind.
+    int classicFlashlight=1; // A shorter, warmer beam that raises light in steps to a little past full brightness, never further.
     int softSprites=1; // Explosions and puffs stop slicing into walls; dithered toward floors.
     int heatHaze=0; // Stepped raster shimmer above lava, hot floors and flames.
     int eyeAdaptation=1; // Brief stepped over/underexposure when the light changes.
@@ -110,6 +114,11 @@ struct Settings {
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
     int glossyScreens=1; // Monitor glass found in computer textures bulges, refracts the screen behind it and catches light.
     int weaponLighting=1; // The weapon's painted sheen and light come out at load; lights around the player relight it.
+    // Sound, though graphics.cfg keeps it: the mixer is told in applySettings.
+    int roomAcoustics=1; // Echoes and a reverb tail measured from the room around the player.
+    float reverbAmount=1; // How loud the echoes and tail are (0-2).
+    int muffleWalls=1; // Sounds out of sight are muffled, more behind closed doors.
+    int muffleDistance=1; // Far sounds lose their treble.
     // Performance: cheaper stand-ins for per-frame light work.
     int bakeOnlyLights=0; // Static lights only in the bake, with its light direction and flicker groups; pools as area lights.
     int gridSpriteLight=0; // Things take static light and their shadow light from a grid baked at level load.

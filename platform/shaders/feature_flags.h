@@ -22,5 +22,8 @@
 #define FEATURE_DAMP_SHORES        16384u // damp walls and banks above liquids
 #define FEATURE_VARIED_HIGHLIGHTS  32768u // highlight sharpness follows the artwork's grain
 #define FEATURE_WINDOW_LIGHT       65536u // sky openings light indoors (no indoor sky lift)
+#define FEATURE_UNEVEN_TILES       131072u // painted floor tiles lie a little crooked
+#define FEATURE_UNEVEN_WALLS       262144u // painted wall and ceiling tiles and bricks too
+#define FEATURE_CLASSIC_FLASHLIGHT 524288u // the flashlight raises light like extralight, in steps
 
 #endif

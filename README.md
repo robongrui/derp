@@ -274,6 +274,74 @@ Animated walls and flats crossfade between their original frames, while doors,
 lifts, sprites and the camera interpolate between DOOM's original 35 Hz game
 ticks.
 
+## How the sound cheats
+
+The sound gets the same treatment as the graphics: everything is worked out
+from the map while you play, and the original sound effects are still mixed
+as crunchy 8-bit samples. The goal is closer to a late-90s A3D or EAX sound
+card than to a modern lush reverb. Music stays dry. The effects are in the
+**Sound** tab of the F4 panel.
+
+### Rooms are measured with rays
+
+Every other tic, 32 rays are cast across the map from the player in a flat
+circle. A ray stops at a one-sided wall, or at an opening too low to let
+sound through, such as a closed door or a raised lift. Rays that leave
+through the open sky do not come back.
+
+The rays give the walls their distance, and they also sketch the floor plan.
+From that plan, the ceiling heights the rays crossed and how much of it is
+open sky, the room's volume goes into Sabine's reverberation formula. The
+result is squeezed into a game-like range, so corridors slap back, big halls
+boom and the outdoors stays almost dry.
+
+There is no material data in a WAD, so materials are guessed from texture
+names. `STARTAN`, `COMP` and `METAL` ring like metal, `WOOD` and the panel
+textures are dull, and flesh, liquids and dirt each soak up sound their own
+way. Names that match none of these count as stone.
+
+### Echoes and a tail, kept a little lo-fi
+
+The rays are grouped into eight directions around the player. Each group
+becomes one discrete echo, delayed by the round trip to its walls and panned
+to where they are relative to the way the player faces. A ninth echo comes
+off the ceiling.
+
+A small feedback delay network then produces the late tail: eight damped
+delay lines, mixed through a Householder matrix. Metal rooms keep their
+treble, wooden ones swallow it. When the room changes, the echoes crossfade
+and the tail glides over a third of a second, so walking through a door
+never clicks.
+
+Far sounds send relatively more to the reverb than to the dry mix, so they
+come across more distant as well as quieter.
+
+### Walls muffle, distance dulls
+
+Each positioned sound runs through its own two-stage lowpass filter. The
+cutoff is measured when the sound starts and again every other tic while
+the sound or the player moves.
+
+- **In sight:** only distance takes away treble, from about 200 units out
+  to DOOM's own clipping distance.
+- **Round a corner:** if sound has an open way round to the player through
+  an open door, over a ledge or through a window, it is muffled a little.
+  The search walks short routes through connected sectors.
+- **Sealed:** with only closed doors and solid walls in between, it is
+  muffled heavily.
+
+Muffling only changes the tone. Volume stays exactly as in vanilla DOOM,
+so you can still hear where monsters are as well as you ever could.
+
+The mixer itself now uses DOOM's real 0–15 effects volume scale and DMX-style
+panning. A peak limiter ducks the mix briefly when many shots fire together
+instead of letting it crackle.
+
+See [`platform/audio/room.c`](platform/audio/room.c),
+[`platform/audio/reverb.c`](platform/audio/reverb.c),
+[`platform/audio/occlusion.c`](platform/audio/occlusion.c) and
+[`platform/i_sdl_sound.c`](platform/i_sdl_sound.c).
+
 ## At a glance
 
 - **Accelerated 3D renderer:** SDL_gpu, using Metal on macOS and Vulkan on
@@ -288,8 +356,10 @@ ticks.
   patches.
 - **Not supported:** Boom, MBF21 and GZDoom maps, slopes, 3D floors, model
   packs, ray tracing and multiplayer.
-- **Graphics panel:** press **F4** to enable, disable and tune the individual
-  effects.
+- **Room acoustics:** echoes and reverb measured from the map, sounds muffled
+  behind walls and dulled with distance.
+- **Settings panel:** press **F4** to enable, disable and tune the individual
+  graphics and sound effects.
 - Headless demo runner, regression tests and a GPU performance smoke test are
   included for development.
 

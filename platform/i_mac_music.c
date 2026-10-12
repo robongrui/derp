@@ -11,7 +11,7 @@
 static MusicSequence sequence;
 static MusicPlayer player;
 static MusicTimeStamp length;
-static AudioUnit volume_unit;
+static AudioUnit synth_unit;
 static int music_volume = 8;
 static unsigned read16(const byte *p) { return p[0] | (unsigned)p[1] << 8; }
 
@@ -114,6 +114,18 @@ static int opl(void)
     return use_opl;
 }
 
+/* The volume goes on the synthesizer itself: the graph's dynamics processor
+   forgets its gain each time the player prerolls or restarts. The synthesizer
+   takes it only once initialized, so it is set again whenever play starts.
+   It plays near full scale; 8 dB down at the top of the slider it sits under
+   the effects, as OPL music does, and the slider spans about 40 dB. */
+static void apply_volume(void)
+{
+    if (!synth_unit) return;
+    float gain = music_volume <= 0 ? -120.0f : 30.0f * log10f(music_volume / 15.0f) - 8.0f;
+    AudioUnitSetParameter(synth_unit, kMusicDeviceParam_Volume, kAudioUnitScope_Global, 0, gain, 0);
+}
+
 void I_InitMusic(void) { }
 void I_SetMusicVolume(int volume)
 {
@@ -129,12 +141,7 @@ void I_SetMusicVolume(int volume)
             MusicTrackSetProperty(track, kSequenceTrackProperty_MuteStatus, &muted, sizeof(muted));
         }
     }
-    if (volume_unit)
-    {
-        float gain = volume <= 0 ? -40.0f : 20.0f * log10f(volume / 15.0f);
-        AudioUnitSetParameter(volume_unit, kDynamicsProcessorParam_OverallGain,
-                              kAudioUnitScope_Global, 0, gain, 0);
-    }
+    apply_volume();
 }
 void I_UnRegisterSong(int handle)
 {
@@ -142,7 +149,7 @@ void I_UnRegisterSong(int handle)
     if (opl()) { I_OPL_ShutdownMusic(); return; }
     if (player) { MusicPlayerStop(player); DisposeMusicPlayer(player); player = NULL; }
     if (sequence) { DisposeMusicSequence(sequence); sequence = NULL; }
-    volume_unit = NULL;
+    synth_unit = NULL;
 }
 void I_ShutdownMusic(void) { I_UnRegisterSong(0); }
 
@@ -179,8 +186,8 @@ int I_RegisterSong(void *data)
         MusicTrackGetProperty(track, kSequenceTrackProperty_TrackLength, &duration, &size);
         if (duration > length) length = duration;
     }
-    AUGraph graph;
-    if (!MusicSequenceGetAUGraph(sequence, &graph))
+    AUGraph graph; Boolean open = false;
+    if (!MusicSequenceGetAUGraph(sequence, &graph) && !AUGraphIsOpen(graph, &open) && (open || !AUGraphOpen(graph)))
     {
         UInt32 nodes = 0; AUGraphGetNodeCount(graph, &nodes);
         for (UInt32 i = 0; i < nodes; ++i)
@@ -188,8 +195,8 @@ int I_RegisterSong(void *data)
             AUNode node; AudioComponentDescription description; AudioUnit unit;
             AUGraphGetIndNode(graph, i, &node);
             if (!AUGraphNodeInfo(graph, node, &description, &unit)
-                && description.componentSubType == kAudioUnitSubType_DynamicsProcessor)
-                volume_unit = unit;
+                && description.componentType == kAudioUnitType_MusicDevice)
+                synth_unit = unit;
         }
     }
     I_SetMusicVolume(music_volume);
@@ -210,6 +217,7 @@ void I_PlaySong(int handle, int looping)
     }
     MusicPlayerSetTime(player, 0);
     OSStatus error = MusicPlayerPreroll(player);
+    apply_volume();
     if (!error) error = MusicPlayerStart(player);
     if (error) fprintf(stderr, "Music output unavailable (%d).\n", (int)error);
 }
@@ -228,5 +236,5 @@ void I_ResumeSong(int handle)
 {
     (void)handle;
     if (opl()) I_OPL_ResumeSong();
-    else if (player) MusicPlayerStart(player);
+    else if (player) { MusicPlayerStart(player); apply_volume(); }
 }

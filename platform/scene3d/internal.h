@@ -45,6 +45,7 @@ int P_PicAnimationNext(boolean istexture,int pic,int *next);
 #include "../scene3d.h"
 #include "../emissive.h"
 #include "../screen_glass.h"
+#include "../painted_tiles.h"
 #include "../surface_lighting.h"
 #include "../baked_lighting.h"
 #include "../weapon_lighting.h"
