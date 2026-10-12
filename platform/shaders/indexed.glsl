@@ -1,5 +1,5 @@
 // Palette-indexed texel reads: R holds the PLAYPAL index, G the WAD coverage.
-// Walls and flats also carry palette mip levels (see paletteMips in scene3d.cpp);
+// Walls and flats also carry palette mip levels (see paletteMips in scene3d/images.cpp);
 // uv is in texels of the level read.
 vec4 texelAt(sampler2D image,sampler2D palette,ivec2 p,bool wrap,int level) {
     ivec2 size=textureSize(image,level);

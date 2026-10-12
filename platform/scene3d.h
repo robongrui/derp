@@ -128,7 +128,7 @@ extern Settings settings;
 extern SDL_Window *gameWindow;
 extern FlashSet flashes;
 // What the GPU gets: flashes with first/count into lightWords, the blockers
-// and their per-direction slices (buildLightWords in scene3d.cpp).
+// and their per-direction slices (buildLightWords in scene3d/lights.cpp).
 extern FlashSet gpuFlashes;
 extern std::vector<std::array<uint32_t,4>> lightWords;
 extern FogLights fogLights;

@@ -1,0 +1,110 @@
+// Lighting of walls and flats.
+// Part of world.frag, which declares the resources these read.
+// Walls and flats: the static light from the bake (shaped by its direction
+// with bake-only lights), bounce, and dynamic lights with bump detail and
+// gloss, added to pulse; highlights and wet blood glints into specular.
+// glassy surfaces use the glass dome (screenNormal) for their normal.
+void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool glassy,bool blood,vec4 color,
+                  vec3 dp1,vec3 dp2,vec2 duv1,vec2 duv2,inout vec3 pulse,inout vec3 specular) {
+    uint bakeFlags=uint(c.flashlightTint.w);
+    vec4 baked=lit.baked,direction=lit.direction;vec3 bounce=lit.bounce;float shownLight=lit.shown,occlusion=lit.occlusion;
+    uvec2 mask=vLightMask;
+    // Bake-only lights: the bake's direction (share in b) stands in
+    // for the static lights' dynamic copies, so its light also takes
+    // bump detail and gloss where it is bright enough to show them.
+    bool useBake=mapped&&c.bake.x>0.0;
+    float staticKept=useBake?bakeKept(baked.rgb,bakeHeadroom(shownLight)):1.0;
+    vec3 staticLight=useBake?baked.rgb*staticKept*occlusion:vec3(0);
+    float staticShare=useBake&&c.bake.z>0.0?direction.b:0.0;
+    bool staticDetail=staticShare>0.05&&dot(staticLight,vec3(0.299,0.587,0.114))>0.02;
+    bool detail=(uint(c.flashlightTint.w)&1u)!=0u&&(any(notEqual(mask,uvec2(0)))||staticDetail);
+    // Glass is smooth: its bulge replaces the artwork's bump detail,
+    // and it takes a tighter, stronger highlight than painted metal.
+    float busy=0.0;
+    vec3 bumped=glassy?screenNormal:detail?detailNormal(vUV,normal,dp1,dp2,duv1,duv2,busy):normal;
+    float gloss=0.0,shininess=glassy?64.0:24.0;
+    if(glassy) gloss=0.9;
+    else if(detail) {
+        ivec2 p=wrapTexel(ivec2(floor(vUV)),textureSize(image,0));
+        uint index=uint(round(texelFetch(image,p,0).r*255.0));
+        gloss=paletteGloss(index);
+        // Flag 32768, varied highlights: each ramp's sharpness is
+        // halved where the artwork is grainy and doubled where it runs
+        // smooth, per texel. The highlight keeps its energy, so broad
+        // ones dim and tight ones brighten against the dark around them;
+        // grainy artwork also loses up to a quarter of its gloss.
+        if((bakeFlags&32768u)!=0u) {
+            shininess=paletteShininess(index)*exp2(1.0-2.0*busy);
+            gloss*=(shininess+2.0)/26.0*(1.0-0.25*busy);
+        }
+    }
+    vec3 view=normalize(c.eye.xyz-vWorld);
+    // Wet blood glints only under dynamic lights, in a brighter palette
+    // color of its own red rather than white: a small, sharp highlight
+    // in two hard steps, so a flat splat never lights up as a whole.
+    bool wet=blood&&vTint.r>0.0;
+    vec3 wetColor=wet?texelFetch(paletteLUT,ivec3(round(saturate(color.rgb*1.8+0.04)*31.0)),0).rgb:vec3(0);
+    // Static lights come from the bake; their dynamic copies only add
+    // what it lacks: flicker, bump detail and gloss. With bake-only
+    // lights the bake supplies those itself: flicker by group (alpha:
+    // group*16+share), and shading from where the light comes from.
+    // A pool's own surface (alpha without a group: its share) is lit
+    // by the glow hugging it, not from above: it takes no overhead
+    // highlight but a sheen where its ripples mirror the horizon,
+    // which shows from afar at grazing angles.
+    if(useBake&&c.bake.z>0.0) {
+        uint packed=uint(round(direction.a*255.0)),group=packed>>4u;
+        float sheenShare=group==0u?float(packed&15u)/15.0:0.0;
+        if(group>0u) staticLight*=1.0-float(packed&15u)/15.0*(1.0-c.flicker[group>>2u][group&3u]);
+        if(staticShare>0.0) {
+            vec2 frame=direction.rg*2.0-1.0;
+            vec3 t=abs(normal.z)>0.5?vec3(1,0,0):vec3(-normal.y,normal.x,0);
+            vec3 b=abs(normal.z)>0.5?vec3(0,1,0):vec3(0,0,1);
+            vec3 toLight=normalize(t*frame.x+b*frame.y+normal*sqrt(saturate(1.0-dot(frame,frame))));
+            vec3 shaded=staticLight;
+            if(detail) {
+                float flatFacing=mix(1.0,saturate(dot(normal,toLight)),0.75);
+                float bumpFacing=mix(1.0,saturate(dot(bumped,toLight)),0.75);
+                shaded*=mix(1.0,bumpFacing/flatFacing,staticShare);
+            }
+            float grazing=saturate(dot(normal,toLight)*4.0);
+            if(gloss>0.0) {
+                float highlight=pow(saturate(dot(bumped,normalize(toLight+view))),shininess);
+                specular+=staticLight*staticShare*(1.0-sheenShare)*highlight*gloss*grazing;
+                if(sheenShare>0.0) {
+                    float horizon=pow(1.0-saturate(dot(reflect(-view,bumped),normal)),6.0);
+                    specular+=staticLight*sheenShare*horizon*gloss*1.5;
+                }
+            }
+            if(wet) {
+                float highlight=pow(saturate(dot(bumped,normalize(toLight+view))),40.0);
+                highlight=highlight>0.6?1.0:highlight>0.3?0.5:0.0;
+                specular+=wetColor*staticLight*staticShare*highlight*vTint.r*0.6*grazing;
+            }
+            staticLight=shaded;
+        }
+    }
+    pulse+=staticLight;
+    if(mapped) pulse+=bounce*c.bake.y*occlusion;
+    while(any(notEqual(mask,uvec2(0)))) {
+        uint word=mask.x!=0u?0u:1u;
+        uint i=word*32u+uint(findLSB(mask[word]));
+        mask[word]&=mask[word]-1u;
+        float amount=flashAt(vWorld,normal,i);
+        if(amount<=0.0) continue;
+        float bakedShare=useBake?lights[i].baked:0.0;
+        amount*=mix(1.0,staticKept,bakedShare);
+        pulse+=lights[i].color.rgb*amount*(flashFacing(vWorld,bumped,i)-bakedShare*flashFacing(vWorld,normal,i));
+        if(gloss>0.0) {
+            vec3 toLight=normalize(lights[i].position.xyz-vWorld);
+            float highlight=pow(saturate(dot(bumped,normalize(toLight+view))),shininess);
+            specular+=lights[i].color.rgb*amount*highlight*gloss*saturate(dot(normal,toLight)*4.0);
+        }
+        if(wet) {
+            vec3 toLight=normalize(lights[i].position.xyz-vWorld);
+            float highlight=pow(saturate(dot(bumped,normalize(toLight+view))),40.0);
+            highlight=highlight>0.6?1.0:highlight>0.3?0.5:0.0;
+            specular+=wetColor*lights[i].color.rgb*amount*highlight*vTint.r*0.6*saturate(dot(normal,toLight)*4.0);
+        }
+    }
+}

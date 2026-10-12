@@ -71,7 +71,7 @@ void main() {
     // silhouettes meet a soft band rather than a hard painted edge.
     if(c.materials.z>0.0&&c.effects.z==0.0)
         color.rgb=mix(color.rgb,low,0.55*(1.0-smoothstep(-0.05,0.3,ray.z)));
-    // The sun, 40 degrees up at the baked yaw (scene3d.cpp bakeSun): a small
+    // The sun, 40 degrees up at the baked yaw (bakeSun in scene3d/bake_sun.cpp): a small
     // disc and a wide glow in its tint. Smooth, like the softened sky around
     // it; a dither here shimmers over a large part of the sky.
     if(c.fx2.w>0.0) {

@@ -7,7 +7,7 @@ checks on macOS, Linux, and Windows. No game data is needed to build or test.
 The optional SDL3 backend adds a playable desktop window, keyboard/mouse input,
 fullscreen, sound effects and an accelerated 3D renderer built on SDL_gpu:
 Metal on macOS, Vulkan on Linux and Windows, from one renderer and one set of
-shaders. It draws a scene built at runtime from the WAD by `platform/scene3d.cpp`. macOS also has MIDI/MUS music
+shaders. It draws a scene built at runtime from the WAD by `platform/scene3d/`. macOS also has MIDI/MUS music
 through the system synthesizer. The headless backend remains available for
 verification.
 
@@ -46,8 +46,8 @@ and firing were also checked in the native Mac window.
 
 ## 3D renderer
 
-`platform/scene3d.cpp` (C++17) builds the 3D world from the original loaded
-map, and `platform/i_gpu3d.cpp` draws it with SDL_gpu: BSP leaves are clipped into convex floor/ceiling polygons, linedefs produce
+`platform/scene3d/` (C++17, one file per subsystem; `internal.h` lists what
+they share) builds the 3D world from the original loaded map, and `platform/i_gpu3d.cpp` draws it with SDL_gpu: BSP leaves are clipped into convex floor/ceiling polygons, linedefs produce
 textured wall spans, and game objects produce animated, directional billboards.
 Geometry uses current sector heights and texture translations so doors, lifts,
 switches and animated materials follow the game simulation. WAD textures are

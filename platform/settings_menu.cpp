@@ -132,10 +132,7 @@ void moveSelection(int direction) {
 
 Option &selectedOption() { return *panel.lines[(size_t)panel.selected].option; }
 
-void setSlider(Option &option,double value) {
-    double steps=std::round((value-option.low)/option.step);
-    *option.number=(float)std::clamp(option.low+steps*option.step,option.low,option.high);
-}
+void setSlider(Option &option,double value) { *option.number=option.snap(value); }
 
 void changeOption(int direction) {
     Option &option=selectedOption();

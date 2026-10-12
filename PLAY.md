@@ -138,7 +138,7 @@ takes a screenshot.
 - **Unblocked glowing-texture light:** light from lamp strips and glowing flats skips the per-pixel wall tests; cheaper near light panels, but their highlights can show on shiny surfaces through walls.
 - **Fewer glowing-texture lights:** only the 8 nearest lamp strips and glowing flats light their surroundings per pixel, not 24; farther ones keep their baked glow but lose their moving highlights.
 
-All settings are saved in `graphics.cfg`. The effect switches there are named `blood`, `blood_shine`, `flashlight_shadows`, `soft_effects`, `heat_haze`, `eye_adaptation`, `splashes`, `dust_motes`, `player_shadow`, `door_light`, `texel_lighting`, `sky_light`, `baked_occlusion`, `decoration_shadows`, `light_flow`, `ceiling_caustics`, `caustics_computed`, `caustics_grow`, `caustics_angle`, `caustics_sway`, `caustics_sprites`, `caustics_shots`, `damp_shores` and `unoccluded_surface_lights`.
+All settings are saved in `graphics.cfg`, one `key value` per line. Each F4 option lists its key beside it in `platform/settings_panel.cpp` (switches are `0` or `1`).
 
 Animated flats and walls (NUKAGE, FWATER, falls) crossfade between frames,
 door and lift movement is interpolated between game tics, and bullets leave

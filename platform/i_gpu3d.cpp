@@ -1,4 +1,4 @@
-/* SDL_gpu renderer for the 3D scene in scene3d.cpp: Metal on macOS, Vulkan on
+/* SDL_gpu renderer for the 3D scene in scene3d/: Metal on macOS, Vulkan on
    Linux and Windows. Shaders live in platform/shaders as GLSL and are embedded
    as SPIR-V and MSL by scripts/compile_gpu_shaders.cmake. */
 #include <algorithm>
@@ -507,6 +507,182 @@ void capture(SDL_GPUCommandBuffer *command,const FrameView &view,int w,int h) {
         for(unsigned &p:pixels)p=(p&0xff00ff00u)|((p&0xffu)<<16)|((p>>16)&0xffu);
     saveScreenshot(fence?pixels.data():nullptr,w,h,w*4);
 }
+// Draws the settings panel into image and places it over the drawable.
+void layoutSettingsPanel(Uint32 drawableWidth,Uint32 drawableHeight,std::vector<unsigned> &image) {
+    image.assign((size_t)DOOM_SETTINGS_WIDTH*DOOM_SETTINGS_HEIGHT,0);
+    I_Render3DSettingsDraw(image.data());
+    float dw=(float)drawableWidth,dh=(float)drawableHeight;
+    settingsScale=std::max(1.0f,std::floor(std::min(dw/DOOM_SETTINGS_WIDTH,dh/DOOM_SETTINGS_HEIGHT)));
+    float pw=DOOM_SETTINGS_WIDTH*settingsScale,ph=DOOM_SETTINGS_HEIGHT*settingsScale;
+    settingsOrigin[0]=std::floor((dw-pw)/2);settingsOrigin[1]=std::floor((dh-ph)/2);
+    screenQuad(settingsQuad,-1,1,2,2,-settingsOrigin[0]/pw,-settingsOrigin[1]/ph,
+               (dw-settingsOrigin[0])/pw,(dh-settingsOrigin[1])/ph);
+}
+// Liquid reflections: the world drawn again at reduced resolution from a
+// camera mirrored at the liquid height, clipped to above the surface.
+// Its alpha holds how near each point is to the surface along the
+// mirrored ray; the mirror pass is flagged by water = (plane, 0, 0, 1).
+void drawReflection(SDL_GPUCommandBuffer *render,const FrameView &view,Uniforms &camera) {
+    camera.water[2]=camera.water[3]=0;
+    if(!worldPending||!reflectionActive)return;
+    int divisor=settings.retroReflections?8:2;
+    int rw=std::max(1,(int)(view.worldW/divisor)),rh=std::max(1,(int)(view.worldH/divisor));
+    if(!reflectionTexture||rw!=reflectionWidth||rh!=reflectionHeight) {
+        release(reflectionTexture);release(reflectionDepth);
+        reflectionTexture=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,rw,rh,SDL_GPU_TEXTUREUSAGE_COLOR_TARGET|SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        reflectionDepth=createTexture(depthFormat,rw,rh,SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+        if(!reflectionTexture||!reflectionDepth)I_Error((char*)"Could not allocate reflection targets");
+        reflectionWidth=rw;reflectionHeight=rh;
+    }
+    Uniforms mirror=camera;
+    mirror.eye[2]=2*reflectionPlane-camera.eye[2];mirror.forward[2]=-camera.forward[2];mirror.up[2]=-camera.up[2];
+    mirror.water[0]=reflectionPlane;mirror.water[3]=1;
+    SDL_GPUColorTargetInfo color={};
+    color.texture=reflectionTexture;color.load_op=SDL_GPU_LOADOP_CLEAR;color.store_op=SDL_GPU_STOREOP_STORE;
+    color.clear_color={0.025f,0.025f,0.03f,1};
+    SDL_GPUDepthStencilTargetInfo depth={};
+    depth.texture=reflectionDepth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_DONT_CARE;
+    depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
+    SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
+    pushWorldUniforms(render,mirror);
+    float plane[4]={reflectionPlane,0,0,0};SDL_PushGPUVertexUniformData(render,1,plane,sizeof(plane));
+    drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr);
+    SDL_EndGPURenderPass(pass);
+    camera.water[0]=view.worldX;camera.water[1]=view.worldY;camera.water[2]=1/view.worldW;camera.water[3]=1/view.worldH;
+}
+// Soft mist needs single-sample scene depth; under MSAA a depth-only prepass supplies it.
+void drawMistDepth(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera) {
+    SDL_GPUDepthStencilTargetInfo depth={};
+    depth.texture=sceneDepth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_STORE;
+    depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
+    SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,nullptr,0,&depth);
+    setView(pass,view.worldX,view.worldY,view.worldW,view.worldH);
+    SDL_BindGPUGraphicsPipeline(pass,depthPipeline);
+    SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
+    for(const auto &batch:batches) if(!batch.second.empty()) {bindImage(pass,images.at(batch.first).texture,nearestClamp);drawVertices(pass,batch.second);}
+    SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};
+    SDL_BindGPUFragmentSamplers(pass,0,&solid,1);drawVertices(pass,skyVertices);
+    SDL_EndGPURenderPass(pass);
+}
+// The world, its shadows, decals, particles and heat haze.
+void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const FrameView &view,const Uniforms &camera) {
+    setView(pass,view.worldX,view.worldY,view.worldW,view.worldH);
+    // Only fully covered textures use early depth writes. Cutouts and
+    // sprites retain discard-aware shading after the sky background.
+    // The whole map is drawn each frame in texture order, so without a
+    // depth prepass hidden walls and floors would run the full lighting
+    // before nearer ones cover them; with it each pixel shades once.
+    SDL_BindGPUGraphicsPipeline(pass,prepassPipeline);
+    for(const auto &batch:batches) if(opaqueBatch(batch)) drawVertices(pass,batch.second);
+    drawWorld(render,pass,opaquePipeline,skySurfacePipeline,skyPipeline,worldPipeline,camera.water[2]>0?reflectionTexture:nullptr,
+              coveragePipeline,cutoutPipeline);
+    // The completed world depth hides shadows behind walls and enemies.
+    SDL_BindGPUGraphicsPipeline(pass,shadowPipeline);
+    for(const auto &batch:shadowBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
+    SDL_BindGPUGraphicsPipeline(pass,decalPipeline);
+    for(const auto &batch:decalBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
+    SDL_BindGPUGraphicsPipeline(pass,particlePipeline);drawVertices(pass,particleVertices);
+    // Hot air marks the color target's alpha for the shimmer in present.
+    if(!heatVertices.empty()) {SDL_BindGPUGraphicsPipeline(pass,heatPipeline);drawVertices(pass,heatVertices);}
+}
+// Soft mist and sunbeams over the finished scene, against its depth.
+void drawMistPass(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const Uniforms &camera,bool msaa) {
+    SDL_BindGPUGraphicsPipeline(pass,mistPipeline);
+    SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
+    SDL_PushGPUFragmentUniformData(render,0,&camera,sizeof(camera));
+    SDL_GPUTextureSamplerBinding mist[]={{gpu(cloudTexture),linearRepeat},{msaa?sceneDepth:depthTexture,nearestClamp}};
+    SDL_BindGPUFragmentSamplers(pass,0,mist,2);
+    drawVertices(pass,mistVertices);
+    if(!shaftVertices.empty()) {
+        SDL_BindGPUGraphicsPipeline(pass,shaftPipeline);SDL_BindGPUFragmentSamplers(pass,0,mist,2);
+        drawVertices(pass,shaftVertices);
+    }
+}
+// The scene with mist and the overlays on top, into colorTexture.
+void drawMainView(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera,bool drawMist,bool msaa,
+                  const std::vector<SpriteDraw> &weapons,const std::vector<Vertex> &hud,const std::vector<Vertex> &cross) {
+    SDL_GPUColorTargetInfo color={};
+    color.texture=msaa?multisampleTexture:colorTexture;color.clear_color={0.025f,0.025f,0.03f,1};
+    color.load_op=SDL_GPU_LOADOP_CLEAR;
+    color.store_op=msaa&&!drawMist?SDL_GPU_STOREOP_RESOLVE:SDL_GPU_STOREOP_STORE;
+    color.resolve_texture=msaa&&!drawMist?colorTexture:nullptr;
+    SDL_GPUDepthStencilTargetInfo depth={};
+    depth.texture=depthTexture;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;
+    depth.store_op=drawMist&&!msaa?SDL_GPU_STOREOP_STORE:SDL_GPU_STOREOP_DONT_CARE;
+    depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
+    SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
+    pushWorldUniforms(render,camera);
+    if(worldPending)drawScene(render,pass,view,camera);
+    if(drawMist) {
+        SDL_EndGPURenderPass(pass);
+        color.load_op=SDL_GPU_LOADOP_LOAD;
+        color.store_op=msaa?SDL_GPU_STOREOP_RESOLVE:SDL_GPU_STOREOP_STORE;
+        color.resolve_texture=msaa?colorTexture:nullptr;
+        pass=SDL_BeginGPURenderPass(render,&color,1,nullptr);
+        setView(pass,view.worldX,view.worldY,view.worldW,view.worldH);
+        drawMistPass(render,pass,camera,msaa);
+        pushWorldUniforms(render,camera);
+    }
+    drawOverlays(render,pass,view,weapons,hud,cross,!drawMist);
+    SDL_EndGPURenderPass(pass);
+}
+// Bloom: emissive texels drawn at half resolution, then blurred.
+void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera,const std::vector<SpriteDraw> &weapons) {
+    int bw=std::max(1,width/2),bh=std::max(1,height/2);
+    float sx=(float)bw/width,sy=(float)bh/height;
+    SDL_GPUColorTargetInfo glow={};
+    glow.texture=emissionTexture;glow.load_op=SDL_GPU_LOADOP_CLEAR;glow.store_op=SDL_GPU_STOREOP_STORE;glow.clear_color={0,0,0,1};
+    SDL_GPUDepthStencilTargetInfo glowDepth={};
+    glowDepth.texture=emissionDepth;glowDepth.clear_depth=1;glowDepth.load_op=SDL_GPU_LOADOP_CLEAR;
+    glowDepth.store_op=SDL_GPU_STOREOP_DONT_CARE;glowDepth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;glowDepth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
+    SDL_GPURenderPass *glowPass=SDL_BeginGPURenderPass(render,&glow,1,&glowDepth);
+    SDL_Rect area={0,0,bw,bh};
+    setView(glowPass,view.worldX*sx,view.worldY*sy,view.worldW*sx,view.worldH*sy,&area);
+    SDL_BindGPUGraphicsPipeline(glowPass,emissionPipeline);
+    SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
+    SDL_GPUTextureSamplerBinding palette={paletteTexture,nearestClamp};
+    SDL_BindGPUFragmentSamplers(glowPass,1,&palette,1);
+    for(const auto &batch:batches) if(!batch.second.empty()) {bindSurface(render,glowPass,batch.first,0,false);drawVertices(glowPass,batch.second);}
+    // The sky hides glow behind it: a covered texel with no emission.
+    SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};
+    SDL_BindGPUFragmentSamplers(glowPass,0,&solid,1);SDL_BindGPUFragmentSamplers(glowPass,2,&solid,1);
+    float noBlend[4]={};SDL_PushGPUFragmentUniformData(render,0,noBlend,sizeof(noBlend));
+    drawVertices(glowPass,skyVertices);
+    // The weapon hides glow behind it too; it is drawn over the view in
+    // the HUD's frame, so the glow from lamps behind it would otherwise
+    // show through it.
+    if(!weapons.empty()) {
+        setView(glowPass,view.uiX*sx,view.uiY*sy,view.uiWidth*sx,view.uiHeight*sy,&area);
+        for(const auto &draw:weapons) {
+            SDL_GPUTextureSamplerBinding image[]={{gpu(draw.image->texture),nearestClamp},{paletteTexture,nearestClamp},{gpu(draw.image->texture),nearestClamp}};
+            SDL_BindGPUFragmentSamplers(glowPass,0,image,3);drawVertices(glowPass,draw.vertices);
+        }
+    }
+    SDL_EndGPURenderPass(glowPass);
+    for(int axis=0;axis<2;++axis) {
+        SDL_GPUColorTargetInfo blur={};
+        blur.texture=axis?bloomTexture:bloomScratch;blur.load_op=SDL_GPU_LOADOP_DONT_CARE;blur.store_op=SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *blurPass=SDL_BeginGPURenderPass(render,&blur,1,nullptr);
+        SDL_BindGPUGraphicsPipeline(blurPass,blurPipeline);
+        SDL_GPUTextureSamplerBinding source={axis?bloomScratch:emissionTexture,linearClamp};
+        SDL_BindGPUFragmentSamplers(blurPass,0,&source,1);
+        // Radius scales with resolution, retaining a similar halo at 50–100%.
+        float direction[4]={axis?0:0.0035f,axis?0.0056f:0,0,0};
+        SDL_PushGPUFragmentUniformData(render,0,direction,sizeof(direction));
+        SDL_DrawGPUPrimitives(blurPass,3,1,0,0);
+        SDL_EndGPURenderPass(blurPass);
+    }
+}
+// Profiling: submits the scene's own command buffer and times it.
+void submitProfiled(SDL_GPUCommandBuffer *render,uint64_t frameStart) {
+    flushUploads();
+    uint64_t submit=SDL_GetTicksNS();
+    SDL_GPUFence *fence=SDL_SubmitGPUCommandBufferAndAcquireFence(render);
+    if(!fence) I_Error((char*)"GPU rendering failed: %s",SDL_GetError());
+    SDL_WaitForGPUFences(device,true,&fence,1);SDL_ReleaseGPUFence(device,fence);
+    uint64_t done=SDL_GetTicksNS();
+    profile.frame.cpuMs=(submit-frameStart)/1e6;profile.frame.gpuMs=(done-submit)/1e6;
+}
 } // namespace
 
 GpuTexture::~GpuTexture() {if(texture&&device)SDL_ReleaseGPUTexture(device,texture);}
@@ -697,175 +873,18 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     std::vector<const std::vector<Vertex>*> transient={&hud,&cross};
     for(const auto &draw:weapons)transient.push_back(&draw.vertices);
     std::vector<unsigned> settingsImage;settingsQuad.clear();
-    if(I_Render3DSettingsOpen()) {
-        settingsImage.assign((size_t)DOOM_SETTINGS_WIDTH*DOOM_SETTINGS_HEIGHT,0);
-        I_Render3DSettingsDraw(settingsImage.data());
-        float dw=(float)drawableWidth,dh=(float)drawableHeight;
-        settingsScale=std::max(1.0f,std::floor(std::min(dw/DOOM_SETTINGS_WIDTH,dh/DOOM_SETTINGS_HEIGHT)));
-        float pw=DOOM_SETTINGS_WIDTH*settingsScale,ph=DOOM_SETTINGS_HEIGHT*settingsScale;
-        settingsOrigin[0]=std::floor((dw-pw)/2);settingsOrigin[1]=std::floor((dh-ph)/2);
-        screenQuad(settingsQuad,-1,1,2,2,-settingsOrigin[0]/pw,-settingsOrigin[1]/ph,
-                   (dw-settingsOrigin[0])/pw,(dh-settingsOrigin[1])/ph);
-        transient.push_back(&settingsQuad);
-    }
+    if(I_Render3DSettingsOpen()) {layoutSettingsPanel(drawableWidth,drawableHeight,settingsImage);transient.push_back(&settingsQuad);}
     // Profiling: the scene goes in a command buffer of its own, timed by a
     // fence. The swapchain's may wait for the compositor, which in a window
     // keeps the display's rate even without vsync.
     SDL_GPUCommandBuffer *render=profile.enabled?SDL_AcquireGPUCommandBuffer(device):command;
     if(!render) I_Error((char*)"GPU command buffer: %s",SDL_GetError());
     uploadFrame(render,transient,sectorInfo(),palette,overlay,settingsImage);
-    // Liquid reflections: the world drawn again at reduced resolution from a
-    // camera mirrored at the liquid height, clipped to above the surface.
-    // Its alpha holds how near each point is to the surface along the
-    // mirrored ray; the mirror pass is flagged by water = (plane, 0, 0, 1).
-    camera.water[2]=camera.water[3]=0;
-    if(worldPending&&reflectionActive) {
-        int divisor=settings.retroReflections?8:2;
-        int rw=std::max(1,(int)(view.worldW/divisor)),rh=std::max(1,(int)(view.worldH/divisor));
-        if(!reflectionTexture||rw!=reflectionWidth||rh!=reflectionHeight) {
-            release(reflectionTexture);release(reflectionDepth);
-            reflectionTexture=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,rw,rh,SDL_GPU_TEXTUREUSAGE_COLOR_TARGET|SDL_GPU_TEXTUREUSAGE_SAMPLER);
-            reflectionDepth=createTexture(depthFormat,rw,rh,SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
-            if(!reflectionTexture||!reflectionDepth)I_Error((char*)"Could not allocate reflection targets");
-            reflectionWidth=rw;reflectionHeight=rh;
-        }
-        Uniforms mirror=camera;
-        mirror.eye[2]=2*reflectionPlane-camera.eye[2];mirror.forward[2]=-camera.forward[2];mirror.up[2]=-camera.up[2];
-        mirror.water[0]=reflectionPlane;mirror.water[3]=1;
-        SDL_GPUColorTargetInfo color={};
-        color.texture=reflectionTexture;color.load_op=SDL_GPU_LOADOP_CLEAR;color.store_op=SDL_GPU_STOREOP_STORE;
-        color.clear_color={0.025f,0.025f,0.03f,1};
-        SDL_GPUDepthStencilTargetInfo depth={};
-        depth.texture=reflectionDepth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_DONT_CARE;
-        depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
-        SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
-        pushWorldUniforms(render,mirror);
-        float plane[4]={reflectionPlane,0,0,0};SDL_PushGPUVertexUniformData(render,1,plane,sizeof(plane));
-        drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr);
-        SDL_EndGPURenderPass(pass);
-        camera.water[0]=view.worldX;camera.water[1]=view.worldY;camera.water[2]=1/view.worldW;camera.water[3]=1/view.worldH;
-    }
-    // Soft mist needs single-sample scene depth; under MSAA a depth-only prepass supplies it.
-    if(drawMist&&msaa) {
-        SDL_GPUDepthStencilTargetInfo depth={};
-        depth.texture=sceneDepth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_STORE;
-        depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
-        SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,nullptr,0,&depth);
-        setView(pass,view.worldX,view.worldY,view.worldW,view.worldH);
-        SDL_BindGPUGraphicsPipeline(pass,depthPipeline);
-        SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
-        for(const auto &batch:batches) if(!batch.second.empty()) {bindImage(pass,images.at(batch.first).texture,nearestClamp);drawVertices(pass,batch.second);}
-        SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};
-        SDL_BindGPUFragmentSamplers(pass,0,&solid,1);drawVertices(pass,skyVertices);
-        SDL_EndGPURenderPass(pass);
-    }
-    SDL_GPUColorTargetInfo color={};
-    color.texture=msaa?multisampleTexture:colorTexture;color.clear_color={0.025f,0.025f,0.03f,1};
-    color.load_op=SDL_GPU_LOADOP_CLEAR;
-    color.store_op=msaa&&!drawMist?SDL_GPU_STOREOP_RESOLVE:SDL_GPU_STOREOP_STORE;
-    color.resolve_texture=msaa&&!drawMist?colorTexture:nullptr;
-    SDL_GPUDepthStencilTargetInfo depth={};
-    depth.texture=depthTexture;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;
-    depth.store_op=drawMist&&!msaa?SDL_GPU_STOREOP_STORE:SDL_GPU_STOREOP_DONT_CARE;
-    depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
-    SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
-    pushWorldUniforms(render,camera);
-    if(worldPending) {
-        setView(pass,view.worldX,view.worldY,view.worldW,view.worldH);
-        // Only fully covered textures use early depth writes. Cutouts and
-        // sprites retain discard-aware shading after the sky background.
-        // The whole map is drawn each frame in texture order, so without a
-        // depth prepass hidden walls and floors would run the full lighting
-        // before nearer ones cover them; with it each pixel shades once.
-        SDL_BindGPUGraphicsPipeline(pass,prepassPipeline);
-        for(const auto &batch:batches) if(opaqueBatch(batch)) drawVertices(pass,batch.second);
-        drawWorld(render,pass,opaquePipeline,skySurfacePipeline,skyPipeline,worldPipeline,camera.water[2]>0?reflectionTexture:nullptr,
-                  coveragePipeline,cutoutPipeline);
-        // The completed world depth hides shadows behind walls and enemies.
-        SDL_BindGPUGraphicsPipeline(pass,shadowPipeline);
-        for(const auto &batch:shadowBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
-        SDL_BindGPUGraphicsPipeline(pass,decalPipeline);
-        for(const auto &batch:decalBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
-        SDL_BindGPUGraphicsPipeline(pass,particlePipeline);drawVertices(pass,particleVertices);
-        // Hot air marks the color target's alpha for the shimmer in present.
-        if(!heatVertices.empty()) {SDL_BindGPUGraphicsPipeline(pass,heatPipeline);drawVertices(pass,heatVertices);}
-    }
-    if(drawMist) {
-        SDL_EndGPURenderPass(pass);
-        color.load_op=SDL_GPU_LOADOP_LOAD;
-        color.store_op=msaa?SDL_GPU_STOREOP_RESOLVE:SDL_GPU_STOREOP_STORE;
-        color.resolve_texture=msaa?colorTexture:nullptr;
-        pass=SDL_BeginGPURenderPass(render,&color,1,nullptr);
-        setView(pass,view.worldX,view.worldY,view.worldW,view.worldH);
-        SDL_BindGPUGraphicsPipeline(pass,mistPipeline);
-        SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
-        SDL_PushGPUFragmentUniformData(render,0,&camera,sizeof(camera));
-        SDL_GPUTextureSamplerBinding mist[]={{gpu(cloudTexture),linearRepeat},{msaa?sceneDepth:depthTexture,nearestClamp}};
-        SDL_BindGPUFragmentSamplers(pass,0,mist,2);
-        drawVertices(pass,mistVertices);
-        if(!shaftVertices.empty()) {
-            SDL_BindGPUGraphicsPipeline(pass,shaftPipeline);SDL_BindGPUFragmentSamplers(pass,0,mist,2);
-            drawVertices(pass,shaftVertices);
-        }
-        pushWorldUniforms(render,camera);
-    }
-    drawOverlays(render,pass,view,weapons,hud,cross,!drawMist);
-    SDL_EndGPURenderPass(pass);
-    if(camera.materials[1]>0) {
-        int bw=std::max(1,width/2),bh=std::max(1,height/2);
-        float sx=(float)bw/w,sy=(float)bh/h;
-        SDL_GPUColorTargetInfo glow={};
-        glow.texture=emissionTexture;glow.load_op=SDL_GPU_LOADOP_CLEAR;glow.store_op=SDL_GPU_STOREOP_STORE;glow.clear_color={0,0,0,1};
-        SDL_GPUDepthStencilTargetInfo glowDepth={};
-        glowDepth.texture=emissionDepth;glowDepth.clear_depth=1;glowDepth.load_op=SDL_GPU_LOADOP_CLEAR;
-        glowDepth.store_op=SDL_GPU_STOREOP_DONT_CARE;glowDepth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;glowDepth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
-        SDL_GPURenderPass *glowPass=SDL_BeginGPURenderPass(render,&glow,1,&glowDepth);
-        SDL_Rect area={0,0,bw,bh};
-        setView(glowPass,view.worldX*sx,view.worldY*sy,view.worldW*sx,view.worldH*sy,&area);
-        SDL_BindGPUGraphicsPipeline(glowPass,emissionPipeline);
-        SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
-        SDL_GPUTextureSamplerBinding palette={paletteTexture,nearestClamp};
-        SDL_BindGPUFragmentSamplers(glowPass,1,&palette,1);
-        for(const auto &batch:batches) if(!batch.second.empty()) {bindSurface(render,glowPass,batch.first,0,false);drawVertices(glowPass,batch.second);}
-        // The sky hides glow behind it: a covered texel with no emission.
-        SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};
-        SDL_BindGPUFragmentSamplers(glowPass,0,&solid,1);SDL_BindGPUFragmentSamplers(glowPass,2,&solid,1);
-        float noBlend[4]={};SDL_PushGPUFragmentUniformData(render,0,noBlend,sizeof(noBlend));
-        drawVertices(glowPass,skyVertices);
-        // The weapon hides glow behind it too; it is drawn over the view in
-        // the HUD's frame, so the glow from lamps behind it would otherwise
-        // show through it.
-        if(!weapons.empty()) {
-            setView(glowPass,view.uiX*sx,view.uiY*sy,view.uiWidth*sx,view.uiHeight*sy,&area);
-            for(const auto &draw:weapons) {
-                SDL_GPUTextureSamplerBinding image[]={{gpu(draw.image->texture),nearestClamp},{paletteTexture,nearestClamp},{gpu(draw.image->texture),nearestClamp}};
-                SDL_BindGPUFragmentSamplers(glowPass,0,image,3);drawVertices(glowPass,draw.vertices);
-            }
-        }
-        SDL_EndGPURenderPass(glowPass);
-        for(int axis=0;axis<2;++axis) {
-            SDL_GPUColorTargetInfo blur={};
-            blur.texture=axis?bloomTexture:bloomScratch;blur.load_op=SDL_GPU_LOADOP_DONT_CARE;blur.store_op=SDL_GPU_STOREOP_STORE;
-            SDL_GPURenderPass *blurPass=SDL_BeginGPURenderPass(render,&blur,1,nullptr);
-            SDL_BindGPUGraphicsPipeline(blurPass,blurPipeline);
-            SDL_GPUTextureSamplerBinding source={axis?bloomScratch:emissionTexture,linearClamp};
-            SDL_BindGPUFragmentSamplers(blurPass,0,&source,1);
-            // Radius scales with resolution, retaining a similar halo at 50–100%.
-            float direction[4]={axis?0:0.0035f,axis?0.0056f:0,0,0};
-            SDL_PushGPUFragmentUniformData(render,0,direction,sizeof(direction));
-            SDL_DrawGPUPrimitives(blurPass,3,1,0,0);
-            SDL_EndGPURenderPass(blurPass);
-        }
-    }
-    if(render!=command) {
-        flushUploads();
-        uint64_t submit=SDL_GetTicksNS();
-        SDL_GPUFence *fence=SDL_SubmitGPUCommandBufferAndAcquireFence(render);
-        if(!fence) I_Error((char*)"GPU rendering failed: %s",SDL_GetError());
-        SDL_WaitForGPUFences(device,true,&fence,1);SDL_ReleaseGPUFence(device,fence);
-        uint64_t done=SDL_GetTicksNS();
-        profile.frame.cpuMs=(submit-frameStart)/1e6;profile.frame.gpuMs=(done-submit)/1e6;
-    }
+    drawReflection(render,view,camera);
+    if(drawMist&&msaa)drawMistDepth(render,view,camera);
+    drawMainView(render,view,camera,drawMist,msaa,weapons,hud,cross);
+    if(camera.materials[1]>0)drawBloom(render,view,camera,weapons);
+    if(render!=command)submitProfiled(render,frameStart);
     present(command,swapchain,view);
     flushUploads();
     if(screenshotPending||renderCheckDue()) {screenshotPending=false;capture(command,view,(int)drawableWidth,(int)drawableHeight);}

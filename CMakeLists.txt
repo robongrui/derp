@@ -144,13 +144,41 @@ if(DOOM_BUILD_SDL)
     FetchContent_MakeAvailable(NukedOPL3)
     add_library(nuked_opl3 STATIC "${nukedopl3_SOURCE_DIR}/opl3.c")
     target_include_directories(nuked_opl3 PUBLIC "${nukedopl3_SOURCE_DIR}")
+    # The 3D scene, one file per subsystem; scene3d/internal.h holds what they share.
+    set(DOOM_SCENE3D_SOURCES
+        platform/scene3d/atmosphere.cpp
+        platform/scene3d/bake_atlas.cpp
+        platform/scene3d/bake_indirect.cpp
+        platform/scene3d/bake_lights.cpp
+        platform/scene3d/bake_sun.cpp
+        platform/scene3d/blood.cpp
+        platform/scene3d/caustics.cpp
+        platform/scene3d/config.cpp
+        platform/scene3d/exposure.cpp
+        platform/scene3d/geometry.cpp
+        platform/scene3d/images.cpp
+        platform/scene3d/impacts.cpp
+        platform/scene3d/lights.cpp
+        platform/scene3d/liquids.cpp
+        platform/scene3d/map.cpp
+        platform/scene3d/relight.cpp
+        platform/scene3d/scene.cpp
+        platform/scene3d/shadows.cpp
+        platform/scene3d/surface_lights.cpp
+        platform/scene3d/thing_light.cpp
+        platform/scene3d/weapon.cpp
+    )
+    if(NOT MSVC)
+        # The engine headers' #pragma interface, once per scene file.
+        set_source_files_properties(${DOOM_SCENE3D_SOURCES} PROPERTIES COMPILE_OPTIONS -Wno-unknown-pragmas)
+    endif()
     # The accelerated 3D renderer: SDL_gpu drives Metal on macOS and Vulkan on
     # Linux and Windows (SDL_GPU_DRIVER=vulkan selects MoltenVK on a Mac).
     function(doom_add_renderer target enabled)
         if(NOT enabled)
             return()
         endif()
-        target_sources(${target} PRIVATE platform/scene3d.cpp platform/i_gpu3d.cpp platform/settings_panel.cpp
+        target_sources(${target} PRIVATE ${DOOM_SCENE3D_SOURCES} platform/i_gpu3d.cpp platform/settings_panel.cpp
             platform/settings_menu.cpp)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
         target_compile_definitions(${target} PRIVATE DOOM_RENDER3D)

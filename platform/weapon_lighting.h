@@ -1,4 +1,4 @@
-/* The player's weapon relit at runtime (weaponDraws in scene3d.cpp). Doom's
+/* The player's weapon relit at runtime (weaponDraws in scene3d/weapon.cpp). Doom's
    weapon artwork carries painted light: bright sheen streaks (the pistol's
    slide, the chaingun's chrome) and a broad light-to-dark sweep across each
    part. doom_weapon_delight takes most of it back out of the palette indices,

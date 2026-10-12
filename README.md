@@ -64,7 +64,7 @@ back. The result is that light appears to come from somewhere and far corners
 can fall darker instead of every point in the sector being equally bright.
 
 See
-[`platform/scene3d.cpp`](platform/scene3d.cpp),
+[`platform/scene3d/bake_lights.cpp`](platform/scene3d/bake_lights.cpp),
 [`platform/emissive.h`](platform/emissive.h) and
 [`platform/surface_lighting.h`](platform/surface_lighting.h).
 
@@ -87,7 +87,7 @@ the level's starting state.
 
 See
 [`platform/baked_lighting.h`](platform/baked_lighting.h) and
-[`platform/scene3d.cpp`](platform/scene3d.cpp).
+[`platform/scene3d/relight.cpp`](platform/scene3d/relight.cpp).
 
 ### Bump and gloss are guessed from the original pixels
 
@@ -107,7 +107,7 @@ It is intentionally approximate. The aim is to make the existing art react
 to light rather than reinterpret it as a physically based material set.
 
 See
-[`platform/scene3d.cpp`](platform/scene3d.cpp) and
+[`platform/scene3d/images.cpp`](platform/scene3d/images.cpp) and
 [`platform/shaders/world.frag`](platform/shaders/world.frag).
 
 ### The weapon sprite is de-lit and lit again
@@ -129,7 +129,7 @@ There is no weapon model.
 
 See
 [`platform/weapon_lighting.h`](platform/weapon_lighting.h),
-[`platform/scene3d.cpp`](platform/scene3d.cpp) and
+[`platform/scene3d/weapon.cpp`](platform/scene3d/weapon.cpp) and
 [`platform/shaders/world.frag`](platform/shaders/world.frag).
 
 ### Monitor textures pretend to contain curved CRT glass
@@ -161,7 +161,7 @@ strongest nearby dynamic light.
 
 See
 [`platform/flash_lighting.h`](platform/flash_lighting.h) and
-[`platform/scene3d.cpp`](platform/scene3d.cpp).
+[`platform/scene3d/shadows.cpp`](platform/scene3d/shadows.cpp).
 
 ### Sprite shadows are just squashed sprites
 
@@ -195,7 +195,7 @@ Nukage, slime, blood and lava deliberately do not mirror the room.
 
 See
 [`platform/i_gpu3d.cpp`](platform/i_gpu3d.cpp),
-[`platform/scene3d.cpp`](platform/scene3d.cpp) and
+[`platform/scene3d/geometry.cpp`](platform/scene3d/geometry.cpp) and
 [`platform/shaders/world.frag`](platform/shaders/world.frag).
 
 ### Liquids affect the world around them
@@ -215,7 +215,7 @@ quicker.
 Particles remain chunky DOOM-sized blocks rather than smooth modern particle
 textures.
 
-See [`platform/scene3d.cpp`](platform/scene3d.cpp) and
+See [`platform/scene3d/liquids.cpp`](platform/scene3d/liquids.cpp) and
 [`platform/shaders/world.frag`](platform/shaders/world.frag).
 
 ### The atmosphere is mostly fake geometry and cheap math
@@ -236,7 +236,7 @@ sky with optional forward scattering.
 
 See
 [`platform/volumetric_fog.h`](platform/volumetric_fog.h),
-[`platform/scene3d.cpp`](platform/scene3d.cpp),
+[`platform/scene3d/atmosphere.cpp`](platform/scene3d/atmosphere.cpp),
 [`platform/shaders/mist.frag`](platform/shaders/mist.frag) and
 [`platform/shaders/present.frag`](platform/shaders/present.frag).
 
@@ -252,7 +252,8 @@ drying darker and matte. Pools grow in visible steps rather than continuously.
 Bullet impacts also leave marks and throw small chunks colored from the
 surface that was hit.
 
-See [`platform/scene3d.cpp`](platform/scene3d.cpp).
+See [`platform/scene3d/blood.cpp`](platform/scene3d/blood.cpp) and
+[`platform/scene3d/impacts.cpp`](platform/scene3d/impacts.cpp).
 
 ### Pixel art stays pixel art
 
