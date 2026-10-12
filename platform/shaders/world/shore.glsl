@@ -1,6 +1,6 @@
 // Damp shores above liquids.
 // Part of world.frag, which declares the resources these read.
-// Shorelines (flag 16384). Liquids wet what they touch: walls and banks
+// Shorelines (FEATURE_DAMP_SHORES). Liquids wet what they touch: walls and banks
 // above the waterline turn darker up to a ragged line, read at texel
 // centers so the damp edge steps in whole Doom pixels.
 const float shoreRange=16.0;

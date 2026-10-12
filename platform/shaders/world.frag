@@ -92,10 +92,10 @@ void main() {
     // color has darkened while drying.
     bool blood=(vMode&256u)!=0u;
     uint bakeFlags=uint(c.flashlightTint.w);
-    // Flag 128: monitor glass in computer textures. Its curved CRT dome
+    // FEATURE_GLOSSY_SCREENS: monitor glass in computer textures. Its curved CRT dome
     // shapes light highlights and an edge sheen, and like a weak lens it
     // enlarges the picture's middle slightly (edges still meet the rim).
-    bool glassy=!sprite&&!blood&&(bakeFlags&128u)!=0u&&c.effects.z==0.0&&isGlass(vUV);
+    bool glassy=!sprite&&!blood&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&isGlass(vUV);
     vec3 screenNormal=normal;vec2 screen=vec2(0),uv=vUV;
     if(glassy) {
         vec2 origin,extent;screen=glassScreen(vUV,origin,extent);
@@ -169,20 +169,20 @@ void main() {
         if(blend>0.0) emission=mix(emission,maskAt(nextImage,at,c.effects.x>0.0),blend);
         illumination=max(illumination,vec3(emission));
     }
-    // Flag 16384: damp walls and banks above liquids (shoreWet), darker and
+    // FEATURE_DAMP_SHORES: damp walls and banks above liquids (shoreWet), darker and
     // a little stained by the liquid; glowing texels stay dry.
-    if(mapped&&(bakeFlags&16384u)!=0u&&normal.z>-0.5) {
+    if(mapped&&(bakeFlags&FEATURE_DAMP_SHORES)!=0u&&normal.z>-0.5) {
         vec3 stain;
         float damp=shoreWet(vWorld,normal,sector,dot(color.rgb,vec3(0.299,0.587,0.114)),stain)*(1.0-emission);
         if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
     }
     vec3 albedo=color.rgb;
     color.rgb=color.rgb*illumination+specular;
-    if(mapped&&(bakeFlags&4u)!=0u&&(abs(normal.z)<=0.5||(normal.z<-0.5&&(bakeFlags&16u)!=0u))) color.rgb+=caustics(vWorld,normal,sector,false);
-    // Flag 4096: things in the world (not the weapon, mode 1, or effect sprites, 1024)
+    if(mapped&&(bakeFlags&FEATURE_CAUSTICS)!=0u&&(abs(normal.z)<=0.5||(normal.z<-0.5&&(bakeFlags&FEATURE_CEILING_CAUSTICS)!=0u))) color.rgb+=caustics(vWorld,normal,sector,false);
+    // FEATURE_CAUSTICS_SPRITES: things in the world (not the weapon, mode 1, or effect sprites, 1024)
     // near liquids catch the caustics too, in their own colors so the painted
     // shading survives; the scale matches the walls' additive light.
-    if(sprite&&(bakeFlags&4100u)==4100u&&(vMode&1025u)==0u&&c.effects.z==0.0)
+    if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&1025u)==0u&&c.effects.z==0.0)
         color.rgb+=albedo*(1.0-emission)*caustics(vWorld,normal,0u,true)*2.5;
     if((vMode&32u)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
     if((vMode&1u)==0u) {

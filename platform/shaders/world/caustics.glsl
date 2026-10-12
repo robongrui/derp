@@ -13,10 +13,10 @@ float causticRow(int layer,int frame,int frames,ivec2 t) {
 float causticLayer(vec2 coord,int layer,float scale,float sway,uint flags) {
     int frames=max(1,textureSize(causticPattern,0).y/(64*7)),frame=int(c.texFilter.z)%frames,next=(frame+1)%frames;
     float blend=c.texFilter.w;
-    vec2 q=coord/((flags&512u)!=0u?scale:1.0);
+    vec2 q=coord/((flags&FEATURE_CAUSTICS_GROW)!=0u?scale:1.0);
     // The mirror doubles each wave's tilt, so light lands farther off the
     // higher it travels: the pattern sways by the slope, more with distance.
-    if((flags&2048u)!=0u) {
+    if((flags&FEATURE_CAUSTICS_SWAY)!=0u) {
         ivec2 t=wrapTexel(ivec2(floor(q)),ivec2(64));
         vec2 slope=mix(vec2(causticRow(5,frame,frames,t),causticRow(6,frame,frames,t)),
             vec2(causticRow(5,next,frames,t),causticRow(6,next,frames,t)),blend);
@@ -27,7 +27,7 @@ float causticLayer(vec2 coord,int layer,float scale,float sway,uint flags) {
 }
 float causticPatternAt(vec2 coord,float distance,uint flags) {
     float sway=saturate(distance/96.0)*6.0;
-    if((flags&256u)==0u) return causticLayer(coord,0,2.0,sway,flags);
+    if((flags&FEATURE_CAUSTICS_COMPUTED)==0u) return causticLayer(coord,0,2.0,sway,flags);
     float h=clamp(distance,8.0,96.0);
     float l=h<24.0?(h-8.0)/16.0:h<48.0?1.0+(h-24.0)/24.0:2.0+(h-48.0)/48.0;
     int l0=min(int(l),2);float lf=l-float(l0);
@@ -42,18 +42,18 @@ float causticSteps(float v) {return round(saturate(v*2.0-0.15)*4.0)/4.0;}
 // the flat's waves would actually gather, picked by how far the light has
 // traveled from the water: soft near it, sharp lines around 40 units, broader
 // above. Walls sample one cell toward their visible side and fade with
-// height above their floor. Ceilings (flag 16) take the pattern in map space,
+// height above their floor. Ceilings (FEATURE_CEILING_CAUSTICS) take the pattern in map space,
 // so they mirror the floor below, and fade as their sector gets taller.
 // The ripples follow the light on the liquid's sector, not the wall's:
 // nothing below mid levels, full in bright rooms. Nukage, slime and lava glow
 // by themselves and keep a weak ripple. Dynamic lights reaching this point
-// (the flashlight; with flag 8192 also muzzle flashes and shots; static
+// (the flashlight; with FEATURE_CAUSTICS_SHOTS also muzzle flashes and shots; static
 // lights only for the share the bake lacks) add their own: a flat surface mirrors the point below the
 // water, and where the ray toward that mirror image meets the water over a
 // liquid cell, the reflection lands here. It fades over its whole path, down
 // to the water and back up, faster than the direct light since the waves
 // spread it (the flashlight's long cone; short lights fade over their radius
-// anyway). Flag 1024: water reflects more the flatter the light strikes
+// anyway). FEATURE_CAUSTICS_ANGLE: water reflects more the flatter the light strikes
 // (Schlick's Fresnel), so aiming across a pool lights the walls and aiming
 // down barely does. The layer follows each light's distance from the water,
 // weighted by brightness. Light that passes through the liquid takes its
@@ -94,7 +94,7 @@ vec3 caustics(vec3 world,vec3 normal,uint sector,bool sprite) {
         uint i=word*32u+uint(findLSB(mask[word]));
         mask[word]&=mask[word]-1u;
         vec3 from=lights[i].position.xyz;
-        if(from.z<=water.y||lights[i].baked>=1.0||(lights[i].direction.w<=0.0&&(flags&8192u)==0u)) continue;
+        if(from.z<=water.y||lights[i].baked>=1.0||(lights[i].direction.w<=0.0&&(flags&FEATURE_CAUSTICS_SHOTS)==0u)) continue;
         vec3 surface=mix(from,mirrored,(from.z-water.y)/(from.z-mirrored.z));
         ivec2 below=clamp(ivec2(floor((surface.xy-c.map.xy)*c.map.z)),ivec2(0),mapSize-1);
         if(texelFetch(causticMap,below,0).a<=0.95||dot(normal,surface-world)<=0.0) continue;
@@ -104,7 +104,7 @@ vec3 caustics(vec3 world,vec3 normal,uint sector,bool sprite) {
         float spread=lights[i].direction.w>0.0?pow(max(0.0,1.0-length(mirrored-from)/lights[i].position.w),2.0)*1.5:2.5;
         float amount=flashAtOpen(mirrored,i)*spread*(1.0-lights[i].baked);
         if(amount<=0.0||flashAt(surface,i)<=0.0) continue;
-        if((flags&1024u)!=0u) {
+        if((flags&FEATURE_CAUSTICS_ANGLE)!=0u) {
             float cosine=(from.z-water.y)/max(length(surface-from),0.001);
             amount*=min((0.02+0.98*pow(1.0-cosine,5.0))/0.14,2.5);
         }

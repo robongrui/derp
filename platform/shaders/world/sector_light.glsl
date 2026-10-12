@@ -57,7 +57,7 @@ float sunLight(uint sector,float light,float visible,out float share) {
 // scene3d/bake_indirect.cpp equivalent.
 float flowLight(vec3 world,vec3 normal,uint sector,float light) {
     vec2 at=abs(normal.z)>0.5?world.xy:world.xy+normal.xy/c.map.z;
-    if((uint(c.flashlightTint.w)&8u)!=0u&&abs(normal.z)>0.5) at=floor(at)+0.5;
+    if((uint(c.flashlightTint.w)&FEATURE_TEXEL_BAKE)!=0u&&abs(normal.z)>0.5) at=floor(at)+0.5;
     ivec2 cell=clamp(ivec2(floor((at-c.map.xy)*c.map.z)),ivec2(0),textureSize(seams,0)-1);
     uvec4 s=uvec4(round(texelFetch(seams,cell,0)*65535.0));
     if(s.x!=sector||s.w==0xFFFFu) return light;
@@ -72,7 +72,7 @@ struct SectorLit { float light,shown,sunShare,skyShare,occlusion; vec4 baked,dir
 SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
     float light=vLight,sunShare=0.0;
     if(mapped&&c.map.w>0.0&&abs(normal.z)>0.5) light=seamLight(vWorld.xy,sector,normal.z<0.0,light);
-    if(mapped&&(bakeFlags&32u)!=0u) light=flowLight(vWorld,normal,sector,light);
+    if(mapped&&(bakeFlags&FEATURE_LIGHT_FLOW)!=0u) light=flowLight(vWorld,normal,sector,light);
     // Static light fills the headroom above this light, which seams and flow
     // already carry smoothly across sector edges, so a bright sector beside a
     // dark one shows no edge in the lamp's color.
@@ -89,7 +89,7 @@ SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
     // indoors, surfaces that see sky through openings rise toward the sky
     // sectors' light, the lift taking the tint; enclosed sky sectors blend
     // toward the indoor rule by their enclosure. All in 1/16 steps. With
-    // window light (flag 65536) the openings light indoor surfaces from the
+    // window light (FEATURE_WINDOW_LIGHT) the openings light indoor surfaces from the
     // bake, with direction, so they take no lift here.
     float skyShare=0.0;
     if(mapped&&c.fx2.y>0.0) {
@@ -100,12 +100,12 @@ SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
             float shaded=light-round(light*0.25*(1.0-ambient.x)*16.0)/16.0;
             light=round(mix(shaded,light+lift,enclosed)*16.0)/16.0;
             skyShare=mix(0.3*ambient.x,indoorShare,enclosed);
-        } else if((bakeFlags&65536u)==0u) {skyShare=indoorShare;light+=lift;}
+        } else if((bakeFlags&FEATURE_WINDOW_LIGHT)==0u) {skyShare=indoorShare;light+=lift;}
     }
     light=max(light,outdoorFloor);
-    // Baked occlusion (flag 64) darkens the sector and baked light, not dynamic lights.
+    // Baked occlusion (FEATURE_BAKED_OCCLUSION) darkens the sector and baked light, not dynamic lights.
     float occlusion=1.0;
-    if(mapped&&(bakeFlags&64u)!=0u) {occlusion=round((1.0-0.45*(1.0-ambient.y))*16.0)/16.0;light*=occlusion;}
+    if(mapped&&(bakeFlags&FEATURE_BAKED_OCCLUSION)!=0u) {occlusion=round((1.0-0.45*(1.0-ambient.y))*16.0)/16.0;light*=occlusion;}
     if(c.effects.z==0.0) light*=clamp(1.0-vDistance/3200.0,0.35,1.0);
     else light=1.0;
     return SectorLit(light,shownLight,sunShare,skyShare,occlusion,baked,direction,bounce);

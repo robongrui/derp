@@ -328,7 +328,8 @@ void splashesShutdown();
 boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed_t fz);
 void watchSplashes();
 void buildRings(Uniforms &camera);
-std::array<float,3> gooColor(int sector,uint32_t seed);
+float liquidLight(int sector,Image &flat,float x,float y,float z,const Uniforms &camera);
+std::array<float,3> gooColor(int sector,uint32_t seed,float x,float y,float z,const Uniforms &camera);
 void buildBubbles(const Uniforms &camera);
 
 // exposure.cpp

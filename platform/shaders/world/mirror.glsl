@@ -10,7 +10,7 @@ void liquidMirror(inout vec4 color,vec3 albedo) {
     // scrolling wobble distorts it, and grazing views reflect more.
     // Retro style steps the wobble at 12 Hz, snaps it to whole reflection
     // pixels, skips filtering and quantizes to the WAD palette.
-    bool retro=(uint(c.flashlightTint.w)&2u)!=0u;
+    bool retro=(uint(c.flashlightTint.w)&FEATURE_RETRO_REFLECTIONS)!=0u;
     float t=retro?floor(c.fog.w*12.0)/12.0:c.fog.w;
     vec2 wobble=vec2(sin(vWorld.x*0.07+t*1.9)+sin(vWorld.y*0.11+t*1.3),
                      cos(vWorld.y*0.08-t*1.6)+cos(vWorld.x*0.05+t*2.1))*(retro?0.005:0.003);

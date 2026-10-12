@@ -86,7 +86,7 @@ struct Settings {
     int softSprites=1; // Explosions and puffs stop slicing into walls; dithered toward floors.
     int heatHaze=0; // Stepped raster shimmer above lava, hot floors and flames.
     int eyeAdaptation=1; // Brief stepped over/underexposure when the light changes.
-    int splashes=1; // Droplets and ripple rings where things land or walk in liquids; bubbles and sinking in thick ones.
+    int splashes=1; // Ripple rings where things land or walk in liquids, spouts where shots hit them; bubbles and sinking in thick ones.
     int dust=1; // Specks glinting in sunbeams and the flashlight beam.
     int playerShadow=1; // The player's own sprite shadow from the sun or a strong light.
     int doorLight=1; // Light from a bright room spills through a door as it opens.

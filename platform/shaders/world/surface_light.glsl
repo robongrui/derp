@@ -17,7 +17,7 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     vec3 staticLight=useBake?baked.rgb*staticKept*occlusion:vec3(0);
     float staticShare=useBake&&c.bake.z>0.0?direction.b:0.0;
     bool staticDetail=staticShare>0.05&&dot(staticLight,vec3(0.299,0.587,0.114))>0.02;
-    bool detail=(uint(c.flashlightTint.w)&1u)!=0u&&(any(notEqual(mask,uvec2(0)))||staticDetail);
+    bool detail=(uint(c.flashlightTint.w)&FEATURE_SURFACE_DETAIL)!=0u&&(any(notEqual(mask,uvec2(0)))||staticDetail);
     // Glass is smooth: its bulge replaces the artwork's bump detail,
     // and it takes a tighter, stronger highlight than painted metal.
     float busy=0.0;
@@ -28,12 +28,12 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
         ivec2 p=wrapTexel(ivec2(floor(vUV)),textureSize(image,0));
         uint index=uint(round(texelFetch(image,p,0).r*255.0));
         gloss=paletteGloss(index);
-        // Flag 32768, varied highlights: each ramp's sharpness is
+        // FEATURE_VARIED_HIGHLIGHTS: each ramp's sharpness is
         // halved where the artwork is grainy and doubled where it runs
         // smooth, per texel. The highlight keeps its energy, so broad
         // ones dim and tight ones brighten against the dark around them;
         // grainy artwork also loses up to a quarter of its gloss.
-        if((bakeFlags&32768u)!=0u) {
+        if((bakeFlags&FEATURE_VARIED_HIGHLIGHTS)!=0u) {
             shininess=paletteShininess(index)*exp2(1.0-2.0*busy);
             gloss*=(shininess+2.0)/26.0*(1.0-0.25*busy);
         }

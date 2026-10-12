@@ -129,7 +129,7 @@ takes a screenshot.
 - **Heat haze:** rows of Doom pixels shimmer sideways at the tic rate above lava, red-hot damaging floors and flames.
 - **Blood splats and pools:** hitscan hits leave splats on the floor and on walls close behind the target, and corpses grow a pool in steps. **Wet blood shine** makes fresh blood glint under dynamic lights before it dries matte.
 - **Soft effect sprites:** explosions, puffs and teleport fog no longer slice into walls, and dissolve on an ordered dither where they meet floors and ceilings.
-- **Liquids:** reflections of the scene in nearby water, nukage, slime and blood (rendered a second time at half resolution), optionally in **retro PS1 style** at quarter resolution with palette colors; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; and splashes with ripple rings where things land or wade.
+- **Liquids:** reflections of the scene in nearby water (rendered a second time at half resolution), optionally in **retro PS1 style** at one-eighth resolution with palette colors; nukage, slime, blood and lava do not mirror the room; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; and splashes with ripple rings where things land or wade.
 
 **Performance** (off by default; the first two need baked static lights)
 
@@ -186,7 +186,9 @@ including damage and bonus palette shifts. Launch with `-palette 1` to enable
 it or `-palette 0` to disable it. This art pass intentionally changes colored
 lights and can produce visible color bands.
 
-Mouse look tilts the camera. Shooting retains DOOM's automatic vertical aiming.
+Mouse look tilts the camera. Shooting retains DOOM's automatic vertical aiming;
+when it finds no target, a bullet shot follows the view pitch instead of flying
+level and can hit floors and ceilings. Demos and netgames keep vanilla aiming.
 Graphics choices are saved in `graphics.cfg`. F4 and F7 replace the original
 sound-menu and end-game shortcuts; those actions are still in the game menu.
 Screenshots capture the full display resolution and go into `Screenshots`

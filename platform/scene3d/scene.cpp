@@ -1,6 +1,7 @@
 /* The scene's public state, its lifecycle and the per-frame entry points
    (prepareFrame), plus the backend-independent I_Render3D calls. */
 #include "internal.h"
+#include "../shaders/feature_flags.h"
 
 namespace doom3d {
 Profile profile;
@@ -159,16 +160,18 @@ FrameView prepareFrame(int w,int h) {
     camera.texFilter[0]=settings.sharpSoftness;camera.texFilter[1]=settings.paletteMips&&settings.filter;
     camera.effects[2]=players[displayplayer].fixedcolormap;
     camera.effects[3]=settings.spriteFilter;camera.materials[0]=settings.emissive;
-    // Bit flags: 1 surface detail, 2 retro reflections, 4 caustics, 8 texel-aligned bake,
-    // 16 ceiling caustics, 32 light flow, 64 baked occlusion, 128 glossy screens,
-    // caustics: 256 computed layers, 512 growing shapes, 1024 reflection angle, 2048 sway, 4096 sprites,
-    // 8192 shots; 16384 damp shores; 32768 varied highlights; 65536 window light (no indoor sky lift).
-    camera.flashlightTint[3]=(settings.detail?1:0)+(settings.retroReflections?2:0)+(settings.caustics&&causticTexture?4:0)+(settings.texelLight?8:0)+
-        (settings.caustics&&settings.ceilingCaustics&&causticTexture?16:0)+(settings.lightFlow&&flowKey>=0&&flowKey==flowInputs()?32:0)+
-        (settings.bakedAO&&ambientKey>=0&&ambientKey==bakeThingsKey?64:0)+(settings.glossyScreens?128:0)+
-        (settings.causticsComputed?256:0)+(settings.causticsGrow?512:0)+(settings.causticsAngle?1024:0)+(settings.causticsSway?2048:0)+
-        (settings.causticsSprites?4096:0)+(settings.causticsShots?8192:0)+(settings.dampShores&&shoreTexture?16384:0)+
-        (settings.detail&&settings.variedHighlights?32768:0)+(settings.windowLight&&bakedLightsActive?65536:0);
+    unsigned features=(settings.detail?FEATURE_SURFACE_DETAIL:0)|(settings.retroReflections?FEATURE_RETRO_REFLECTIONS:0)|
+        (settings.caustics&&causticTexture?FEATURE_CAUSTICS:0)|(settings.texelLight?FEATURE_TEXEL_BAKE:0)|
+        (settings.caustics&&settings.ceilingCaustics&&causticTexture?FEATURE_CEILING_CAUSTICS:0)|
+        (settings.lightFlow&&flowKey>=0&&flowKey==flowInputs()?FEATURE_LIGHT_FLOW:0)|
+        (settings.bakedAO&&ambientKey>=0&&ambientKey==bakeThingsKey?FEATURE_BAKED_OCCLUSION:0)|
+        (settings.glossyScreens?FEATURE_GLOSSY_SCREENS:0)|(settings.causticsComputed?FEATURE_CAUSTICS_COMPUTED:0)|
+        (settings.causticsGrow?FEATURE_CAUSTICS_GROW:0)|(settings.causticsAngle?FEATURE_CAUSTICS_ANGLE:0)|
+        (settings.causticsSway?FEATURE_CAUSTICS_SWAY:0)|(settings.causticsSprites?FEATURE_CAUSTICS_SPRITES:0)|
+        (settings.causticsShots?FEATURE_CAUSTICS_SHOTS:0)|(settings.dampShores&&shoreTexture?FEATURE_DAMP_SHORES:0)|
+        (settings.detail&&settings.variedHighlights?FEATURE_VARIED_HIGHLIGHTS:0)|
+        (settings.windowLight&&bakedLightsActive?FEATURE_WINDOW_LIGHT:0);
+    camera.flashlightTint[3]=(float)features; // see shaders/feature_flags.h
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;
     camera.materials[2]=settings.fog&&worldPending;

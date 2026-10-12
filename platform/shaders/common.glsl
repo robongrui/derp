@@ -1,6 +1,7 @@
 // Shared declarations. Sources are Vulkan GLSL; Metal gets MSL translated by
 // SPIRV-Cross (scripts/compile_gpu_shaders.cmake).
 // SDL_gpu resource sets: vertex 0 resources / 1 uniforms, fragment 2 / 3.
+#include "feature_flags.h"
 // Clip space is y up; SDL_gpu flips the Vulkan viewport to match Metal.
 // baked: the part of the light already in the bake maps (0: dynamic only).
 struct Flash { vec4 position; float strength; uint first,count; float baked; vec4 color,direction; };

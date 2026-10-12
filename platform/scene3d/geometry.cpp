@@ -268,7 +268,7 @@ static float sinkInLiquid(const mobj_t *thing,int i,const Image &image,float x,f
     if(sectorMist[i].thick&&!(thing->flags&MF_SPECIAL)&&std::hypot(x-camera.eye[0],y-camera.eye[1])<1024) {
         float r=units(thing->radius)*0.55f;int tic=leveltime/4;
         uint32_t seed=(uint32_t)(uintptr_t)thing;
-        auto color=gooColor(i,seed);
+        auto color=gooColor(i,seed,x,y,floorZ(&sectors[i]),camera);
         for(int k=0;k<6;++k) {
             float angle=(k+hashUnit(k,tic,seed)*0.5f)*doomPi/3,wobble=r*(0.9f+0.25f*hashUnit(k,tic,seed^3u));
             pixelBlock(particleVertices,camera,x+std::cos(angle)*wobble,y+std::sin(angle)*wobble,floorZ(&sectors[i])+0.2f,2.0f,0.6f,color,true,&color);

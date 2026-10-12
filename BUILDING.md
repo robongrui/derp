@@ -53,7 +53,8 @@ Geometry uses current sector heights and texture translations so doors, lifts,
 switches and animated materials follow the game simulation. WAD textures are
 decoded at runtime into palette indices plus alpha coverage; no artwork is
 replaced or manually converted. The GPU performs perspective mapping and depth
-testing at the drawable resolution, with 4× MSAA when the device supports it.
+testing at the drawable resolution, with optional MSAA (off by default, up to
+what the device supports).
 
 World textures optionally carry an emissive mask in a third GPU channel.
 Conservative name/hue rules select lamp strips, colored computer displays, lava

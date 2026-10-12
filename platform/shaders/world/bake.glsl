@@ -20,7 +20,7 @@ float bakeKept(vec3 baked,float headroom) {
 // Baked surface data: rgb static light, a sun visibility (negative where a
 // surface has none, as on ceilings), and bounce light. Floors keep their sun
 // in the contact map's blue channel.
-// Texel-aligned (flag 8): the four nearest cells blend smoothly, read at the
+// Texel-aligned (FEATURE_TEXEL_BAKE): the four nearest cells blend smoothly, read at the
 // center of the texture pixel the fragment lies in, so light steps follow
 // the artwork's own pixels instead of the bake grid. Floors skip cells of
 // other sectors like seamLight; walls stay inside their atlas strip, whose
@@ -35,7 +35,7 @@ vec2 unpackAmbient(float packed) {
 }
 vec4 bakedSurface(vec3 normal,uint sector,out vec3 bounce,out vec2 ambient,out vec4 direction) {
     bounce=vec3(0);ambient=vec2(0,1);direction=vec4(0.5,0.5,0,0);
-    bool texelAligned=(uint(c.flashlightTint.w)&8u)!=0u,directed=c.bake.z>0.0;
+    bool texelAligned=(uint(c.flashlightTint.w)&FEATURE_TEXEL_BAKE)!=0u,directed=c.bake.z>0.0;
     if(abs(normal.z)>0.5&&texelAligned) {
         ivec2 lightSize=textureSize(flatLight,0),layer=max(lightSize/ivec2(1,4),ivec2(1));
         int row=normal.z<-0.5?layer.y:0;
