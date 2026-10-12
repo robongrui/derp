@@ -194,7 +194,7 @@ palette.
 Nukage, slime, blood and lava deliberately do not mirror the room.
 
 See
-[`platform/i_gpu3d.cpp`](platform/i_gpu3d.cpp),
+[`platform/gpu3d/frame.cpp`](platform/gpu3d/frame.cpp),
 [`platform/scene3d/geometry.cpp`](platform/scene3d/geometry.cpp) and
 [`platform/shaders/world.frag`](platform/shaders/world.frag).
 

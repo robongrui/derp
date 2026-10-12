@@ -88,7 +88,7 @@ void sceneInit(SDL_Window *window) {
 }
 void sceneShutdown() {
     stopRelight();
-    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;r_uncapped=0;v_overlayactive=0;
+    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     batches.clear();shadowBatches.clear();decalBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();

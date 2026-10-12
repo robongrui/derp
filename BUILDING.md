@@ -47,7 +47,7 @@ and firing were also checked in the native Mac window.
 ## 3D renderer
 
 `platform/scene3d/` (C++17, one file per subsystem; `internal.h` lists what
-they share) builds the 3D world from the original loaded map, and `platform/i_gpu3d.cpp` draws it with SDL_gpu: BSP leaves are clipped into convex floor/ceiling polygons, linedefs produce
+they share) builds the 3D world from the original loaded map, and `platform/gpu3d/` draws it with SDL_gpu: BSP leaves are clipped into convex floor/ceiling polygons, linedefs produce
 textured wall spans, and game objects produce animated, directional billboards.
 Geometry uses current sector heights and texture translations so doors, lifts,
 switches and animated materials follow the game simulation. WAD textures are

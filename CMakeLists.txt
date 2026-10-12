@@ -168,9 +168,16 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/thing_light.cpp
         platform/scene3d/weapon.cpp
     )
+    # The SDL_gpu backend that draws it; gpu3d/internal.h holds what its files share.
+    set(DOOM_GPU3D_SOURCES
+        platform/gpu3d/device.cpp
+        platform/gpu3d/draw.cpp
+        platform/gpu3d/frame.cpp
+        platform/gpu3d/pipelines.cpp
+    )
     if(NOT MSVC)
-        # The engine headers' #pragma interface, once per scene file.
-        set_source_files_properties(${DOOM_SCENE3D_SOURCES} PROPERTIES COMPILE_OPTIONS -Wno-unknown-pragmas)
+        # The engine headers' #pragma interface, once per file.
+        set_source_files_properties(${DOOM_SCENE3D_SOURCES} ${DOOM_GPU3D_SOURCES} PROPERTIES COMPILE_OPTIONS -Wno-unknown-pragmas)
     endif()
     # The accelerated 3D renderer: SDL_gpu drives Metal on macOS and Vulkan on
     # Linux and Windows (SDL_GPU_DRIVER=vulkan selects MoltenVK on a Mac).
@@ -178,7 +185,7 @@ if(DOOM_BUILD_SDL)
         if(NOT enabled)
             return()
         endif()
-        target_sources(${target} PRIVATE ${DOOM_SCENE3D_SOURCES} platform/i_gpu3d.cpp platform/settings_panel.cpp
+        target_sources(${target} PRIVATE ${DOOM_SCENE3D_SOURCES} ${DOOM_GPU3D_SOURCES} platform/settings_panel.cpp
             platform/settings_menu.cpp)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
         target_compile_definitions(${target} PRIVATE DOOM_RENDER3D)

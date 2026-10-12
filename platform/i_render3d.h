@@ -1,4 +1,4 @@
-/* Accelerated 3D renderer: i_gpu3d.cpp draws the scene from scene3d/ with
+/* Accelerated 3D renderer: gpu3d/ draws the scene from scene3d/ with
    SDL_gpu (Metal on macOS, Vulkan elsewhere). */
 #ifndef DOOM_RENDER3D_H
 #define DOOM_RENDER3D_H
