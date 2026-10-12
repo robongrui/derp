@@ -1,136 +1,332 @@
 # Duct-Tape DOOM
 
-A hacked-together-for-fun port of id Software's 1997 DOOM source release to
-modern macOS, Linux and Windows. It keeps the original game simulation, and adds an optional
-GPU renderer that builds a 3D scene from the WAD at runtime. Every effect is
-derived from the unmodified game data: nothing is replaced, converted or
-downloaded, and the result is meant to still feel like DOOM.
+A for-fun experimental port of id Software's 1997 DOOM source release to
+modern macOS, Linux and Windows. It keeps the original game simulation and
+adds an optional GPU renderer that builds a 3D scene from the loaded WAD at
+runtime.
 
-Development was heavily assisted by Claude. I designed the rendering
-approach, constraints and features, tested the results, and iterated on the
-implementation; Claude was used extensively for writing and modifying code.
+The renderer works from the original WAD artwork, map structure and game
+state. No replacement textures, models, pre-authored lighting or modified
+maps are required. The aim is to make DOOM feel more physically coherent
+without turning it into a different game.
 
-The default settings are how I prefer to play DOOM; everything else can be
-switched in the graphics panel (F4).
+## Why this exists
 
-Most of the effects are here because I liked them in other old games. Few of
-them are actually modern; they are fake-modern, cheap tricks that look the
-part. A few examples of how they work:
+This started as a visual experiment: what would DOOM look like if its
+presentation were pushed further while still feeling unmistakably like DOOM?
 
-- **Sprite shadows** are not shadow maps. The enemy's current sprite frame is
-  squashed flat and painted onto the floor as a soft, translucent black decal,
-  so the shadow animates with the monster and fades and spreads as it rises
-  off the ground. When a rocket or shot flashes nearby, a second copy is
-  stretched away from that light. Shadows never climb walls
-  (`addEnemyShadow` in [`platform/scene3d.cpp`](platform/scene3d.cpp)).
-- **Muzzle flashes and projectiles** light the room in their own color, and
-  that color is read from the sprite: the renderer looks at the bright,
-  saturated pixels of the weapon flash or fireball artwork and ignores
-  outlines and white cores. A plasma ball glows blue because its sprite is
-  blue ([`platform/flash_lighting.h`](platform/flash_lighting.h)).
-- **Glowing lamps, lava and computer displays** are found by texture name and
-  palette color, not authored. Those pixels get a glow mask, a blurred halo
-  and a few approximate point lights placed at the center of each texture
-  repeat ([`platform/emissive.h`](platform/emissive.h)).
-- **Monitor screens** are flat textures that pretend to be curved CRT glass.
-  Dark rectangles framed by lighter housing are detected in the pixels, then
-  the shader gives each one a fake dome normal for highlights, a slight lens
-  bulge and darker edges. There is no extra geometry
-  ([`platform/screen_glass.h`](platform/screen_glass.h)).
-- **Light baked at level load** is old-school lightmapping. While the level
-  loads, rays walk the 2D map from sector to sector, the way Doom itself sees
-  it, and gather light from torches, lamps, glowing floors, sun through sky
-  ceilings, one bounce off nearby surfaces, and a sky fill tinted by the sky
-  texture. Grates and fences block light where their pixels are solid, and
-  decorations such as columns, trees and hanging bodies stand in as their own
-  sprite, so their shadows show the outline of the art. The result is
-  stored once per texture pixel, so baked light steps along Doom's texel
-  grid instead of smearing across it
-  ([`platform/baked_lighting.h`](platform/baked_lighting.h)).
-- **Fog** is a single closed-form distance haze with a cone for the
-  flashlight, not a volumetric raymarch.
+I treat the renderer as a playable sketch of that idea. The goal is not to
+show off individual rendering techniques, but to find cheap, convincing ways
+to make the original maps, textures and sprites feel more alive. Ordinary
+vanilla and limit-removing WADs should benefit automatically rather than
+requiring their authors to prepare special assets or lighting data.
 
-- **Accelerated 3D renderer** (SDL_gpu: Metal on macOS, Vulkan on Linux and
-  Windows) at native resolution, any aspect ratio, with mouse look,
-  interpolated movement and 4× MSAA. The classic 320×200 software renderer
+Most of the effects are here because I liked similar tricks in older games.
+Few of them are actually modern. They are fake-modern, deliberately cheap
+illusions that look the part.
+
+If an idea in here is useful to somebody else or inspires another experiment,
+the project has already done something worthwhile.
+
+Claude is used extensively as the implementation tool that makes this
+experiment practical in my spare time. I decide the visual direction,
+rendering constraints and features, test the resulting behaviour in-game,
+and keep iterating until it matches what I had in mind. Much of the code
+itself is written or modified by Claude. Without that workflow, this project
+probably would not exist.
+
+The default settings are how I prefer to play DOOM; almost everything can be
+changed in the graphics panel with **F4**.
+
+<img width="2560" height="1600" alt="DOOM-195357624916" src="https://github.com/user-attachments/assets/34ea0d19-4032-4cd5-b2a4-29a1defd3687" />
+
+## How the graphics cheat
+
+### Rooms are lit by things that look like lights
+
+DOOM already tells a lot about lighting indirectly: sector brightness,
+textures, glowing flats, decorations, windows and the shapes of rooms. The
+renderer tries to turn those hints into actual light.
+
+Lamp strips, computer panels, lava and other emissive artwork are identified
+from texture names and palette colors. Their bright pixels produce glow masks
+and approximate light sources without authored light definitions. Wall panels
+shine mostly forward instead of lighting through their own wall.
+
+Windows, open sky-facing gaps and similar openings become broad sky-colored
+light sources. With sun lighting enabled, windows looking toward sunlit
+outdoor areas contribute more than windows facing shade. Several windows are
+capped together so a room cannot become implausibly brighter than outdoors.
+
+When lamps, screens and windows explain a room's brightness well, the renderer
+can remove some of DOOM's uniform sector light and let those sources put it
+back. The result is that light appears to come from somewhere and far corners
+can fall darker instead of every point in the sector being equally bright.
+
+See
+[`platform/scene3d.cpp`](platform/scene3d.cpp),
+[`platform/emissive.h`](platform/emissive.h) and
+[`platform/surface_lighting.h`](platform/surface_lighting.h).
+
+### Static lighting is baked when the level loads
+
+The level-load bake walks DOOM's simple 2D map rather than building a modern
+offline lightmap.
+
+It gathers light from lamps, emissive textures, glowing liquids, decorations,
+windows and the sky. Walls and closed portals block it. It also adds one
+bounce, sky fill, sun shadows, ambient occlusion around corners and ledges,
+and shadows from decorations such as columns, trees and hanging bodies.
+
+The baked result can be aligned to the original texture grid so lighting
+changes along DOOM texels instead of looking like a smooth modern lightmap.
+
+Doors, lifts and lowering walls can trigger local re-lighting as they move, so
+light gradually appears underneath an opening instead of remaining frozen in
+the level's starting state.
+
+See
+[`platform/baked_lighting.h`](platform/baked_lighting.h) and
+[`platform/scene3d.cpp`](platform/scene3d.cpp).
+
+### Bump and gloss are guessed from the original pixels
+
+World textures do not need normal maps or material definitions.
+
+The renderer derives surface relief from the WAD artwork itself. Broad
+brightness structure is used to find panel seams, mortar and grooves while
+small noisy changes are treated more gently, so a riveted ceiling can catch
+light along its seams without every painted speck becoming a crater.
+
+Palette ramps also provide a crude material guess. Greys and blues tend toward
+metal, greens toward wet or polished surfaces, while browns, flesh and many
+stone colors remain much more matte. Optional varied highlights make smooth
+artwork produce tighter reflections than busy artwork.
+
+It is intentionally approximate. The aim is to make the existing art react
+to light rather than reinterpret it as a physically based material set.
+
+See
+[`platform/scene3d.cpp`](platform/scene3d.cpp) and
+[`platform/shaders/world.frag`](platform/shaders/world.frag).
+
+### The weapon sprite is de-lit and lit again
+
+The player's weapon is still the original 2D WAD sprite.
+
+Before drawing it, the renderer tries to remove part of the broad illumination
+and painted sheen already present in the artwork while keeping outlines,
+texture detail and the palette's own color ramps. It derives rounded normals
+from the silhouette and painted shading, and a gloss map from the highlights
+and metal-like colors it finds.
+
+The shader then lights that sprite from lamps, muzzle flashes and the room
+around the player. Six directional probes give it a cheap approximation of
+its surroundings, so bright walls and windows can creep across glossy metal
+and the top of a barrel can catch a lamp ahead.
+
+There is no weapon model.
+
+See
+[`platform/weapon_lighting.h`](platform/weapon_lighting.h),
+[`platform/scene3d.cpp`](platform/scene3d.cpp) and
+[`platform/shaders/world.frag`](platform/shaders/world.frag).
+
+### Monitor textures pretend to contain curved CRT glass
+
+Computer textures are examined for dark rectangular screen areas surrounded
+by lighter housing. Vent grilles and similar shapes are rejected.
+
+Detected screens receive no additional geometry. The world shader creates a
+fake curved normal over the flat texture, bends the picture slightly like a
+weak lens, darkens the rim and lets dynamic lights slide across it as a glass
+highlight.
+
+See
+[`platform/screen_glass.h`](platform/screen_glass.h).
+
+### Muzzle flashes, projectiles and explosions carry their own colors
+
+The renderer samples the original sprite artwork to decide what color a light
+should be. Bright saturated pixels are used while transparent outlines and
+white cores are ignored.
+
+A plasma projectile therefore casts blue light because the plasma sprite is
+blue. The same system handles weapon flashes, enemy attacks and glowing
+projectiles. Walls, doors, raised floors and other map geometry block their
+light.
+
+Enemies also receive a second flattened shadow pointing away from the
+strongest nearby dynamic light.
+
+See
+[`platform/flash_lighting.h`](platform/flash_lighting.h) and
+[`platform/scene3d.cpp`](platform/scene3d.cpp).
+
+### Sprite shadows are just squashed sprites
+
+Enemy shadows are not shadow maps.
+
+The current animated sprite silhouette is flattened onto the floor as a dark
+translucent decal, clipped to the sector's floor polygons. It spreads and
+fades when a monster rises into the air.
+
+The flashlight can also project hard-edged sprite silhouettes onto walls, and
+the player can cast a shadow from the sun or strongest suitable light.
+
+Sprites themselves get rounded lighting from normals derived from their
+silhouettes, while the original painted shading remains visible.
+
+### Water reflections render the world again, cheaply
+
+Only water mirrors the scene.
+
+When visible water is near the player, the nearest visible water level becomes
+a mirror plane and the world is rendered again from a vertically mirrored
+camera at half resolution. The water shader distorts that image with both
+simple waves and the luminance changes in the original animated water flat,
+so DOOM's own texels break up the reflection.
+
+The optional retro reflection mode renders the mirror at one-eighth resolution,
+keeps nearest-neighbour pixels and pushes the result back through the WAD
+palette.
+
+Nukage, slime, blood and lava deliberately do not mirror the room.
+
+See
+[`platform/i_gpu3d.cpp`](platform/i_gpu3d.cpp),
+[`platform/scene3d.cpp`](platform/scene3d.cpp) and
+[`platform/shaders/world.frag`](platform/shaders/world.frag).
+
+### Liquids affect the world around them
+
+Liquid flats can generate moving caustics on nearby walls and, optionally,
+ceilings. The pattern comes from the level's own liquid artwork rather than a
+downloaded texture.
+
+Banks immediately above non-hot liquids can darken as if damp.
+
+Bullets striking liquid throw palette-colored drops and expanding rings.
+Things landing or wading in liquid disturb it too. Nukage, slime, blood and
+lava behave as heavier liquids, with slower rings, larger drops, bubbles and
+a wobbling collar around objects standing in them. Water stays lighter and
+quicker.
+
+Particles remain chunky DOOM-sized blocks rather than smooth modern particle
+textures.
+
+See [`platform/scene3d.cpp`](platform/scene3d.cpp) and
+[`platform/shaders/world.frag`](platform/shaders/world.frag).
+
+### The atmosphere is mostly fake geometry and cheap math
+
+Distance fog uses an analytic exponential approximation rather than
+volumetric raymarching.
+
+Pits, liquids and damaging floors can carry low cloud-like mist layers.
+Sunlit openings can generate simple light shafts back toward the inferred sun,
+with dust motes appearing only where the sun or flashlight catches them.
+
+Hot floors and flames create small heat volumes. A later screen pass turns
+those into a tic-stepped sideways shimmer rather than simulating refracting
+air.
+
+The sun itself is inferred from the level's sky lighting and can appear in the
+sky with optional forward scattering.
+
+See
+[`platform/volumetric_fog.h`](platform/volumetric_fog.h),
+[`platform/scene3d.cpp`](platform/scene3d.cpp),
+[`platform/shaders/mist.frag`](platform/shaders/mist.frag) and
+[`platform/shaders/present.frag`](platform/shaders/present.frag).
+
+### Blood is generated from the WAD too
+
+Hitscan attacks can leave floor and wall splats, and corpses gradually grow
+pools beneath them.
+
+The decal artwork is generated at runtime using colors sampled from the WAD's
+own blood sprites. Fresh floor blood can catch dynamic highlights before
+drying darker and matte. Pools grow in visible steps rather than continuously.
+
+Bullet impacts also leave marks and throw small chunks colored from the
+surface that was hit.
+
+See [`platform/scene3d.cpp`](platform/scene3d.cpp).
+
+### Pixel art stays pixel art
+
+The renderer can draw at native display resolution without forcing the
+textures themselves to become smooth.
+
+World textures can use nearest filtering, ordinary bilinear filtering, or a
+sharp-bilinear mode that keeps the center of each texel flat and only softens
+its edge. Palette-aware mipmaps reduce distant shimmer.
+
+Sprites can remain nearest-neighbour or use an optional xBR shader that
+reconstructs diagonal pixel-art edges from the original palette colors.
+
+A final optional palette pass quantizes the complete rendered image — including
+lighting, fog and bloom — back to the current WAD palette.
+
+Animated walls and flats crossfade between their original frames, while doors,
+lifts, sprites and the camera interpolate between DOOM's original 35 Hz game
+ticks.
+
+## At a glance
+
+- **Accelerated 3D renderer:** SDL_gpu, using Metal on macOS and Vulkan on
+  Linux and Windows.
+- **Native resolution and arbitrary aspect ratio**, with mouse look,
+  interpolated movement and optional MSAA.
+- **Classic renderer always available:** the original 320×200 software view
   is one keypress away.
-- **Lighting from the WAD itself:** muzzle flashes and projectiles cast
-  colored light and shadows, lamps and lava glow with bloom, decorations cast
-  light sized to their artwork, and an optional flashlight.
-- **Atmosphere:** height fog over pits and liquids, sprite shadows,
-  optional xBR pixel-art upscaling for sprites, surface detail and gloss.
+- **No replacement asset pack:** original WAD textures, flats, sprites and
+  palettes remain the source material.
 - **Compatibility:** vanilla and limit-removing maps, including DEHACKED
-  patches. Boom, MBF21 and GZDoom maps are not supported.
-- Headless demo runner and regression tests that need no game data.
+  patches.
+- **Not supported:** Boom, MBF21 and GZDoom maps, slopes, 3D floors, model
+  packs, ray tracing and multiplayer.
+- **Graphics panel:** press **F4** to enable, disable and tune the individual
+  effects.
+- Headless demo runner, regression tests and a GPU performance smoke test are
+  included for development.
 
-Multiplayer is not implemented. The Mac build is the most tested; Linux and
-Windows builds compile in CI but have seen little real play.
+The Mac build is the most tested. Linux and Windows builds compile in CI but
+have seen less real-world play.
 
 ## Download and play
 
 Ready-to-play builds for macOS, Windows and Linux are on the
-[Releases page](https://github.com/robongrui/duct-tape-doom/releases). Each
-includes Freedoom, so it plays straight away. On Windows and Linux, drop your
-own `.wad` files into the `wads` folder next to the game; on the Mac, choose
-your WAD folder when the app starts.
+[Releases page](https://github.com/robongrui/duct-tape-doom/releases).
+
+Each includes Freedoom, so it plays straight away.
+
+On Windows and Linux, drop your own `.wad` files into the `wads` folder next
+to the game. On the Mac, choose your WAD folder when the app starts.
+
+See [PLAY.md](PLAY.md) for controls and a description of the graphics options.
 
 ## Game data
 
-This repository contains **no game data**. To build and play from source you
-need an IWAD:
+This repository contains **no commercial game data**.
+
+To build and play from source you need an IWAD:
 
 - **Freedoom** (free): download `freedoom1.wad` or `freedoom2.wad` from
   [freedoom.github.io](https://freedoom.github.io/).
 - **Original DOOM / DOOM II** (commercial): use the `.wad` files from a copy
-  you own, e.g. from Steam or GOG.
+  you own, for example from Steam or GOG.
 
 Please do not commit or upload commercial WAD files to this repository.
 
 ## Build
 
 You need CMake 3.21+ and a C11/C++17 compiler (Apple Clang, Clang, GCC or
-Visual Studio 2022). SDL3 is downloaded automatically if not installed.
+Visual Studio 2022). SDL3 is downloaded automatically if it is not installed.
 
 ```sh
 cmake -S . -B build/play -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON \
   -DDOOM_GAME_DATA="/absolute/path/to/freedoom1.wad"
 cmake --build build/play --parallel
 ctest --test-dir build/play --output-on-failure
-```
-
-On macOS this produces `build/play/Play DOOM.app`, with the WAD bundled.
-On Linux and Windows run `doom -iwad /path/to/game.wad`.
-[BUILDING.md](BUILDING.md) has all build options, platform notes and a
-technical description of the renderer.
-
-## Play
-
-Controls, the F4 graphics panel and command-line options are in
-[PLAY.md](PLAY.md).
-
-## License
-
-The game code is licensed under the GNU General Public License v2; see
-[LICENSE.TXT](LICENSE.TXT). It is based on the DOOM source code released by
-id Software in 1997; John Carmack's original release notes are in
-[linuxdoom-1.10/README.TXT](linuxdoom-1.10/README.TXT).
-
-Third-party components keep their own licenses:
-
-- [SDL3](https://libsdl.org/) — zlib license (downloaded at build time)
-- [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3) — LGPL-2.1+ (downloaded at build time)
-- xBR pixel-art scaling by Hyllian — MIT, see [third_party/xbr/LICENSE.txt](third_party/xbr/LICENSE.txt)
-- [Spleen](https://github.com/fcambus/spleen) 8x16 font by Frederic Cambus, used by the in-game settings panel — BSD 2-Clause, see [third_party/spleen/LICENSE.txt](third_party/spleen/LICENSE.txt)
-
-DOOM is a trademark of id Software. This project is not affiliated with or
-endorsed by id Software, ZeniMax or Bethesda.
-
-<img width="2560" height="1600" alt="DOOM-195357624916" src="https://github.com/user-attachments/assets/34ea0d19-4032-4cd5-b2a4-29a1defd3687" />
-<img width="2560" height="1600" alt="DOOM-176698718958" src="https://github.com/user-attachments/assets/c6210701-7d57-45ed-a65e-9945a231e29f" />
-<img width="2560" height="1600" alt="DOOM-144336280458" src="https://github.com/user-attachments/assets/611197d1-c000-4e29-9967-382d4b8f141a" />
-<img width="2560" height="1600" alt="DOOM-105556245375" src="https://github.com/user-attachments/assets/4e14eb73-b1ed-4470-ab70-bb5be3bb5ae7" />
-<img width="2560" height="1600" alt="DOOM-103225500541" src="https://github.com/user-attachments/assets/3bbdb665-49e2-4ac2-9150-9622b003cc79" />
-<img width="2560" height="1600" alt="DOOM-95767550375" src="https://github.com/user-attachments/assets/ecafbe64-4262-40d0-963d-87199fb56081" />
-<img width="2560" height="1600" alt="DOOM-88242509166" src="https://github.com/user-attachments/assets/872c3619-9105-4e94-87ad-0bc3a07545cf" />
-<img width="2560" height="1600" alt="DOOM-72790908416" src="https://github.com/user-attachments/assets/b47cc17b-5f9f-44a1-a6b6-1e3a7e1ab150" />
-<img width="2560" height="1600" alt="DOOM-18811258583" src="https://github.com/user-attachments/assets/dd18967c-0f5e-498e-adc7-c40faa519894" />
