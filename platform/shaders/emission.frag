@@ -10,11 +10,11 @@ layout(std140,set=3,binding=0) uniform Blend { float blend; };
 layout(location=0) out vec4 outColor;
 #include "indexed.glsl"
 void main() {
-    bool sprite=(vMode&2u)!=0u;
+    bool sprite=(vMode&MODE_SPRITE)!=0u;
     vec4 color=indexed(image,palette,vUV,false,!sprite);
     if(blend>0.0) color=mix(color,indexed(nextImage,palette,vUV,false,true),blend);
     if(color.a<0.45) discard;
-    float e=sprite?((vMode&64u)!=0u?0.3:0.0):mix(maskAt(image,vUV,true),blend>0.0?maskAt(nextImage,vUV,true):0.0,blend);
+    float e=sprite?((vMode&MODE_PICKUP)!=0u?0.3:0.0):mix(maskAt(image,vUV,true),blend>0.0?maskAt(nextImage,vUV,true):0.0,blend);
     // White strips glow in every channel at once and wash the view out up
     // close; colored bulbs keep their full bloom.
     float hi=max(color.r,max(color.g,color.b)),lo=min(color.r,min(color.g,color.b));

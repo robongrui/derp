@@ -117,7 +117,7 @@ static void floorBlood(int variant,int sectorIndex,float cx,float cy,float size,
     auto corner=[&](float u,float v){return Point{cx+across.x*u+up.x*v,cy+across.y*u+up.y*v};};
     std::vector<Point> square={corner(-h,-h),corner(h,-h),corner(h,h),corner(-h,h)};
     float z=floorZ(&sector)+decalLift(cx,cy,camera),light=lighting(&sector);
-    unsigned mode=256|sectorMode(&sector);
+    unsigned mode=MODE_BLOOD|sectorMode(&sector);
     auto &out=batches[bloodKeyBase+variant];
     for(int leaf:sectorFloors[sectorIndex]) {
         const auto &b=floorBounds[leaf];
@@ -188,7 +188,7 @@ void buildBlood(const Uniforms &camera) {
         if(std::abs(ey)<0.01f)light=std::max(0.1f,light-0.04f);
         if(std::abs(ex)<0.01f)light=std::min(1.0f,light+0.04f);
         float tx=ex/len,ty=ey/len,lift=decalLift(span.a.x+tx*d.along,span.a.y+ty*d.along,camera)+0.25f,nx=ty*lift,ny=-tx*lift;
-        unsigned mode=256|sectorMode(front);
+        unsigned mode=MODE_BLOOD|sectorMode(front);
         auto vertex=[&](float u,float z) {
             float t=(u-(d.along-h))/(2*h);
             Vertex v={span.a.x+tx*u+nx,span.a.y+ty*u+ny,z,(d.flip?1-t:t)*image.width,((zc+h)-z)/(2*h)*image.height,light,mode,0,dark,0};

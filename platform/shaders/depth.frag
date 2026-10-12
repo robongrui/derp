@@ -6,6 +6,6 @@
 layout(set=2,binding=0) uniform sampler2D image;
 void main() {
     ivec2 size=textureSize(image,0),p=ivec2(floor(vUV));
-    p=(vMode&2u)!=0u?clamp(p,ivec2(0),size-1):wrapTexel(p,size);
+    p=(vMode&MODE_SPRITE)!=0u?clamp(p,ivec2(0),size-1):wrapTexel(p,size);
     if(texelFetch(image,p,0).g<0.45) discard;
 }

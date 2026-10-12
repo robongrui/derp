@@ -36,7 +36,7 @@ void buildShafts(const Uniforms &camera) {
         for(float &c:side)c*=14/across;
         auto vertex=[&](float u,float v) {
             float t=v*s.length,x=s.x+d[0]*t+side[0]*u,y=s.y+d[1]*t+side[1]*u,z=s.z+d[2]*t+side[2]*u;
-            Vertex out={x,y,z,u,v,alpha*sunScatter(x-eye[0],y-eye[1],z-eye[2]),2};
+            Vertex out={x,y,z,u,v,alpha*sunScatter(x-eye[0],y-eye[1],z-eye[2]),MODE_SUNBEAM};
             out.red=sunTint[0];out.green=sunTint[1];out.blue=sunTint[2];
             return out;
         };

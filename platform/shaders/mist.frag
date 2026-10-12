@@ -17,7 +17,7 @@ void main() {
     vec3 delta=vWorld-c.eye.xyz;
     float distance=length(delta);
     float transmission=exp(-heightFogTau(c.eye.z,vWorld.z,distance,c.fog.x,c.fog.y,c.fog.z));
-    if((vMode&2u)!=0u) {
+    if((vMode&MODE_SUNBEAM)!=0u) {
         // Sunbeam ribbon (buildShafts), added to the scene: u runs across
         // (-1..1), v from the floor (0) to past the opening (1). Soft at the
         // sides, the ends and where it meets geometry, faded near the eye, with

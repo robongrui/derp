@@ -134,7 +134,7 @@ void pushWorldUniforms(SDL_GPUCommandBuffer *command,const Uniforms &view) {
     SDL_PushGPUFragmentUniformData(command,3,noBlend,sizeof(noBlend));
 }
 bool opaqueBatch(const std::pair<const int,std::vector<Vertex>> &batch) {
-    return !batch.second.empty()&&!(batch.second.front().mode&2)&&images.at(batch.first).opaque;
+    return !batch.second.empty()&&!(batch.second.front().mode&MODE_SPRITE)&&images.at(batch.first).opaque;
 }
 // The world drawn opaque-first, then sky surfaces into depth and the sky into
 // uncovered pixels, then cutouts and sprites. Shared by the main view and the
@@ -157,7 +157,7 @@ void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGrap
     auto cutouts=[&](SDL_GPUGraphicsPipeline *pipeline) {
         SDL_BindGPUGraphicsPipeline(pass,pipeline);bindWorld(pass,reflection);
         for(const auto &batch:batches) {
-            if(batch.second.empty()||(batch.second.front().mode&2)||images.at(batch.first).opaque)continue;
+            if(batch.second.empty()||(batch.second.front().mode&MODE_SPRITE)||images.at(batch.first).opaque)continue;
             bindSurface(command,pass,batch.first,3);drawVertices(pass,batch.second);
         }
     };
@@ -165,7 +165,7 @@ void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGrap
     else cutouts(world);
     SDL_BindGPUGraphicsPipeline(pass,world);bindWorld(pass,reflection);
     for(const auto &batch:batches) {
-        if(batch.second.empty()||!(batch.second.front().mode&2))continue;
+        if(batch.second.empty()||!(batch.second.front().mode&MODE_SPRITE))continue;
         bindSurface(command,pass,batch.first,3);drawVertices(pass,batch.second);
     }
     float noBlend[4]={};SDL_PushGPUFragmentUniformData(command,3,noBlend,sizeof(noBlend));

@@ -356,10 +356,8 @@ template<class Texel> void forStripTexels(const BakeStrip &strip,Texel texel) {
     }
 }
 inline float luminance(const float color[3]) {return 0.299f*color[0]+0.587f*color[1]+0.114f*color[2];}
-// Vertex mode bits 12+ carry sector+1 for map-space lighting; 0 means none.
-// Bits 256 (blood decal), 512 (hard-edged silhouette), 1024 (soft effect
-// sprite) and 2048 (shiny airborne blood) sit below them.
-inline unsigned sectorMode(const sector_t *sector) {return unsigned(sector-sectors+1)<<12;}
+// The vertex mode bits that carry sector+1 for map-space lighting (vertex_modes.h).
+inline unsigned sectorMode(const sector_t *sector) {return unsigned(sector-sectors+1)<<MODE_SECTOR_SHIFT;}
 inline float gameSeconds() {return (leveltime+renderFraction)/(float)TICRATE;}
 inline float randomRange(float low,float high) {return std::uniform_real_distribution<float>(low,high)(impactRandom);}
 inline uint32_t hash32(uint32_t x) {x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;x^=x>>16;return x;}

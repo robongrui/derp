@@ -309,7 +309,7 @@ void assignLightMasks() {
         auto &vertices=batch.second;
         for(size_t n=0;n+2<vertices.size();n+=3) {
             unsigned mask[2]={};
-            if(!(vertices[n].mode&2)||(vertices[n].mode&8)) {
+            if(!(vertices[n].mode&MODE_SPRITE)||(vertices[n].mode&MODE_RELIT)) {
                 const auto &a=vertices[n],&b=vertices[n+1],&c=vertices[n+2];
                 float low[3]={std::min({a.x,b.x,c.x}),std::min({a.y,b.y,c.y}),std::min({a.z,b.z,c.z})};
                 float high[3]={std::max({a.x,b.x,c.x}),std::max({a.y,b.y,c.y}),std::max({a.z,b.z,c.z})};

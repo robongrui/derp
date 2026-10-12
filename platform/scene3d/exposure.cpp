@@ -87,7 +87,7 @@ void updateFlashlightTint(Uniforms &camera) {
                 float distance=dot(ac,q)/det;if(distance<1||distance>=nearest)continue;
                 int tx=(int)std::floor(a.u+u*(b.u-a.u)+v*(c.u-a.u));
                 int ty=(int)std::floor(a.v+u*(b.v-a.v)+v*(c.v-a.v));
-                if(a.mode&2) {if(tx<0||ty<0||tx>=image.width||ty>=image.height)continue;}
+                if(a.mode&MODE_SPRITE) {if(tx<0||ty<0||tx>=image.width||ty>=image.height)continue;}
                 else {tx=(tx%image.width+image.width)%image.width;ty=(ty%image.height+image.height)%image.height;}
                 size_t pixel=((size_t)ty*image.width+tx)*2;
                 if(!image.pixels[pixel+1])continue;

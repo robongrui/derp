@@ -115,8 +115,8 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
         auto psp=player->psprites[i];if(!psp.state)continue;
         auto sf=sprites[psp.state->sprite].spriteframes[psp.state->frame&FF_FRAMEMASK];
         bool bright=psp.state->frame&FF_FULLBRIGHT;
-        // Mode 8 on the screen (1): the weapon relit per pixel from its own
-        // normals, its painted light taken out; 16: mirrored frame.
+        // MODE_RELIT on the screen: the weapon relit per pixel from its own
+        // normals, its painted light taken out.
         bool relit=settings.weaponLighting&&!bright;
         int lump=firstspritelump+sf.lump[0];
         Image &image=relit?weaponImage(lump):lumpImage(lump,false);
@@ -127,7 +127,7 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
                 flowLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,
                 seamLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,lighting(player->mo->subsector->sector))));
         screenQuad(weapon,x/160-1,1-y/100,image.width/160.0f,image.height/100.0f,u0,0,u1,image.height,light,
-            relit?11u|(sf.flip[0]?16u:0u):3u);
+            MODE_SCREEN|MODE_SPRITE|(relit?MODE_RELIT|(sf.flip[0]?MODE_FLIPPED:0u):0u));
         // The weapon takes a restrained, capped share of the light around the
         // eye so nearby lamps tint it without washing out the artwork.
         if(!bright) {

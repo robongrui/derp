@@ -14,8 +14,8 @@ float shadowCoverage(vec2 uv) {
 void main() {
 #ifdef DECAL
     float alpha=shadowCoverage(vUV);
-    // Mode 512: hard-edged silhouettes keep the sprite's pixel outline.
-    if((vMode&512u)!=0u) alpha=step(0.5,alpha);
+    // MODE_HARD_SILHOUETTE: hard-edged silhouettes keep the sprite's pixel outline.
+    if((vMode&MODE_HARD_SILHOUETTE)!=0u) alpha=step(0.5,alpha);
     if(alpha<0.02) discard;
     outColor=vec4(0,0,0,alpha*vLight);
 #else

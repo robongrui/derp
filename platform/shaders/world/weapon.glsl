@@ -19,7 +19,7 @@ vec3 weaponSurroundings(vec3 d) {
     return w.x*(d.x>0.0?weaponProbe[2]:weaponProbe[3]).rgb+w.y*(d.y>0.0?weaponProbe[4]:weaponProbe[5]).rgb+
            w.z*(d.z>0.0?weaponProbe[0]:weaponProbe[1]).rgb;
 }
-// Mode 1|8: the relit weapon (weaponDraws, weapon_lighting.h). Its
+// MODE_SCREEN|MODE_RELIT: the relit weapon (weaponDraws, weapon_lighting.h). Its
 // painted light was taken out at load; its normals face the viewer, and
 // its gloss sits two columns past the artwork's right edge. It stands
 // about ten units ahead of the eye, where the screen pixel points. The
@@ -33,7 +33,7 @@ Weapon weaponSurface(inout float light) {
     ivec2 size=textureSize(image,0),p=clamp(ivec2(floor(vUV)),ivec2(0),size-1);
     int width=(size.x-2)/2;
     vec2 packed=texelFetch(image,p,0).ba*2.0-1.0;
-    if((vMode&16u)!=0u) packed.x=-packed.x;
+    if((vMode&MODE_FLIPPED)!=0u) packed.x=-packed.x;
     weaponGloss=texelFetch(image,ivec2(min(p.x,width-1)+width+2,p.y),0).r;
     weaponNormal=normalize(c.right.xyz*packed.x-c.up.xyz*packed.y-c.forward.xyz*sqrt(saturate(1.0-dot(packed,packed))));
     weaponAt=c.eye.xyz+10.0*(c.forward.xyz+c.right.xyz*vWorld.x/c.projection.x+c.up.xyz*vWorld.y/c.projection.y);

@@ -3,7 +3,7 @@
 float texelLuma(ivec2 p) {
     return dot(texel(image,palette,p,true).rgb,vec3(0.299,0.587,0.114));
 }
-// Mode 32: a liquid floor mirroring the reflection pass. albedo is the
+// MODE_MIRROR_FLOOR: a liquid floor mirroring the reflection pass. albedo is the
 // liquid's own texel color.
 void liquidMirror(inout vec4 color,vec3 albedo) {
     // The mirrored camera maps the surface to the same screen point; a

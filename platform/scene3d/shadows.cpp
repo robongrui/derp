@@ -109,7 +109,7 @@ void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool f
         std::vector<WallPoint> cell={grid[k[0]],grid[k[1]],grid[k[2]],grid[k[3]]};
         cell=clipWallPolygon(cell,false,0,true);cell=clipWallPolygon(cell,false,len,false);
         cell=clipWallPolygon(cell,true,span.bottom,true);cell=clipWallPolygon(cell,true,span.top,false);
-        auto vertex=[&](const WallPoint &p){return Vertex{span.a.x+tx*p.s+nx*lift,span.a.y+ty*p.s+ny*lift,p.z,p.u,p.v,opacity,512};};
+        auto vertex=[&](const WallPoint &p){return Vertex{span.a.x+tx*p.s+nx*lift,span.a.y+ty*p.s+ny*lift,p.z,p.u,p.v,opacity,MODE_HARD_SILHOUETTE};};
         for(size_t n=1;n+1<cell.size();++n)for(size_t m:{size_t(0),n,n+1})out.push_back(vertex(cell[m]));
     }
 }

@@ -1,21 +1,21 @@
 // Lighting of world sprites drawn with silhouette normals.
 // Part of world.frag, which declares the resources these read.
-// Detail sprites (mode 8): dynamic lights and, with bake-only lights, the
+// Detail sprites (MODE_RELIT): dynamic lights and, with bake-only lights, the
 // static light in the tint shade the silhouette normals, added to pulse;
 // wet blood glints into specular. color: the sprite's texel.
 void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
     // Billboards face the camera horizontally and stand upright.
     ivec2 size=textureSize(image,0);
     vec2 packed=texelFetch(image,clamp(ivec2(floor(vUV)),ivec2(0),size-1),0).ba*2.0-1.0;
-    if((vMode&16u)!=0u) packed.x=-packed.x;
+    if((vMode&MODE_FLIPPED)!=0u) packed.x=-packed.x;
     vec3 toward=normalize(vec3(-c.forward.x,-c.forward.y,0.0001));
     vec3 across=vec3(c.right.xy,0);
     vec3 n=normalize(across*packed.x-vec3(0,0,1)*packed.y+toward*sqrt(saturate(1.0-dot(packed,packed))));
     vec3 view=normalize(c.eye.xyz-vWorld);
     uvec2 mask=vLightMask;
-    // Mode 2048: airborne blood glints on its rounded normals like the
+    // MODE_WET_SPRITE: airborne blood glints on its rounded normals like the
     // floor blood, in a brighter palette red and two hard steps.
-    bool wetSprite=(vMode&2048u)!=0u;
+    bool wetSprite=(vMode&MODE_WET_SPRITE)!=0u;
     vec3 wetColor=wetSprite?texelFetch(paletteLUT,ivec3(round(saturate(color.rgb*1.8+0.04)*31.0)),0).rgb:vec3(0);
     if(c.bake.z>0.0&&vStatic!=0u) {
         // Bake-only lights: the static light in the tint takes the

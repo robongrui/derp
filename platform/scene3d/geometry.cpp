@@ -176,8 +176,8 @@ static void flatGeometry(const std::vector<float> &skyTop) {
             }
             int lump=firstflat+flattranslation[flat]; lumpImage(lump,true);
             float z=sectorHeight(sector,ceiling),light=lighting(sector);
-            // Mode 32: this floor samples the mirrored pass.
-            unsigned mirror=reflectionActive&&!ceiling&&sectorMist[sector-sectors].reflective&&std::abs(z-reflectionPlane)<0.5f?32:0;
+            // MODE_MIRROR_FLOOR: this floor samples the mirrored pass.
+            unsigned mirror=reflectionActive&&!ceiling&&sectorMist[sector-sectors].reflective&&std::abs(z-reflectionPlane)<0.5f?MODE_MIRROR_FLOOR:0;
 
             auto &out=batches[-1-lump];
             for(size_t n=1;n+1<poly.size();++n) for(Point p:{poly[0],poly[n],poly[n+1]})
@@ -302,20 +302,20 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
     float sink=sinkInLiquid(thing,i,image,x,y,camera);top-=sink;bottom-=sink;
     float u0=sf.flip[rotation]?image.width:0,u1=sf.flip[rotation]?0:image.width;
-    float light=lighting(&sectors[i],thing->frame&FF_FULLBRIGHT); unsigned mode=2|(thing->flags&MF_SHADOW?4:0);
-    // Mode 8: per-pixel lighting from silhouette normals; 16: mirrored frame.
-    if(settings.detail&&!(thing->frame&FF_FULLBRIGHT))mode|=8|(sf.flip[rotation]?16:0);
-    // Mode 2048: airborne blood shines like the floor blood (needs the normals of mode 8).
-    if(settings.bloodShine&&thing->type==MT_BLOOD&&(mode&8))mode|=2048;
+    float light=lighting(&sectors[i],thing->frame&FF_FULLBRIGHT); unsigned mode=MODE_SPRITE|(thing->flags&MF_SHADOW?MODE_FUZZ:0);
+    // Per-pixel lighting from silhouette normals, flipped with a mirrored frame.
+    if(settings.detail&&!(thing->frame&FF_FULLBRIGHT))mode|=MODE_RELIT|(sf.flip[rotation]?MODE_FLIPPED:0);
+    // Airborne blood shines like the floor blood (needs the normals of MODE_RELIT).
+    if(settings.bloodShine&&thing->type==MT_BLOOD&&(mode&MODE_RELIT))mode|=MODE_WET_SPRITE;
     if(!(thing->frame&FF_FULLBRIGHT))light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
-    // Mode 1024: effect sprites (shots, puffs, fogs) dither out at floors
+    // MODE_SOFT: effect sprites (shots, puffs, fogs) dither out at floors
     // and ceilings and draw in front of walls within half their width.
     bool soft=settings.softSprites&&((thing->flags&MF_MISSILE)||((thing->flags&MF_NOBLOCKMAP)&&(thing->flags&MF_NOGRAVITY)));
-    if(soft)mode|=1024|sectorMode(&sectors[i]);
+    if(soft)mode|=MODE_SOFT|sectorMode(&sectors[i]);
     if(thing->flags&MF_SPECIAL) {
-        // Pickups stay readable in the dark with a soft pulse and bloom (mode 64).
+        // Pickups stay readable in the dark with a soft pulse and bloom (MODE_PICKUP).
         float phase=(float)((uintptr_t)thing%997)*0.37f;
-        light=std::max(light,0.5f+0.08f*std::sin(gameSeconds()*3.0f+phase));mode|=64;
+        light=std::max(light,0.5f+0.08f*std::sin(gameSeconds()*3.0f+phase));mode|=MODE_PICKUP;
     }
     quad(batches[-1-lump],{x+rx*left,y+ry*left,top,u0,0,light,mode},
         {x+rx*right,y+ry*right,top,u1,0,light,mode},
@@ -326,16 +326,16 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     // Detail sprites light themselves per pixel from the light mask, so
     // their tint carries only the baked light. With bake-only lights they
     // shape it by where it comes from (statics).
-    if(mode&8)pulse=baked;else for(int c=0;c<3;++c)pulse[c]+=baked[c];
+    if(mode&MODE_RELIT)pulse=baked;else for(int c=0;c<3;++c)pulse[c]+=baked[c];
     unsigned packedStatics=0;
     float towards=std::sqrt(statics.towards[0]*statics.towards[0]+statics.towards[1]*statics.towards[1]+statics.towards[2]*statics.towards[2]);
-    if(bakeOnlyActive&&(mode&8)&&statics.amount>0&&towards>1e-6f) {
+    if(bakeOnlyActive&&(mode&MODE_RELIT)&&statics.amount>0&&towards>1e-6f) {
         for(int c=0;c<3;++c)packedStatics|=(unsigned)std::lround((statics.towards[c]/towards*0.5f+0.5f)*255)<<(8*c);
         packedStatics|=(unsigned)std::lround(std::clamp(towards/statics.amount,0.0f,1.0f)*255)<<24;
     }
     if(thing->frame&FF_FULLBRIGHT) pulse={};
     unsigned tint=thing->frame&FF_FULLBRIGHT?0xFFFFFFFFu:packedLampTint(statics,light);
-    // Mode 128: grounding darkens the feet of things that rest on the floor.
+    // MODE_GROUNDED: grounding darkens the feet of things that rest on the floor.
     // Sprites have no sun map, so vSun carries strength and height above floor.
     float lift=units(thing->z-thing->floorz),grounding=1-lift/32;
     bool grounded=settings.detail&&grounding>0&&!(thing->frame&FF_FULLBRIGHT)&&!soft&&thing->type!=MT_BLOOD&&
@@ -344,7 +344,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     for(size_t n=vertices.size()-6;n<vertices.size();++n) {
         vertices[n].red=pulse[0];vertices[n].green=pulse[1];vertices[n].blue=pulse[2];vertices[n].statics=packedStatics;
         vertices[n].lampTint=tint;
-        if(grounded) {vertices[n].mode|=128;vertices[n].sunU=grounding;vertices[n].sunV=vertices[n].z-z+lift;}
+        if(grounded) {vertices[n].mode|=MODE_GROUNDED;vertices[n].sunU=grounding;vertices[n].sunV=vertices[n].z-z+lift;}
         if(soft)vertices[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
     }
 }

@@ -77,7 +77,7 @@ layout(location=0) out vec4 outColor;
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
-    bool sprite=(vMode&2u)!=0u;
+    bool sprite=(vMode&MODE_SPRITE)!=0u;
     vec3 dp1=dFdx(vWorld),dp2=dFdy(vWorld);vec2 duv1=dFdx(vUV),duv2=dFdy(vUV);
     float footprint=max(length(duv1),length(duv2));
     // Mip level from the shorter axis, allowing 2:1 stretch along the longer
@@ -88,9 +88,9 @@ void main() {
     // normal; orient it toward the eye because either side may be drawn.
     vec3 normal=normalize(cross(dp1,dp2));
     if(dot(normal,c.eye.xyz-vWorld)<0.0) normal=-normal;
-    // Mode 256: blood decals. vTint carries wetness (shine) and how far the
+    // MODE_BLOOD: blood decals. vTint carries wetness (shine) and how far the
     // color has darkened while drying.
-    bool blood=(vMode&256u)!=0u;
+    bool blood=(vMode&MODE_BLOOD)!=0u;
     uint bakeFlags=uint(c.flashlightTint.w);
     // FEATURE_GLOSSY_SCREENS: monitor glass in computer textures. Its curved CRT dome
     // shapes light highlights and an edge sheen, and like a weak lens it
@@ -119,18 +119,18 @@ void main() {
     // The thick rim of the glass shades the picture's edges, in light steps.
     if(glassy) color.rgb*=round((1.0-0.5*smoothstep(0.7,1.0,max(abs(screen.x),abs(screen.y))))*16.0)/16.0;
     // Map surfaces carry sector+1 in mode bits 12+; 0 means no sector.
-    bool mapped=(vMode>>12)>0u&&!sprite&&c.effects.z==0.0;
-    uint sector=(vMode>>12)-1u;
+    bool mapped=(vMode>>MODE_SECTOR_SHIFT)>0u&&!sprite&&c.effects.z==0.0;
+    uint sector=(vMode>>MODE_SECTOR_SHIFT)-1u;
     SectorLit lit=sectorLighting(normal,mapped,sector,bakeFlags);
     float light=lit.light;
     // Grounding: things resting on the floor darken over their lowest 24
     // units in colormap-like 1/16 steps; vSun holds strength and height.
     float grounding=1.0;
-    if(sprite&&(vMode&128u)!=0u&&c.effects.z==0.0)
+    if(sprite&&(vMode&MODE_GROUNDED)!=0u&&c.effects.z==0.0)
         grounding=round(mix(1.0,mix(0.72,1.0,smoothstep(0.0,24.0,vSun.y)),vSun.x)*16.0)/16.0;
     light*=grounding;
-    // Mode 1|8: the relit weapon (weapon.glsl).
-    bool weapon=sprite&&(vMode&9u)==9u&&c.effects.z==0.0;
+    // MODE_SCREEN|MODE_RELIT: the relit weapon (weapon.glsl).
+    bool weapon=sprite&&(vMode&(MODE_SCREEN|MODE_RELIT))==(MODE_SCREEN|MODE_RELIT)&&c.effects.z==0.0;
     Weapon relit=Weapon(vec3(0),vec3(0),vec3(0),0.0);
     if(weapon) relit=weaponSurface(light);
     // Preserve the sprite's painted shading with one RGB increment for the
@@ -150,7 +150,7 @@ void main() {
         // Sprites carry their baked light (and, without detail, their
         // dynamic light) in the tint.
         vec3 pulse=sprite?vTint*grounding:vec3(0);
-        if(sprite&&(vMode&9u)==8u) billboardLight(color,pulse,specular);
+        if(sprite&&(vMode&(MODE_SCREEN|MODE_RELIT))==MODE_RELIT) billboardLight(color,pulse,specular);
         if(weapon) weaponLight(relit,light,pulse,specular);
         if(!sprite) surfaceLight(lit,mapped,normal,screenNormal,glassy,blood,color,dp1,dp2,duv1,duv2,pulse,specular);
         illumination=clamp(illumination+pulse+c.flashlightTint.rgb,vec3(0),vec3(2.2));
@@ -179,32 +179,32 @@ void main() {
     vec3 albedo=color.rgb;
     color.rgb=color.rgb*illumination+specular;
     if(mapped&&(bakeFlags&FEATURE_CAUSTICS)!=0u&&(abs(normal.z)<=0.5||(normal.z<-0.5&&(bakeFlags&FEATURE_CEILING_CAUSTICS)!=0u))) color.rgb+=caustics(vWorld,normal,sector,false);
-    // FEATURE_CAUSTICS_SPRITES: things in the world (not the weapon, mode 1, or effect sprites, 1024)
+    // FEATURE_CAUSTICS_SPRITES: things in the world (not the weapon or effect sprites)
     // near liquids catch the caustics too, in their own colors so the painted
     // shading survives; the scale matches the walls' additive light.
-    if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&1025u)==0u&&c.effects.z==0.0)
+    if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&(MODE_SCREEN|MODE_SOFT))==0u&&c.effects.z==0.0)
         color.rgb+=albedo*(1.0-emission)*caustics(vWorld,normal,0u,true)*2.5;
-    if((vMode&32u)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
-    if((vMode&1u)==0u) {
+    if((vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
+    if((vMode&MODE_SCREEN)==0u) {
         vec4 fog=fogAlong(vWorld);
         color.rgb=color.rgb*fog.a+fog.rgb;
     }
     // Eye adaptation: a stepped exposure while the view settles to new light.
     if(c.effects.z==0.0) color.rgb*=c.fx.x;
     if(c.effects.z==32.0) color.rgb=1.0-color.rgb;
-    if((vMode&4u)!=0u) {color.rgb*=0.3;color.a=0.65;}
+    if((vMode&MODE_FUZZ)!=0u) {color.rgb*=0.3;color.a=0.65;}
     if(c.effects.y>0.0) {
         color.rgb*=0.88+0.12*sin(gl_FragCoord.y*3.14159265);
         color.rgb=floor(color.rgb*31.0+0.5)/31.0;
     }
 #ifndef OPAQUE
-    // Mode 1024: effect sprites (explosions, puffs, fogs). They dissolve on
+    // MODE_SOFT: effect sprites (explosions, puffs, fogs). They dissolve on
     // an ordered dither in Doom pixels toward their sector's floor and
     // ceiling, and their depth is pulled toward the eye by vSun.x so walls
     // they stand against no longer slice the billboard.
     float depth=gl_FragCoord.z;
-    if((vMode&1024u)!=0u) {
-        vec4 info=sectorInfo[(vMode>>12)-1u];
+    if((vMode&MODE_SOFT)!=0u) {
+        vec4 info=sectorInfo[(vMode>>MODE_SECTOR_SHIFT)-1u];
         float room=min(vWorld.z-info.y,info.w>0.0?1e4:info.z-vWorld.z);
         if(saturate(room/12.0)<bayer4(ivec2(floor(gl_FragCoord.xy/max(c.fx2.x,1.0))))) discard;
         float n=c.projection.z,f=c.projection.w,z=max(n,vDistance-vSun.x);

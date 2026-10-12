@@ -22,7 +22,7 @@ out float gl_ClipDistance[1];
 #endif
 void main() {
     vUV=inUV;vLight=inLight;vMode=inMode;vWorld=inPosition;vTint=inTint;vLightMask=inLightMask;vSun=inSun;vStatic=inStatic;vLampTint=inLampTint;
-    if((inMode&1u)!=0u) {gl_Position=vec4(inPosition.xy,0,1);vDistance=0;}
+    if((inMode&MODE_SCREEN)!=0u) {gl_Position=vec4(inPosition.xy,0,1);vDistance=0;}
     else {
         vec3 d=inPosition-c.eye.xyz;
         float z=dot(d,c.forward.xyz);vDistance=z;

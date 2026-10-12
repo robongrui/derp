@@ -75,7 +75,7 @@ vec4 bakedSurface(vec3 normal,uint sector,out vec3 bounce,out vec2 ambient,out v
     }
     if(vSun.x<0.0) return vec4(0,0,0,-1);
     ivec2 size=textureSize(wallBake,0),lightSize=max(size/ivec2(2,1),ivec2(1));
-    if(texelAligned&&vTint.z>0.0&&(vMode&256u)==0u) {
+    if(texelAligned&&vTint.z>0.0&&(vMode&MODE_BLOOD)==0u) {
         // Wall texture u runs along the wall, v down from the anchor.
         vec2 offset=vec2(floor(vUV.x)+0.5-vUV.x,vUV.y-floor(vUV.y)-0.5);
         vec2 g=vSun+offset*vTint.z-0.5;

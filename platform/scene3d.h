@@ -8,6 +8,7 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include "shaders/vertex_modes.h"
 extern "C" {
 #include "doomtype.h"
 }
@@ -176,7 +177,7 @@ std::vector<std::array<float,4>> sectorInfo();
 SurfaceBinding surfaceBinding(int key);
 std::vector<SpriteDraw> weaponDraws(const Uniforms &camera);
 std::vector<Vertex> crosshairVertices(float worldW,float worldH);
-void screenQuad(std::vector<Vertex> &out,float x,float y,float w,float h,float u0,float v0,float u1,float v1,float light=1,unsigned mode=1);
+void screenQuad(std::vector<Vertex> &out,float x,float y,float w,float h,float u0,float v0,float u1,float v1,float light=1,unsigned mode=MODE_SCREEN);
 // 32³ nearest-palette lookup, BGRA, indexed (b*32+g)*32+r.
 std::vector<unsigned> paletteLUTColors(const unsigned *palette);
 bool renderCheckDue();
