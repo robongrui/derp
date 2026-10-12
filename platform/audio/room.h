@@ -2,6 +2,12 @@
  * measured from the map by room.c and played by reverb.c. */
 #ifndef DOOM_AUDIO_ROOM_H
 #define DOOM_AUDIO_ROOM_H
+#include <math.h>
+
+/* glibc hides it from the POSIX-only build. */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 /* Eight wall echoes around the listener, then one off the ceiling. */
 #define ROOM_TAPS 9

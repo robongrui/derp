@@ -73,7 +73,7 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
             channel_t *channel = &channels[c];
             if (!channel->handle) continue;
             channel->cutoff *= powf(channel->target / channel->cutoff, 1 - expf(-count / (MUFFLE_GLIDE_SECONDS * OUTPUT_RATE)));
-            float keep = expf(-2 * (float)M_PI * channel->cutoff / OUTPUT_RATE);
+            float keep = expf(-2 * SDL_PI_F * channel->cutoff / OUTPUT_RATE);
             for (int i = 0; i < count; ++i)
             {
                 int position = (int)channel->position;

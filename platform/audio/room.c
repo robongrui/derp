@@ -4,10 +4,10 @@
  * echoes; the room's floor area, height, sky share and the materials its
  * textures are named after give the tail, by Sabine's formula squeezed into
  * a game-like range: corridors slap, halls boom, the outdoors stays dry. */
+#include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include "doomdef.h"
 #include "doomstat.h"
 #include "p_local.h"
@@ -31,7 +31,12 @@ static const material_t metal = {0.06f, 0.15f}, stone = {0.10f, 0.45f}, wood = {
 
 static int prefixed(const char *name, const char *const *list)
 {
-    for (; *list; ++list) if (!strncasecmp(name, *list, strlen(*list))) return 1;
+    for (; *list; ++list)
+    {
+        size_t i = 0;
+        while ((*list)[i] && toupper((unsigned char)name[i]) == (*list)[i]) ++i;
+        if (!(*list)[i]) return 1;
+    }
     return 0;
 }
 /* The IWADs' texture families; PWAD names that match none sound like stone. */
