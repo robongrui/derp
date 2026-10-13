@@ -16,5 +16,5 @@ static void saveSettings() {
     writeOptions(file,settings);
     fclose(file);
 }
-void settingsChanged() {applySettings();saveSettings();tickTime=0;}
+void settingsChanged() {applySettings();saveSettings();tickTime=0;++settingsSerial;}
 } // namespace doom3d

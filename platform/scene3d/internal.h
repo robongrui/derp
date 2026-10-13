@@ -340,6 +340,7 @@ void glassShot(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy)
 void glassBlast(float x,float y,float z,float radius);
 void watchGlass();
 void buildGlass(const Uniforms &camera);
+bool planGlassCaptures(const Uniforms &camera);
 
 // exposure.cpp
 void exposureShutdown();

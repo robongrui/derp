@@ -141,10 +141,11 @@ bool opaqueBatch(const std::pair<const int,std::vector<Vertex>> &batch) {
 // uncovered pixels, then cutouts and sprites. Shared by the main view and the
 // liquid reflection. With coverage and cutout pipelines, masked walls first
 // write their depth, after the sky so their soft edges still blend over it,
-// and then shade only where they are frontmost.
+// and then shade only where they are frontmost. Without sprites (glass
+// probes), only the map itself.
 void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGraphicsPipeline *opaque,SDL_GPUGraphicsPipeline *skySurface,
                SDL_GPUGraphicsPipeline *sky,SDL_GPUGraphicsPipeline *world,SDL_GPUTexture *reflection,
-               SDL_GPUGraphicsPipeline *coverage,SDL_GPUGraphicsPipeline *cutout) {
+               SDL_GPUGraphicsPipeline *coverage,SDL_GPUGraphicsPipeline *cutout,bool sprites) {
     SDL_BindGPUGraphicsPipeline(pass,opaque);bindWorld(pass,reflection);
     for(const auto &batch:batches) if(opaqueBatch(batch)) {bindSurface(command,pass,batch.first,3);drawVertices(pass,batch.second);}
     SDL_GPUTextureSamplerBinding skyImage[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp}};
@@ -164,9 +165,9 @@ void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGrap
     };
     if(coverage&&cutout) {cutouts(coverage);cutouts(cutout);}
     else cutouts(world);
-    SDL_BindGPUGraphicsPipeline(pass,world);bindWorld(pass,reflection);
+    if(sprites) {SDL_BindGPUGraphicsPipeline(pass,world);bindWorld(pass,reflection);}
     for(const auto &batch:batches) {
-        if(batch.second.empty()||!(batch.second.front().mode&MODE_SPRITE))continue;
+        if(!sprites||batch.second.empty()||!(batch.second.front().mode&MODE_SPRITE))continue;
         bindSurface(command,pass,batch.first,3);drawVertices(pass,batch.second);
     }
     float noBlend[4]={};SDL_PushGPUFragmentUniformData(command,3,noBlend,sizeof(noBlend));

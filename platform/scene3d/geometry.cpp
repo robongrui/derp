@@ -189,7 +189,9 @@ static void flatGeometry(const std::vector<float> &skyTop) {
 }
 // The upper, lower, middle and one-sided wall sections of every line side,
 // and sky walls along the edges of sky ceilings.
-static void wallGeometry(const Uniforms &camera,const std::vector<float> &skyTop) {
+// allSides: also wall sides facing away from the eye, for frames that
+// capture glass probes from elsewhere.
+static void wallGeometry(const Uniforms &camera,const std::vector<float> &skyTop,bool allSides) {
     auto skyWall=[](Point a,Point b,float bottom,float top) {
         if(top<=bottom)return;
         for(const Vertex &v:{Vertex{a.x,a.y,bottom},Vertex{b.x,b.y,bottom},Vertex{b.x,b.y,top},
@@ -203,7 +205,7 @@ static void wallGeometry(const Uniforms &camera,const std::vector<float> &skyTop
             const sector_t *front=s.sector,*back=side?line.frontsector:line.backsector;
             Point a={units((side?line.v2:line.v1)->x),units((side?line.v2:line.v1)->y)};
             Point b={units((side?line.v1:line.v2)->x),units((side?line.v1:line.v2)->y)};
-            bool facing=(b.x-a.x)*(camera.eye[1]-a.y)-(b.y-a.y)*(camera.eye[0]-a.x)<=0;
+            bool facing=allSides||(b.x-a.x)*(camera.eye[1]-a.y)-(b.y-a.y)*(camera.eye[0]-a.x)<=0;
             float floor=floorZ(front),ceil=ceilZ(front),row=units(s.rowoffset),light=lighting(front);
             if(std::abs(b.y-a.y)<0.01) light=std::max(0.1f,light-0.04f);
             if(std::abs(b.x-a.x)<0.01) light=std::min(1.0f,light+0.04f);
@@ -400,7 +402,7 @@ void geometry(const Uniforms &camera,float fraction) {
     skyVertices.clear();
     std::vector<float> skyTop=skyTops(fraction);
     flatGeometry(skyTop);
-    wallGeometry(camera,skyTop);
+    wallGeometry(camera,skyTop,planGlassCaptures(camera));
     collectSurfaceLights();
     buildImpacts(camera);
     buildGlass(camera);

@@ -77,7 +77,7 @@ void pushWorldUniforms(SDL_GPUCommandBuffer *command,const Uniforms &view);
 bool opaqueBatch(const std::pair<const int,std::vector<Vertex>> &batch);
 void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGraphicsPipeline *opaque,SDL_GPUGraphicsPipeline *skySurface,
                SDL_GPUGraphicsPipeline *sky,SDL_GPUGraphicsPipeline *world,SDL_GPUTexture *reflection,
-               SDL_GPUGraphicsPipeline *coverage=nullptr,SDL_GPUGraphicsPipeline *cutout=nullptr);
+               SDL_GPUGraphicsPipeline *coverage=nullptr,SDL_GPUGraphicsPipeline *cutout=nullptr,bool sprites=true);
 void drawOverlays(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,const FrameView &view,
                   const std::vector<SpriteDraw> &weapons,const std::vector<Vertex> &hud,const std::vector<Vertex> &cross,bool depth);
 

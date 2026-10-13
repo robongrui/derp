@@ -67,6 +67,10 @@ static void layoutSettingsPanel(Uint32 drawableWidth,Uint32 drawableHeight,std::
 struct MirrorTarget { SDL_GPUTexture *color=nullptr,*depth=nullptr; int width=0,height=0; };
 static MirrorTarget liquidMirror,glassMirror;
 static bool glassReflected; // This frame drew a glass reflection.
+// Glass probes: per probe a row of six glassProbeSize faces (+x, -x, +y,
+// -y, +z, -z; glass.frag reads them the same way), for glassProbeSerial.
+static SDL_GPUTexture *probeAtlas,*probeDepth;
+static unsigned probeAtlasSerial=~0u;
 // The world drawn again at reduced resolution from the mirrored camera,
 // clipped to the eye's side of plane (unit normal toward the eye, offset).
 static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &mirror,const float plane[4],MirrorTarget &target) {
@@ -103,6 +107,51 @@ static void drawReflection(SDL_GPUCommandBuffer *render,const FrameView &view,Un
     float plane[4]={0,0,1,reflectionPlane};
     drawMirror(render,view,mirror,plane,liquidMirror);
     camera.water[0]=view.worldX;camera.water[1]=view.worldY;camera.water[2]=1/view.worldW;camera.water[3]=1/view.worldH;
+}
+// Glass probes: each probe in glassCaptures drawn six times into its row of
+// the atlas, a 90-degree view per cube face from the probe. Only the map,
+// as its bakes light it: no sprites, no dynamic lights (they would freeze
+// in the glass), no fog and no eye adaptation.
+static void captureGlassProbes(SDL_GPUCommandBuffer *render,const Uniforms &camera) {
+    if(!worldPending)return;
+    if(probeAtlasSerial!=glassProbeSerial) {
+        release(probeAtlas);release(probeDepth);probeAtlasSerial=glassProbeSerial;
+        if(!glassProbes.empty()) {
+            int w=6*glassProbeSize,h=(int)glassProbes.size()*glassProbeSize;
+            probeAtlas=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,w,h,SDL_GPU_TEXTUREUSAGE_COLOR_TARGET|SDL_GPU_TEXTUREUSAGE_SAMPLER);
+            probeDepth=createTexture(depthFormat,w,h,SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+            if(!probeAtlas||!probeDepth)I_Error((char*)"Could not allocate the glass probe atlas");
+        }
+    }
+    if(glassCaptures.empty()||!probeAtlas)return;
+    static const float faces[6][2][3]={{{1,0,0},{0,0,1}},{{-1,0,0},{0,0,1}},{{0,1,0},{0,0,1}},{{0,-1,0},{0,0,1}},{{0,0,1},{0,1,0}},{{0,0,-1},{0,1,0}}};
+    SDL_GPUColorTargetInfo color={};
+    color.texture=probeAtlas;color.load_op=SDL_GPU_LOADOP_LOAD;color.store_op=SDL_GPU_STOREOP_STORE;
+    SDL_GPUDepthStencilTargetInfo depth={};
+    depth.texture=probeDepth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_DONT_CARE;
+    depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
+    SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
+    static const FlashSet noFlashes;static const FogLights noFog;
+    const float noClip[4]={0,0,0,-1e9f};
+    for(int index:glassCaptures) {
+        const GlassProbe &probe=glassProbes[index];
+        for(int face=0;face<6;++face) {
+            Uniforms view=camera;
+            const float *f=faces[face][0],*u=faces[face][1];
+            for(int i=0;i<3;++i) {view.eye[i]=probe.at[i];view.forward[i]=f[i];view.up[i]=u[i];}
+            view.right[0]=f[1]*u[2]-f[2]*u[1];view.right[1]=f[2]*u[0]-f[0]*u[2];view.right[2]=f[0]*u[1]-f[1]*u[0];
+            view.projection[0]=view.projection[1]=1;
+            for(float &w:view.water)w=0;
+            view.materials[2]=0;view.fx[0]=1;view.fx2[0]=glassProbeSize/200.0f;
+            setView(pass,(float)(face*glassProbeSize),(float)(index*glassProbeSize),(float)glassProbeSize,(float)glassProbeSize);
+            pushWorldUniforms(render,view);
+            SDL_PushGPUFragmentUniformData(render,1,&noFlashes,sizeof(noFlashes));
+            SDL_PushGPUFragmentUniformData(render,2,&noFog,sizeof(noFog));
+            SDL_PushGPUVertexUniformData(render,1,noClip,sizeof(noClip));
+            drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr,nullptr,nullptr,false);
+        }
+    }
+    SDL_EndGPURenderPass(pass);
 }
 // Glass reflections: the camera and its axes mirrored across the chosen
 // window's upright plane (glassMirrorPlane), so each point of the mirrored
@@ -158,11 +207,19 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     if(!glassVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,glassPipeline);
         SDL_GPUTextureSamplerBinding images[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp},
-                                              {glassReflected?glassMirror.color:paletteTexture,nearestClamp}};
-        SDL_BindGPUFragmentSamplers(pass,0,images,3);bindLightBlockers(pass);
-        // Where the mirrored view sits on screen; z is 0 without a reflection.
-        float mirror[4]={view.worldX,view.worldY,glassReflected?1/view.worldW:0,1/view.worldH};
-        SDL_PushGPUFragmentUniformData(render,3,mirror,sizeof(mirror));
+                                              {glassReflected?glassMirror.color:paletteTexture,nearestClamp},
+                                              {probeAtlas?probeAtlas:paletteTexture,nearestClamp}};
+        SDL_BindGPUFragmentSamplers(pass,0,images,4);bindLightBlockers(pass);
+        // Where the mirrored view sits on screen (z is 0 without a
+        // reflection), the probe face size, then each probe's point and box.
+        static std::vector<std::array<float,4>> mirror(2+3*maxGlassProbes);
+        mirror[0]={view.worldX,view.worldY,glassReflected?1/view.worldW:0,1/view.worldH};
+        mirror[1]={(float)glassProbeSize,0,0,0};
+        for(size_t i=0;i<glassProbes.size();++i) {
+            const GlassProbe &p=glassProbes[i];
+            mirror[2+3*i]={p.at[0],p.at[1],p.at[2],0};mirror[3+3*i]={p.low[0],p.low[1],p.low[2],0};mirror[4+3*i]={p.high[0],p.high[1],p.high[2],0};
+        }
+        SDL_PushGPUFragmentUniformData(render,3,mirror.data(),(Uint32)(mirror.size()*sizeof(mirror[0])));
         drawVertices(pass,glassVertices);
     }
     // Hot air marks the color target's alpha for the shimmer in present.
@@ -268,6 +325,7 @@ static void submitProfiled(SDL_GPUCommandBuffer *render,uint64_t frameStart) {
 }
 void releaseReflection() {
     for(MirrorTarget *t:{&liquidMirror,&glassMirror}) {release(t->color);release(t->depth);t->width=t->height=0;}
+    release(probeAtlas);release(probeDepth);probeAtlasSerial=~0u;
 }
 } // namespace gpu3d
 
@@ -307,6 +365,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     if(!render) I_Error((char*)"GPU command buffer: %s",SDL_GetError());
     uploadFrame(render,transient,sectorInfo(),palette,overlay,settingsImage);
     drawReflection(render,view,camera);
+    captureGlassProbes(render,camera);
     glassReflected=drawGlassReflection(render,view,camera);
     if(drawMist&&msaa)drawMistDepth(render,view,camera);
     drawMainView(render,view,camera,drawMist,msaa,weapons,hud,cross);

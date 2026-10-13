@@ -162,6 +162,19 @@ extern std::vector<Vertex> glassVertices;
 // frame, and that pane's plane (unit normal toward the eye, offset).
 extern bool glassMirrorActive;
 extern float glassMirrorPlane[4];
+// Glass reflection probes: cube maps captured from in front of each window
+// on each side, for panes without the live mirror. at: where; low/high: the
+// room's box, which reflected rays are projected onto for parallax. The
+// backend renders glassCaptures this frame into its probe atlas, which it
+// reallocates when glassProbeSerial changes.
+constexpr size_t maxGlassProbes=64;
+constexpr int glassProbeSize=64;
+struct GlassProbe { float at[3],low[3],high[3]; };
+extern std::vector<GlassProbe> glassProbes;
+extern std::vector<int> glassCaptures;
+extern unsigned glassProbeSerial;
+// Counts settings changes, so what is built from them (probes) can redo it.
+extern unsigned settingsSerial;
 extern GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 // Bake-only lights: where static light comes from, per wall atlas texel and
 // floor/ceiling cell (see bakeLights).

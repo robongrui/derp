@@ -16,20 +16,21 @@ layout(set=2,binding=1) uniform sampler2D palette;
 // Glass reflections: the world drawn again mirrored in the chosen pane
 // (drawGlassReflection in gpu3d/frame.cpp).
 layout(set=2,binding=2) uniform sampler2D mirror;
+// Glass probes: a row of six cube faces per probe (+x, -x, +y, -y, +z, -z;
+// captureGlassProbes in gpu3d/frame.cpp).
+layout(set=2,binding=3) uniform sampler2D probes;
 // The lights' blockers (buildLightWords in scene3d/lights.cpp), numbered after
 // the samplers in SPIR-V and after the four uniform blocks on Metal.
-#ifdef METAL
 #define BLOCKER_BINDING 4
-#else
-#define BLOCKER_BINDING 3
-#endif
 layout(std430,set=2,binding=BLOCKER_BINDING) readonly buffer Blockers { uvec4 lightWords[]; };
 layout(std140,set=3,binding=0) uniform Camera CAMERA_BLOCK c;
 layout(std140,set=3,binding=1) uniform Lights FLASH_BLOCK;
 layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // The world view's corner (xy) and inverse size (zw) on screen, to read the
-// mirrored view; z is 0 when no pane is mirrored this frame.
-layout(std140,set=3,binding=3) uniform Mirror { vec4 mirrorView; };
+// mirrored view (z is 0 when no pane is mirrored this frame); the probe face
+// size (probeInfo.x); per probe its point, and its room box's low and high
+// corners (scene3d.h GlassProbe).
+layout(std140,set=3,binding=3) uniform Mirror { vec4 mirrorView,probeInfo; vec4 probeData[192]; };
 layout(location=0) out vec4 outColor;
 #include "indexed.glsl"
 #define BLOCKERS
@@ -55,6 +56,26 @@ vec3 skyAlong(vec3 ray) {
     vec2 uv=vec2(-angle/6.2831853*size.x*4.0,clamp(0.70-rise*0.68,0.001,0.999)*size.y);
     vec3 color=indexed(sky,palette,uv,false,true).rgb;
     return mix(color,color*0.12,step(rise,-0.02));
+}
+// What a probe sees along ray from point: the ray runs on to where it leaves
+// the probe's room box, and the cube face looking that way from the probe
+// holds what is there (box projection), so near walls stay in place as the
+// eye moves. Faces as captureGlassProbes draws them: forward, up, and
+// right = forward x up, 90 degrees across; read texel by texel.
+vec3 probeAlong(uint probe,vec3 point,vec3 ray) {
+    vec3 origin=probeData[3u*probe].xyz,low=probeData[3u*probe+1u].xyz,high=probeData[3u*probe+2u].xyz;
+    vec3 safe=mix(vec3(1e-4),ray,greaterThan(abs(ray),vec3(1e-4)));
+    vec3 leave=max((high-point)/safe,(low-point)/safe);
+    vec3 d=point+ray*max(min(min(leave.x,leave.y),leave.z),0.0)-origin;
+    vec3 a=abs(d);
+    int face=a.x>=a.y&&a.x>=a.z?(d.x>0.0?0:1):a.y>=a.z?(d.y>0.0?2:3):(d.z>0.0?4:5);
+    const vec3 forwards[6]=vec3[6](vec3(1,0,0),vec3(-1,0,0),vec3(0,1,0),vec3(0,-1,0),vec3(0,0,1),vec3(0,0,-1));
+    const vec3 ups[6]=vec3[6](vec3(0,0,1),vec3(0,0,1),vec3(0,0,1),vec3(0,0,1),vec3(0,1,0),vec3(0,1,0));
+    vec3 forward=forwards[face],up=ups[face],right=cross(forward,up);
+    float depth=max(dot(d,forward),1e-4),size=probeInfo.x;
+    vec2 at=vec2(dot(d,right),-dot(d,up))/depth*0.5+0.5;
+    ivec2 texel=ivec2(clamp(floor(at*size),vec2(0),vec2(size-1.0)));
+    return texelFetch(probes,texel+ivec2(face,int(probe))*int(size),0).rgb;
 }
 // Premultiplied layering, front layer last.
 void over(inout vec4 result,vec3 color,float alpha) {result=vec4(color*alpha+result.rgb*(1.0-alpha),alpha+result.a*(1.0-alpha));}
@@ -86,8 +107,9 @@ void main() {
     // in whole reflection pixels in retro style. It is already lit and
     // exposed. Reflectance rises toward a glance, and bright things (lamps,
     // sky, fire, shots) hold up while dim walls stay faint, so it reads
-    // through contrast rather than as a film. Other panes fall back:
-    // outdoors they mirror the sky, indoors the dim room, barely.
+    // through contrast rather than as a film. Other panes take the probe on
+    // the eye's side (vLampTint: probe+1) the same way; without one they
+    // fall back to the sky outdoors, and indoors to the dim room, barely.
     if(vLightMask.x!=0u&&mirrorView.z>0.0) {
         vec2 uv=(gl_FragCoord.xy-mirrorView.xy)*mirrorView.zw;
         vec3 mirrored;
@@ -97,6 +119,11 @@ void main() {
         } else mirrored=textureLod(mirror,uv,0.0).rgb;
         float bright=smoothstep(0.08,0.6,dot(mirrored,vec3(0.299,0.587,0.114)));
         over(result,mirrored/max(c.fx.x,0.01),(0.22+0.45*grazing)*mix(0.35,1.0,bright));
+    }
+    else if(vLampTint>0u) {
+        vec3 mirrored=probeAlong(vLampTint-1u,vWorld,reflect(-view,normal));
+        float bright=smoothstep(0.08,0.6,dot(mirrored,vec3(0.299,0.587,0.114)));
+        over(result,mirrored,(0.22+0.45*grazing)*mix(0.35,1.0,bright));
     }
     else if(vTint.z>0.5) over(result,skyAlong(reflect(-view,normal))*max(light,0.5),0.18+0.5*grazing);
     else over(result,vec3(0.3,0.33,0.32)*light,0.05+0.25*grazing);

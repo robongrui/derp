@@ -9,10 +9,14 @@ namespace doom3d {
 std::vector<Vertex> glassVertices;
 bool glassMirrorActive=false;
 float glassMirrorPlane[4]={};
+std::vector<GlassProbe> glassProbes;
+std::vector<int> glassCaptures;
+unsigned glassProbeSerial=0,settingsSerial=0;
 // A pane fills the opening of one line between a window's frame sector and
 // the sector it looks out on (outer); inner is the room on the other side.
-// The panes of one frame break together.
-struct GlassPane { int line,frame,outer,inner; float ax,ay,bx,by; uint32_t seed; bool broken=false; };
+// The panes of one frame break together. probe: the reflection probe on
+// the outer and inner side (-1: none).
+struct GlassPane { int line,frame,outer,inner; float ax,ay,bx,by; uint32_t seed; bool broken=false; int probe[2]={-1,-1}; };
 // A shard moves at the tic rate (units per tic), from (px,py,pz) last tic.
 struct Shard { float x,y,z,px,py,pz,vx,vy,vz,size,tall; int pane,die; uint32_t seed; bool landed=false; };
 struct MissileWatch { float x,y,z; bool missile,seen; int type; };
@@ -39,6 +43,41 @@ static std::array<float,4> sectorBox(const sector_t &s) {
         box[2]=std::max(box[2],units(v->x));box[3]=std::max(box[3],units(v->y));
     }
     return box;
+}
+// Reflection probes: per window (frame sector) and side, a point in front of
+// the glass at its middle height, 32 units out on the outer side and past
+// the frame on the inner one, and the box of the room there for parallax
+// (the side's sector and the frame, floor to ceiling). Captured as cube
+// maps (planGlassCaptures) for panes with no live mirror.
+static void findProbes() {
+    glassProbes.clear();++glassProbeSerial;
+    std::map<std::pair<int,int>,int> made;
+    for(GlassPane &p:panes) {
+        float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
+        if(len<1)continue;
+        float nx=ey/len,ny=-ex/len; // Toward the line's front side.
+        if(lines[p.line].frontsector-sectors!=p.outer) {nx=-nx;ny=-ny;}
+        auto frameBox=sectorBox(sectors[p.frame]);
+        float depth=std::min(frameBox[2]-frameBox[0],frameBox[3]-frameBox[1]);
+        float bottom=std::max(rawFloor(&sectors[p.frame]),rawFloor(&sectors[p.outer])),top=std::min(rawCeiling(&sectors[p.frame]),rawCeiling(&sectors[p.outer]));
+        for(int side=0;side<2;++side) {
+            int room=side==0?p.outer:p.inner;
+            if(room<0)continue;
+            auto key=std::make_pair(p.frame,side);
+            auto found=made.find(key);
+            if(found!=made.end()) {p.probe[side]=found->second;continue;}
+            if(glassProbes.size()>=maxGlassProbes)continue;
+            float out=side==0?32:-(depth+24),cx=(p.ax+p.bx)/2+nx*out,cy=(p.ay+p.by)/2+ny*out;
+            const sector_t &s=sectors[room];
+            auto box=sectorBox(s);
+            GlassProbe probe={{cx,cy,(bottom+top)/2},
+                {std::min({box[0],frameBox[0],cx-8}),std::min({box[1],frameBox[1],cy-8}),rawFloor(&s)},
+                {std::max({box[2],frameBox[2],cx+8}),std::max({box[3],frameBox[3],cy+8}),rawCeiling(&s)+(skySector(&s)?128.0f:0.0f)}};
+            probe.low[2]=std::min(probe.low[2],probe.at[2]-8);probe.high[2]=std::max(probe.high[2],probe.at[2]+8);
+            made[key]=p.probe[side]=(int)glassProbes.size();
+            glassProbes.push_back(probe);
+        }
+    }
 }
 // A window is a thin frame sector between two others, with a sill and a
 // lintel: its floor above both neighbors and its ceiling below them (or
@@ -94,6 +133,7 @@ static void findWindows() {
             panes.push_back({index,s,outer,inner,units(line->v1->x),units(line->v1->y),units(line->v2->x),units(line->v2->y),hash32((uint32_t)index*2654435761u+7)});
         }
     }
+    findProbes();
     // Lines within reach of each window, for the shards that fly from it.
     for(const GlassPane &p:panes) {
         auto &list=nearLines[p.frame];
@@ -241,7 +281,8 @@ void watchGlass() {
 // the outdoors' light and reflects the sky, the inner one the room's.
 // Vertex: uv the texel on the pane, (sunU, sunV) its size, (red, green) the
 // face normal, blue 1 on a face out under the sky; statics the pane's seed,
-// top bit set once broken; lightMask[0] 1 on panes in the mirror's plane.
+// top bit set once broken; lightMask[0] 1 on panes in the mirror's plane;
+// lampTint the captured probe on the eye's side plus one (0: none).
 // Glass reflections (settings.glassReflections): the pane that fills the
 // most of the view within 512 units, whole and in front of the camera,
 // becomes the mirror the world is drawn again through (glassMirrorPlane:
@@ -270,6 +311,22 @@ static void chooseMirror(const Uniforms &camera) {
         if(score>best) {best=score;glassMirrorActive=true;glassMirrorPlane[0]=nx;glassMirrorPlane[1]=ny;glassMirrorPlane[2]=0;glassMirrorPlane[3]=nx*p.ax+ny*p.ay;}
     }
 }
+// Which probes to capture this frame: those not yet captured since the
+// level's bakes or the settings last changed, four at a time so a level's
+// worth spreads over a few frames. The capture key covers what changes how
+// the world looks lit.
+static int captureKey=-1;
+static std::vector<char> captured;
+bool planGlassCaptures(const Uniforms &camera) {
+    glassCaptures.clear();
+    if(!settings.windowGlass||glassLevelSerial!=r_levelserial||glassProbes.empty()||camera.effects[2]!=0)return false;
+    int key=(int)hash32(lightBakeSerial*31u+(unsigned)bounceKey*7u+(unsigned)ambientKey*13u+(unsigned)flowKey*17u+(sunBaked?1u:0u)+
+                        (unsigned)skytexture*19u+settingsSerial*23u+glassProbeSerial*29u);
+    if(key!=captureKey||captured.size()!=glassProbes.size()) {captureKey=key;captured.assign(glassProbes.size(),0);}
+    for(size_t i=0;i<glassProbes.size()&&glassCaptures.size()<4;++i)
+        if(!captured[i]) {captured[i]=1;glassCaptures.push_back((int)i);}
+    return !glassCaptures.empty();
+}
 void buildGlass(const Uniforms &camera) {
     glassVertices.clear();glassMirrorActive=false;
     if(!settings.windowGlass||glassLevelSerial!=r_levelserial)return;
@@ -292,8 +349,10 @@ void buildGlass(const Uniforms &camera) {
         if((b.x-a.x)*-ny+(b.y-a.y)*nx<0)std::swap(a,b);
         unsigned statics=(p.seed&0x7fffffffu)|(p.broken?0x80000000u:0u);
         bool mirror=glassMirrorActive&&nx*glassMirrorPlane[0]+ny*glassMirrorPlane[1]>0.999f&&std::abs(nx*p.ax+ny*p.ay-glassMirrorPlane[3])<1;
+        int probe=p.probe[outside?0:1];
+        unsigned probeId=probe>=0&&(size_t)probe<captured.size()&&captured[probe]?(unsigned)probe+1:0;
         auto vertex=[&](Point at,float u,float z) {
-            Vertex v={at.x,at.y,z,u,z-bottom,light,0};v.lightMask[0]=mirror?1u:0u;
+            Vertex v={at.x,at.y,z,u,z-bottom,light,0};v.lightMask[0]=mirror?1u:0u;v.lampTint=probeId;
             v.red=nx;v.green=ny;v.blue=outside&&skySector(&sectors[p.outer])?1.0f:0.0f;
             v.sunU=len;v.sunV=top-bottom;v.statics=statics;return v;
         };
@@ -314,5 +373,5 @@ void buildGlass(const Uniforms &camera) {
         pixelBlock(particleVertices,camera,x,y,z,size,s.landed?0.5f:s.tall,color,s.landed,&glass);
     }
 }
-void glassShutdown() {panes.clear();paneOfLine.clear();nearLines.clear();shards.clear();missileWatch.clear();glassVertices.clear();glassLevelSerial=~0u;}
+void glassShutdown() {glassProbes.clear();glassCaptures.clear();captured.clear();captureKey=-1;panes.clear();paneOfLine.clear();nearLines.clear();shards.clear();missileWatch.clear();glassVertices.clear();glassLevelSerial=~0u;}
 } // namespace doom3d
