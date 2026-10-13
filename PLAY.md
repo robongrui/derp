@@ -70,13 +70,15 @@ Walls and closed doors block these lights. Nearby enemies also cast a shadow
 away from the strongest light. These effects are available in the 3D renderer.
 
 Press **F** to toggle the flashlight in the 3D renderer. Its warm, soft-edged beam
-follows mouse look and stops at walls and closed doors. It is held low and to
-the right of your view, so wall edges, door frames and ledges cast visible
-shadows, as muzzle flashes and projectiles do. The artwork under the
-beam supplies a subtle ambient tint: red surfaces warm the view and green
-surfaces add a green tint. The color fades smoothly as you aim elsewhere or
-switch the flashlight off. It uses one target-color sample at 30 Hz and adds
-no reflected world lights. Aiming into sky produces no tint.
+follows mouse look and stops at walls and closed doors. It is carried at your
+right shoulder, a little behind your eyes, so wall edges, door frames and
+ledges cast visible shadows, as muzzle flashes and projectiles do; it backs
+out of walls you hug and sways gently with your weapon as you walk. The
+artwork under the beam supplies a subtle ambient tint: red surfaces warm the
+view and green surfaces add a green tint. The color fades smoothly as you aim
+elsewhere or switch the flashlight off. With **Classic flashlight** off, the
+beam also bounces a soft light in the color of what it hits onto the
+surroundings. Aiming into sky produces no tint.
 Launch with `-flashlight` to start with the light on. `-flashlighttint 0` disables
 the tint, `-flashlighttint 1` selects the default, and `-flashlighttint 2` makes it stronger.
 
@@ -109,6 +111,7 @@ takes a screenshot.
 - **Bump detail and metal gloss:** derived from the WAD artwork, plus rounded sprite lighting with rim light on backlit enemies; affects dynamic lights only. Optional **varied highlights** make them tight on smooth artwork and broad on busy artwork.
 - **Emissive textures:** glowing lamp strips, computer displays, lava and nukage, with soft bloom and colored light on nearby surfaces. The room's own light takes their color where they light it, monsters and the weapon included, and wall panels light only what they face.
 - **Glossy monitor screens:** screens in computer textures get curved CRT glass that bends the picture and catches highlights.
+- **Window glass:** windows found in the map's geometry get a pane of glass with grime, painted shine streaks and highlights from lamps, shots and the flashlight. The first shot, projectile or blast through a window, yours or a monster's, shatters it into shards; shots and sight still pass exactly as in vanilla. **Glass reflections** mirror the room in the window you look at, monsters and yourself included, at the liquid reflections' resolution, and show a snapshot of the surroundings in every other window; it costs a few milliseconds only while you look at a window.
 
 **Lighting**
 
@@ -118,6 +121,8 @@ takes a screenshot.
 - **Door light spill:** when a door opens, light from the brighter room spills through it, scaled by how far the door is open.
 - **Moving doors re-light:** baked lamp light and sunlight follow doors, lifts and lowering walls. As a door rises, the light beyond it steps in under its edge in 8-unit steps, re-baked around the door on a background thread. Bounce, sky light, light flow and sunbeams still use the level's starting state.
 - **Eye adaptation:** moving between bright and dark areas briefly over- or underexposes the view, stepped in sixteenths like Doom's light levels.
+- **Room color from bounce:** light from colored lamps, bounced around the room, also tints its corners the lamps never reach directly.
+- **Classic flashlight:** on by default; a shorter, warmer beam that brightens what it hits in hard steps like Doom's light levels, up to a little past full brightness. Off, the beam is longer and whiter and bounces light off what it hits.
 - **Flashlight tint:** the middle is the default, and fully left disables it.
 - **Flashlight silhouettes:** things in the beam throw a hard-edged sprite silhouette onto the wall behind them.
 - **Player shadow:** your own sprite's shadow, cast from the sun or the strongest light above you.

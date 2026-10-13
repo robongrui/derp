@@ -145,6 +145,30 @@ highlight.
 See
 [`platform/screen_glass.h`](platform/screen_glass.h).
 
+### Windows are found in the map and glazed
+
+DOOM maps are full of windows, but the engine had no way to put glass in them.
+The renderer finds them in the map geometry when a level loads: a thin sector
+between two others, with a sill and a lintel, that the player cannot walk
+into. Lifts, doors and anything a switch moves are left alone. DOOM's episodes
+contain about a hundred such windows, and DOOM II about eighty.
+
+Each window gets a pane drawn over the opening. It is mostly clear, with grime
+gathered at the frame and on the sill, a few shine streaks painted onto the
+pane the way Duke Nukem 3D painted its glass, and sharp highlights from lamps,
+muzzle flashes and the flashlight.
+
+The engine never learns that the glass exists. Shots, sight and movement pass
+exactly as in vanilla, so the renderer watches for anything going through
+instead: a render-only hook reports hitscan shots crossing a line, and
+projectiles and explosions are checked every tic. The first one through
+shatters the window into palette-colored shards that fall, bounce and lie on
+the floor for a while, and leaves a jagged rim in the frame. Monsters' shots
+count too, so a fight across a window leaves it in pieces.
+
+See [`platform/scene3d/windows.cpp`](platform/scene3d/windows.cpp) and
+[`platform/shaders/glass.frag`](platform/shaders/glass.frag).
+
 ### Muzzle flashes, projectiles and explosions carry their own colors
 
 The renderer samples the original sprite artwork to decide what color a light
@@ -163,6 +187,26 @@ See
 [`platform/flash_lighting.h`](platform/flash_lighting.h) and
 [`platform/scene3d/shadows.cpp`](platform/scene3d/shadows.cpp).
 
+### The flashlight is carried, not glued to the eye
+
+The flashlight sits at the player's right shoulder, a little behind the eyes
+like Doom 3's, so it lights the floor ahead from above and wall edges, door
+frames and things cast visible shadows. It backs out of walls the player is
+hugging and sways with DOOM's own weapon bob.
+
+With the classic flashlight option switched off, the beam also bounces a soft
+light in the color of what it hits where it lands, so a lit wall spills onto
+the dark floor in front of it. The classic beam, the default, skips the bounce
+and brightens in DOOM's light-level steps instead.
+
+Dynamic light also lifts saturated colors toward its own hue, as the palette's
+ramps brighten, so dark blue carpet shows the beam instead of swallowing it.
+What it adds rolls off on bright texels, so a lit wall does not jump far ahead
+of the dark floor beside it.
+
+See [`platform/scene3d/lights.cpp`](platform/scene3d/lights.cpp) and
+[`platform/scene3d/exposure.cpp`](platform/scene3d/exposure.cpp).
+
 ### Sprite shadows are just squashed sprites
 
 Enemy shadows are not shadow maps.
@@ -174,8 +218,13 @@ fades when a monster rises into the air.
 The flashlight can also project hard-edged sprite silhouettes onto walls, and
 the player can cast a shadow from the sun or strongest suitable light.
 
-Sprites themselves get rounded lighting from normals derived from their
-silhouettes, while the original painted shading remains visible.
+Sprites themselves are lit as rounded bodies rather than flat cutouts. When a
+sprite loads, every pixel of its silhouette rises as a tube as wide as the
+largest disk that fits inside the outline there, so the torso becomes a broad
+cylinder and arms, legs and guns thinner ones of their own. The original
+painted shading remains visible on top.
+
+See [`platform/scene3d/sprite_normals.cpp`](platform/scene3d/sprite_normals.cpp).
 
 ### Water reflections render the world again, cheaply
 
@@ -197,6 +246,24 @@ See
 [`platform/gpu3d/frame.cpp`](platform/gpu3d/frame.cpp),
 [`platform/scene3d/geometry.cpp`](platform/scene3d/geometry.cpp) and
 [`platform/shaders/world.frag`](platform/shaders/world.frag).
+
+### Windows reflect with the same trick, plus snapshots
+
+The window the player is looking at becomes a second mirror. The world is
+drawn again from the camera mirrored across the glass, at the same resolution
+as the liquid reflections, so walls, lamps, monsters, shots and the player's
+own sprite all show in it. Sprites are rebuilt for the mirrored view, so a
+monster coming up from behind shows its face in the glass.
+
+Every other window shows a snapshot instead: a small cube map captured from
+in front of it once the level's lighting has baked, holding only the map
+itself. The reflected ray is projected onto a box around the room, so nearby
+walls stay in place as the player moves. When the view turns to another
+window, it fades from its snapshot to the live reflection.
+
+The reflection is weighted by contrast rather than physics. Bright things in
+it show and dim walls stay faint, so a window never turns into a mirror that
+cannot be seen through.
 
 ### Liquids affect the world around them
 
@@ -356,6 +423,8 @@ See [`platform/audio/room.c`](platform/audio/room.c),
   patches.
 - **Not supported:** Boom, MBF21 and GZDoom maps, slopes, 3D floors, model
   packs, ray tracing and multiplayer.
+- **Window glass:** windows found in the map get glass that reflects the room
+  and shatters when anything shoots through it.
 - **Room acoustics:** echoes and reverb measured from the map, sounds muffled
   behind walls and dulled with distance.
 - **Settings panel:** press **F4** to enable, disable and tune the individual
