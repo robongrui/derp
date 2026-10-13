@@ -201,12 +201,29 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr) {
     filter(height,broad,binomial,binomial);
     for(size_t i=0;i<count;++i)grain[i]=std::fabs(height[i]-broad[i]);
     filter(grain,rough,binomial,binomial);
+    // Faint seams: some artwork paints its seams only a few palette steps
+    // off the surface (FLAT18, COMPSPAN), so they barely tilt. Where the
+    // strongest bands (99th percentile) clearly stand out from the typical
+    // texel, they are deepened toward seamDepth; grain and organic artwork
+    // without straight seams keep their relief. Only bands well above the
+    // typical one deepen, so averaged speckle inside a slab stays shallow
+    // instead of turning into streaks.
+    std::vector<float> bands(count);
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x)
+        bands[(size_t)y*w+x]=std::hypot(at(across,x+1,y)-at(across,x-1,y),at(down,x,y+1)-at(down,x,y-1))*1.5f;
+    std::vector<float> ranked=bands;
+    std::nth_element(ranked.begin(),ranked.begin()+count/2,ranked.end());float typical=ranked[count/2];
+    std::nth_element(ranked.begin(),ranked.begin()+count*99/100,ranked.end());float strongest=ranked[count*99/100];
+    const float seamDepth=0.35f,deepest=3.0f,standout=4.0f;
+    float gain=strongest>0&&strongest>=standout*typical?std::clamp(seamDepth/strongest,1.0f,deepest):1.0f;
     std::vector<byte> cells(count*4);
     for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
         float fx=(at(height,x+1,y-1)+2*at(height,x+1,y)+at(height,x+1,y+1)-at(height,x-1,y-1)-2*at(height,x-1,y)-at(height,x-1,y+1))*0.25f;
         float fy=(at(height,x-1,y+1)+2*at(height,x,y+1)+at(height,x+1,y+1)-at(height,x-1,y-1)-2*at(height,x,y-1)-at(height,x+1,y-1))*0.25f;
-        float sx=0.25f*fx+1.5f*(at(across,x+1,y)-at(across,x-1,y));
-        float sy=0.25f*fy+1.5f*(at(down,x,y+1)-at(down,x,y-1));
+        float t=std::clamp((bands[(size_t)y*w+x]-2*typical)/(2*typical+1e-6f),0.0f,1.0f);
+        float deepen=1+(gain-1)*t*t*(3-2*t);
+        float sx=0.25f*fx+1.5f*deepen*(at(across,x+1,y)-at(across,x-1,y));
+        float sy=0.25f*fy+1.5f*deepen*(at(down,x,y+1)-at(down,x,y-1));
         float soften=1/(1+std::sqrt(sx*sx+sy*sy)); // Steep edges ease toward 45 degrees.
         byte *cell=&cells[((size_t)y*w+x)*4];
         cell[0]=(byte)std::lround(128+127*sx*soften);cell[1]=(byte)std::lround(128+127*sy*soften);

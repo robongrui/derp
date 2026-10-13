@@ -260,11 +260,16 @@ inline void fillHeadroom(float rgb[3],float sectorLight) {
 // A sector's light level stands for the lamps the mapper lit it with, so the
 // static light (full, before fillHeadroom) colors it by its share: the
 // multiplier for the sector light of a point lit at that level. White lamps
-// leave it white. Keep lampTint in world.frag equivalent.
-inline void lampTint(const float statics[3],float light,float out[3]) {
-    float peak=std::max({statics[0],statics[1],statics[2]});
+// leave it white. Bounce light, weighted by bounceTint, counts too: the
+// lamps' light bounced around the room colors corners they never reach
+// directly (E1M2's dark room, sector 120). Keep lampTint in world.frag
+// equivalent.
+inline void lampTint(const float statics[3],const float bounce[3],float bounceTint,float light,float out[3]) {
+    float colored[3];
+    for(int c=0;c<3;++c)colored[c]=statics[c]+bounce[c]*bounceTint;
+    float peak=std::max({colored[0],colored[1],colored[2]});
     float share=peak>0?peak/(peak+std::max(light,0.0f)):0;
-    for(int c=0;c<3;++c)out[c]=1+(peak>0?statics[c]/peak-1:0)*share;
+    for(int c=0;c<3;++c)out[c]=1+(peak>0?colored[c]/peak-1:0)*share;
 }
 // Bounce gathering direction around a unit normal: (u,v) in [0,1)^2 maps to
 // a cosine-weighted hemisphere, so averaging what the rays hit is the

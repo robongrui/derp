@@ -216,6 +216,10 @@ static void buildSurfaceMaps(float minx,float miny,float maxx,float maxy) {
             bool floorWall=!back||(isFront&&bf>=ff+24)||(isBack&&ff>=bf+24);
             bool ceilingWall=!back||(isFront&&bc<=fc-24)||(isBack&&fc<=bc-24);
             if(floorWall)floorDistance[index]=std::min(floorDistance[index],d);
+            // Lower steps (stair risers, ledges) shade the floor at their foot
+            // over three times their height, at least 24 units.
+            float rise=!back?0:isFront?bf-ff:isBack?ff-bf:0;
+            if(!floorWall&&rise>=4)floorDistance[index]=std::min(floorDistance[index],d*contactRange/std::clamp(3*rise,24.0f,contactRange));
             if(ceilingWall)ceilingDistance[index]=std::min(ceilingDistance[index],d);
             if(seam&&(isFront||isBack)&&d<seamDistance[index]) {
                 seamDistance[index]=d;cell.neighbor=(uint16_t)(isFront?b:f);

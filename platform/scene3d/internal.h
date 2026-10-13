@@ -81,6 +81,7 @@ constexpr int flickerGroups=16;
 // and the strongest point light not far below that can cast a thing's shadow.
 struct StaticSample {
     std::array<float,3> color={},towards={};float amount=0;
+    std::array<float,3> bounce={}; // Filled by bakedLightAt: the bounce light there.
     int group=0;float groupShare=0;
     int shadow=-1;float shadowAmount=0;
 };
@@ -332,6 +333,13 @@ void buildRings(Uniforms &camera);
 float liquidLight(int sector,Image &flat,float x,float y,float z,const Uniforms &camera);
 std::array<float,3> gooColor(int sector,uint32_t seed,float x,float y,float z,const Uniforms &camera);
 void buildBubbles(const Uniforms &camera);
+
+// windows.cpp
+void glassShutdown();
+void glassShot(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy);
+void glassBlast(float x,float y,float z,float radius);
+void watchGlass();
+void buildGlass(const Uniforms &camera);
 
 // exposure.cpp
 void exposureShutdown();

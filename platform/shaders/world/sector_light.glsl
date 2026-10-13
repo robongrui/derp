@@ -20,15 +20,46 @@ float seamLight(vec2 xy,uint sector,bool ceiling,float fallback) {
     return total>0.0001?value/total:fallback;
 }
 // Contact shading: floors and ceilings darken near walls, walls near their
-// sector's floor and (non-sky) ceiling. Sector heights follow moving floors.
+// sector's floor and (non-sky) ceiling and in inside corners, each as a
+// crease: darkest at the contact and mostly gone within half its reach.
+// Sector heights follow moving floors. Distances in the contact map run to
+// contactRange (scene3d/map.cpp).
+const float contactRange=48.0;
+float crease(float distance,float reach) {float open=1.0-saturate(distance/reach);return open*open;}
+// A floor's or ceiling's distance to the nearest wall, blended from the four
+// nearest cells of this sector only, so the bright cells on top of a step
+// do not wash out the crease at its foot.
+float flatContact(vec2 xy,uint sector,bool ceiling) {
+    vec2 g=(xy-c.map.xy)*c.map.z-0.5;ivec2 q=ivec2(floor(g));vec2 f=fract(g);
+    ivec2 size=textureSize(contact,0);
+    float value=0.0,total=0.0;
+    for(int n=0;n<4;++n) {
+        ivec2 o=ivec2(n&1,n>>1),cell=clamp(q+o,ivec2(0),size-1);
+        if(uint(round(texelFetch(seams,cell,0).x*65535.0))!=sector) continue;
+        float w=(o.x!=0?f.x:1.0-f.x)*(o.y!=0?f.y:1.0-f.y)+1e-4;
+        vec4 v=texelFetch(contact,cell,0);
+        value+=(ceiling?v.g:v.r)*w;total+=w;
+    }
+    return total>0.0?value/total*contactRange:contactRange;
+}
 float contactShade(vec3 world,vec3 normal,uint sector) {
-    vec2 uv=(world.xy-c.map.xy)*c.map.z/vec2(textureSize(contact,0));
     vec4 info=sectorInfo[sector];
-    if(normal.z>0.5) return 1.0-0.35*(1.0-smoothstep(0.0,1.0,textureLod(contact,uv,0.0).r));
-    if(normal.z<-0.5) return 1.0-0.25*(1.0-smoothstep(0.0,1.0,textureLod(contact,uv,0.0).g));
-    float shade=1.0-0.3*(1.0-smoothstep(0.0,40.0,world.z-info.y));
-    if(info.w==0.0) shade*=1.0-0.2*(1.0-smoothstep(0.0,24.0,info.z-world.z));
-    return shade;
+    if(normal.z>0.5) return 1.0-0.5*crease(flatContact(world.xy,sector,false),40.0);
+    if(normal.z<-0.5) return 1.0-0.4*crease(flatContact(world.xy,sector,true),32.0);
+    float shade=1.0-0.45*crease(world.z-info.y,40.0);
+    if(info.w==0.0) shade*=1.0-0.35*crease(info.z-world.z,32.0);
+    // Inside corners: a point cornerReach out from the wall lies that far
+    // from the wall itself, but only as far from a wall meeting this one as
+    // the fragment is from the corner. Walls holding up both floor and
+    // ceiling shade the corner's full height; low and high ones (ledges,
+    // steps, lintels) only near the floor or ceiling.
+    const float cornerReach=32.0;
+    vec2 uv=(world.xy+normal.xy*cornerReach-c.map.xy)*c.map.z/vec2(textureSize(contact,0));
+    vec2 near=textureLod(contact,uv,0.0).rg*contactRange;
+    vec2 corner=vec2(crease(near.x,cornerReach),crease(near.y,cornerReach));
+    float cornered=max(min(corner.x,corner.y),
+        max(corner.x*crease(world.z-info.y,48.0),info.w==0.0?corner.y*crease(info.z-world.z,48.0):0.0));
+    return shade*(1.0-0.5*cornered);
 }
 // Sky sectors: x how enclosed their opening is (0 open air, 1 a hole in a
 // ceiling), y the outdoor floor; unpacks packOutdoor in scene3d/bake_sun.cpp.
@@ -77,7 +108,10 @@ SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
     // already carry smoothly across sector edges, so a bright sector beside a
     // dark one shows no edge in the lamp's color.
     float shownLight=light;
-    if(mapped&&c.map.w>0.0) light*=contactShade(vWorld,normal,sector);
+    // Contact shading darkens the baked lamp and bounce light too (through
+    // occlusion), or lamp-lit rooms would wash their corners out.
+    float contact=mapped&&c.map.w>0.0?contactShade(vWorld,normal,sector):1.0;
+    light*=contact;
     vec3 bounce=vec3(0);vec2 ambient=vec2(0,1);vec4 direction=vec4(0.5,0.5,0,0);
     vec4 baked=mapped?bakedSurface(normal,sector,bounce,ambient,direction):vec4(0,0,0,-1);
     // Under a sky, sun shadow and sky occlusion stop at the light of the
@@ -106,6 +140,7 @@ SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
     // Baked occlusion (FEATURE_BAKED_OCCLUSION) darkens the sector and baked light, not dynamic lights.
     float occlusion=1.0;
     if(mapped&&(bakeFlags&FEATURE_BAKED_OCCLUSION)!=0u) {occlusion=round((1.0-0.45*(1.0-ambient.y))*16.0)/16.0;light*=occlusion;}
+    occlusion*=contact;
     if(c.effects.z==0.0) light*=clamp(1.0-vDistance/3200.0,0.35,1.0);
     else light=1.0;
     return SectorLit(light,shownLight,sunShare,skyShare,occlusion,baked,direction,bounce);

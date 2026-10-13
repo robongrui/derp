@@ -82,6 +82,7 @@ struct Settings {
     int dimLitRooms=1; // Rooms the baked lamps and windows light well lose part of their flat sector light.
     float unlitDarkening=0.25f; // With dimLitRooms: the least share of flat light any indoor room loses (0-0.5).
     int bounce=1; // Light bounced from sunlit and lit surfaces, baked at level load.
+    float bounceTint=3; // With bounce: how strongly bounced lamp light colors the sector light around it (0-4).
     int caustics=1; // Rippling light from liquids on nearby walls.
     // Experimental effects, each separately switchable.
     int blood=1; // Splats on floors and walls from hitscan hits; pools under corpses.
@@ -113,6 +114,7 @@ struct Settings {
     int sunShafts=1; // Soft sunbeams slanting down through ceiling holes and windows, with the dust motes in them.
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
     int glossyScreens=1; // Monitor glass found in computer textures bulges, refracts the screen behind it and catches light.
+    int windowGlass=1; // Windows found in the map get glass that reflects and shatters when shot through.
     int weaponLighting=1; // The weapon's painted sheen and light come out at load; lights around the player relight it.
     // Sound, though graphics.cfg keeps it: the mixer is told in applySettings.
     int roomAcoustics=1; // Echoes and a reverb tail measured from the room around the player.
@@ -153,6 +155,8 @@ extern std::vector<Vertex> mistVertices,particleVertices,heatVertices;
 extern std::vector<Vertex> shaftVertices;
 // Sky ceilings and sky walls, drawn into depth with the sky shader.
 extern std::vector<Vertex> skyVertices;
+// Window panes (scene3d/windows.cpp), blended over the finished world by glass.frag.
+extern std::vector<Vertex> glassVertices;
 extern GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 // Bake-only lights: where static light comes from, per wall atlas texel and
 // floor/ceiling cell (see bakeLights).

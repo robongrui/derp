@@ -40,5 +40,5 @@ void main() {
     vec2 uv=vWorld.xy/160.0+vec2(c.fog.w*0.009,c.fog.w*0.005)+vUV;
     float noise=textureLod(cloud,uv,0.0).r;
     float alpha=vLight*(0.25+noise*0.75)*soft;
-    outColor=vec4(mix(vec3(0.045,0.055,0.065),vTint,transmission)*c.fx.x,alpha);
+    outColor=vec4(mix(fogHaze(c.fx.yzw),vTint,transmission)*c.fx.x,alpha);
 }

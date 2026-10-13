@@ -87,6 +87,7 @@ void wallImpact(line_t *line,int side,fixed_t fx,fixed_t fy,fixed_t fz) {
 }
 void barrelBlast(const mobj_t &thing,float x,float y,float z) {
     dropOldLevelImpacts();
+    glassBlast(x,y,z+24,128);
     float now=gameSeconds();
     if(scorches.size()>=48)scorches.erase(scorches.begin());
     scorches.push_back({x,y,now,randomRange(60,76),int(thing.subsector->sector-sectors)});

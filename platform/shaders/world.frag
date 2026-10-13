@@ -142,12 +142,14 @@ void main() {
     // A sector's light level stands for the lamps the mapper lit it with, so
     // where static light falls, that light takes the lamps' color by their
     // share: grey under a red lamp turns red, white lamps change nothing, and
-    // the tint fades out with the lamps' reach across sector edges. Sprites
-    // and the weapon bring theirs from the CPU (lampTint in baked_lighting.h).
+    // the tint fades out with the lamps' reach across sector edges. Bounce
+    // light counts too (c.bake.w weights it), so corners the lamps reach only
+    // by bounce take their color, not the flat level's grey. Sprites and the
+    // weapon bring theirs from the CPU (lampTint in baked_lighting.h).
     vec3 lampTint=unpackUnorm4x8(vLampTint).rgb;
     if(mapped&&c.bake.x>0.0&&c.effects.z==0.0) {
-        vec4 baked=lit.baked;float peak=max(baked.r,max(baked.g,baked.b));
-        if(peak>0.0) lampTint=mix(vec3(1),baked.rgb/peak,peak/(peak+lit.shown));
+        vec3 colored=lit.baked.rgb+lit.bounce*c.bake.y*c.bake.w;float peak=max(colored.r,max(colored.g,colored.b));
+        if(peak>0.0) lampTint=mix(vec3(1),colored/peak,peak/(peak+lit.shown));
     }
     vec3 illumination=vec3(light)*lampTint*mix(vec3(1),c.sun.rgb,lit.sunShare)*mix(vec3(1),c.fx.yzw,lit.skyShare),specular=vec3(0);
     if(c.effects.z==0.0) {

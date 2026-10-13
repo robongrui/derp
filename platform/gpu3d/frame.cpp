@@ -129,6 +129,12 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     SDL_BindGPUGraphicsPipeline(pass,decalPipeline);
     for(const auto &batch:decalBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
     SDL_BindGPUGraphicsPipeline(pass,particlePipeline);drawVertices(pass,particleVertices);
+    // Window glass over everything behind it, shards included; it writes no depth.
+    if(!glassVertices.empty()) {
+        SDL_BindGPUGraphicsPipeline(pass,glassPipeline);
+        SDL_GPUTextureSamplerBinding skyImage[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp}};
+        SDL_BindGPUFragmentSamplers(pass,0,skyImage,2);bindLightBlockers(pass);drawVertices(pass,glassVertices);
+    }
     // Hot air marks the color target's alpha for the shimmer in present.
     if(!heatVertices.empty()) {SDL_BindGPUGraphicsPipeline(pass,heatPipeline);drawVertices(pass,heatVertices);}
 }

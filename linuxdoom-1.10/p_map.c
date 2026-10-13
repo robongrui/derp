@@ -999,6 +999,10 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	}
 
 	// shot continues
+	if (R_ShotPassed)
+	    R_ShotPassed (li, trace.x + FixedMul (trace.dx, in->frac),
+			  trace.y + FixedMul (trace.dy, in->frac),
+			  shootz + FixedMul (aimslope, dist), trace.dx, trace.dy);
 	if (la_freeaim)
 	    la_sector = P_PointOnLineSide (trace.x, trace.y, li)
 		? li->frontsector : li->backsector;

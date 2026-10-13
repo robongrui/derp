@@ -15,6 +15,13 @@ struct LightBlocker { vec4 line,opening; };
 #define FLASH_BLOCK { uint flashCount,flashReserved0,flashReserved1,flashReserved2; Flash lights[63]; }
 // count, then four light indices, then padding (see doom3d::FogLights).
 #define FOG_BLOCK { uvec4 fogA,fogB; }
+// Fog haze: the cool grey under a neutral sky, leaning toward the sky's
+// color as it saturates (Inferno's red). skyTint is paled halfway to white.
+vec3 fogHaze(vec3 skyTint) {
+    vec3 hue=clamp(skyTint*2.0-1.0,0.0,1.0);
+    float saturation=max(hue.r,max(hue.g,hue.b))-min(hue.r,min(hue.g,hue.b));
+    return mix(vec3(0.045,0.055,0.065),0.07*mix(vec3(1),hue,0.65),saturation);
+}
 
 #ifdef VERTEX
 #define VARYING out

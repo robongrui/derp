@@ -124,7 +124,7 @@ vec4 fogAlong(vec3 end) {
     vec3 ray=(end-c.eye.xyz)/distance;
     float transmission=exp(-heightFogTau(c.eye.z,end.z,distance,c.fog.x,c.fog.y,c.fog.z));
     distance=min(distance,2000.0); // Bound only the approximate light-glow work.
-    vec3 glow=vec3(0.045,0.055,0.065)*(1.0-transmission);
+    vec3 glow=fogHaze(c.fx.yzw)*(1.0-transmission);
     for(uint n=0u;n<fogA.x;++n) {
         uint i=fogLight(n);
         vec3 offset=lights[i].position.xyz-c.eye.xyz;

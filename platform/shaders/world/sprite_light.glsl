@@ -32,6 +32,11 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
             specular+=wetColor*tint*statics.w*highlight*0.8;
         }
     }
+    // Static lights' shaping, kept apart: it may take back at most what the
+    // baked tint brought (as in the bake-only shaping above), never the sector
+    // light. Without the bound a strong light from below (a glowing pool)
+    // left a sprite over it black while its dynamic copy was selected.
+    vec3 tint=pulse,shaped=vec3(0);
     while(any(notEqual(mask,uvec2(0)))) {
         uint word=mask.x!=0u?0u:1u;
         uint i=word*32u+uint(findLSB(mask[word]));
@@ -46,15 +51,22 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
         float facing=saturate(dot(n,toLight));
         // Backlit edges: silhouette normals that face the light glow.
         float rim=pow(1.0-saturate(dot(n,view)),2.0)*facing*saturate(0.35-dot(toLight,view));
+        // Broad lights (glowing surfaces, low directionality in color.w)
+        // shade the silhouette less than point lights (0.75).
+        float shape=mix(1.0,0.4+0.6*facing,saturate(lights[i].color.w/0.75))+1.6*rim;
         // A static light's flat share already arrives as baked tint;
         // this keeps only its shaping across the silhouette.
         float bakedShare=c.bake.x>0.0?lights[i].baked:0.0;
         if(classicBeam(i)) beamLight+=lights[i].color.rgb*beamSteps(amount)*(0.4+0.6*facing);
-        else pulse+=lights[i].color.rgb*amount*(0.4+0.6*facing+1.6*rim-bakedShare);
+        else {
+            pulse+=lights[i].color.rgb*amount*shape*(1.0-bakedShare);
+            shaped+=lights[i].color.rgb*amount*(shape-1.0)*bakedShare;
+        }
         if(wetSprite) {
             float highlight=pow(saturate(dot(n,normalize(toLight+view))),24.0);
             highlight=highlight>0.5?1.0:highlight>0.2?0.5:0.0;
             specular+=wetColor*lights[i].color.rgb*amount*highlight*0.8;
         }
     }
+    pulse+=max(shaped,-0.6*tint);
 }

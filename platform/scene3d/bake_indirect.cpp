@@ -17,7 +17,7 @@ int bounceInputs() {
 // Bounce light: each sample averages what 16 cosine-weighted rays hit,
 // albedo (the surface texture's average color) times its sun and baked
 // light. Samples are taken every 16 units and spread bilinearly over the
-// cells between them within a sector or wall strip; values step by 1/32.
+// cells between them within a sector or wall strip.
 void bakeBounce() {
     finishRelight();
     bounceKey=bounceInputs();
@@ -87,8 +87,10 @@ void bakeBounce() {
             for(int c=0;c<3;++c)out[c]+=hitLight[c]/16;
         }
     };
+    // Unrounded (8 bits at half scale): bounce also colors the sector light
+    // (lampTint), where 1/32 steps would band.
     auto encode=[](const float value[3],uint8_t *out) {
-        for(int c=0;c<3;++c)out[c]=(uint8_t)std::min(255L,std::lround(std::round(value[c]*32)/32*0.5f*255));
+        for(int c=0;c<3;++c)out[c]=(uint8_t)std::min(255L,std::lround(value[c]*0.5f*255));
     };
     int step=std::max(1,(int)std::lround(16/mapCell));
     // Floors and ceilings: samples at block centers, then each cell blends the

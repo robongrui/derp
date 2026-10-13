@@ -51,7 +51,7 @@ extern SDL_GPUSampleCount sampleCount;
 extern SDL_GPUGraphicsPipeline *opaquePipeline,*skyPipeline,*skySurfacePipeline,*reflectSkySurfacePipeline,*worldPipeline,*shadowPipeline,*decalPipeline,*particlePipeline,*heatPipeline,
     *weaponPipeline,*hudPipeline,*solidPipeline,*mistPipeline,*shaftPipeline,*overlayWeaponPipeline,*overlayHudPipeline,*overlaySolidPipeline,
     *reflectOpaquePipeline,*reflectSkyPipeline,*reflectWorldPipeline,*emissionPipeline,*blurPipeline,*presentPipeline,*depthPipeline,*prepassPipeline,*coveragePipeline,*cutoutPipeline,
-    *settingsPipeline;
+    *settingsPipeline,*glassPipeline;
 // Render targets at the render resolution (width x height); bloom at half.
 extern SDL_GPUTexture *multisampleTexture,*colorTexture,*depthTexture,*sceneDepth,*emissionTexture,*emissionDepth,*bloomScratch,*bloomTexture;
 extern int width,height;
@@ -69,6 +69,8 @@ void releaseFrameUploads();
 void drawVertices(SDL_GPURenderPass *pass,const std::vector<Vertex> &vertices);
 void setView(SDL_GPURenderPass *pass,float x,float y,float w,float h,const SDL_Rect *scissor=nullptr);
 void bindWorld(SDL_GPURenderPass *pass,SDL_GPUTexture *reflection);
+// Just the lights' blocker buffer, for passes that only light highlights (glass.frag).
+void bindLightBlockers(SDL_GPURenderPass *pass);
 void bindSurface(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,int key,Uint32 blendSlot,bool world=true);
 void bindImage(SDL_GPURenderPass *pass,const GpuTextureRef &texture,SDL_GPUSampler *filter);
 void pushWorldUniforms(SDL_GPUCommandBuffer *command,const Uniforms &view);

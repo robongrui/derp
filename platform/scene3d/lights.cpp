@@ -93,6 +93,20 @@ static float barrelLight(const mobj_t &thing) {
     if(state==S_BEXP5)strength*=std::clamp(thing.tics/10.0f,0.0f,1.0f);
     return strength;
 }
+// Teleport fog (and the item respawn fog): a burst that peaks as it appears
+// and fades over the rest of its frames, timed from the state chain so
+// DEHACKED changes keep it in step. 0 for every other thing.
+static float teleportLight(const mobj_t &thing) {
+    if((thing.type!=MT_TFOG&&thing.type!=MT_IFOG)||!thing.state)return 0;
+    int total=0,elapsed=-1,current=int(thing.state-states);
+    for(int state=thing.info->spawnstate,n=0;state!=S_NULL&&n<32;state=states[state].nextstate,++n) {
+        if(state==current)elapsed=total+std::max(0,(int)(states[state].tics-thing.tics));
+        total+=std::max(0,(int)states[state].tics);
+    }
+    if(elapsed<0||total<=0)return 0;
+    float t=elapsed/(float)total;
+    return 1.8f*std::clamp((1-t)/0.7f,0.0f,1.0f);
+}
 // Decoration lights: things whose spawn frame is fullbright by design
 // (torches, candles, lamps, burning barrels), recognized from thing data
 // rather than names. Monsters, shots, pickups and short-lived fogs and puffs
@@ -166,7 +180,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
     // Live WAD missile objects supply continuous light, including their bright
     // impact frames. Keep the nearest eight so rapid fire has a bounded cost.
     struct Candidate {mobj_t *thing;float distance;};
-    std::vector<Candidate> projectiles,barrels,decorations;
+    std::vector<Candidate> projectiles,barrels,decorations,teleports;
     for(auto &entry:burstBarrels)entry.second=false;
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
         if(barrelLight(*thing)>0) {
@@ -176,6 +190,12 @@ void collectFlashes(float fraction,const Uniforms &camera) {
             auto seen=burstBarrels.find(thing);
             if(seen!=burstBarrels.end())seen->second=true;
             else if(thing->state-states>=S_BEXP4) {burstBarrels[thing]=true;barrelBlast(*thing,x,y,z);}
+            continue;
+        }
+        if(teleportLight(*thing)>0) {
+            float dx=units(thing->x)-camera.eye[0],dy=units(thing->y)-camera.eye[1];
+            float distance=std::hypot(dx,dy);
+            if(distance<1400)teleports.push_back({thing,distance});
             continue;
         }
         if(decorationLight(*thing)) {
@@ -222,6 +242,12 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         if(thing.type==MT_BFG) {radius=448;strength=2.4f;}
         else if(thing.type==MT_ROCKET) {radius=288;strength=1.5f;}
         appendLight(x,y,z+units(thing.height)*0.5f,radius,strength,frameGlow(thing.sprite,thing.frame),&thing,0.75f);
+    }
+    // Teleport flashes share the projectiles' light kind; the nearest four.
+    std::sort(teleports.begin(),teleports.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
+    for(size_t n=0;n<std::min(size_t(4),teleports.size());++n) {
+        const mobj_t &thing=*teleports[n].thing;
+        appendLight(units(thing.x),units(thing.y),units(thing.z)+28,320,teleportLight(thing),frameGlow(thing.sprite,thing.frame),&thing,0.75f);
     }
     lightKind=I_RENDER3D_LIGHT_DOOR;
     doorSpill(camera);

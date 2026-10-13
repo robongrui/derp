@@ -52,6 +52,7 @@ static void beforeTic() {
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
         oldThings.emplace(thing,std::array<float,3>{units(thing->x),units(thing->y),units(thing->z)});
     watchSplashes();
+    watchGlass();
 }
 static void acceleratedView(player_t *player) {
     (void)player; worldPending=true; v_overlayactive=true;
@@ -68,6 +69,7 @@ void applySettings() {
     R_WallImpact=settings.accelerated?wallImpact:nullptr;
     R_BloodHit=settings.accelerated?bloodHit:nullptr;
     R_PlaneImpact=settings.accelerated?planeImpact:nullptr;
+    R_ShotPassed=settings.accelerated?glassShot:nullptr;
     freeaim=settings.accelerated&&settings.look;
     if(!settings.accelerated) clearFlashPulses();
     r_uncapped=settings.accelerated;
@@ -93,13 +95,13 @@ void sceneInit(SDL_Window *window) {
 }
 void sceneShutdown() {
     stopRelight();
-    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;r_uncapped=0;v_overlayactive=0;
+    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     batches.clear();shadowBatches.clear();decalBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
     imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();exposureShutdown();
     bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
-    impactsShutdown();bloodShutdown();splashesShutdown();
+    impactsShutdown();bloodShutdown();splashesShutdown();glassShutdown();
 }
 // A new level, or the first after shutdown: each part forgets the last
 // level, then the map and what is built from it at level load.
@@ -246,8 +248,12 @@ FrameView prepareFrame(int w,int h) {
         if((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)bakeAmbient();
         if(settings.lightFlow&&flowKey!=flowInputs())bakeFlow();
         camera.bake[1]=settings.bounce&&bounceKey>=0?bounceStrength:0;
+        camera.bake[3]=camera.bake[1]>0?settings.bounceTint:0;
         bool ambient=ambientKey==bakeThingsKey;
         camera.fx2[1]=settings.skyLight&&ambient?skyLevel:0;
+        // The fog haze takes the sky's color too, so it follows the sky without the sky-light bake.
+        static int tintedSky=-1;
+        if(skytexture!=tintedSky){skyTint=skyColor();tintedSky=skytexture;}
         for(int c=0;c<3;++c)camera.fx[1+c]=skyTint[c];
         buildMist(camera);
         buildShafts(camera);

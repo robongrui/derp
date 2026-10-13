@@ -78,7 +78,11 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("weapon_lighting","Relit weapon",&s.weaponLighting,
                     "The sheen and light painted into the weapon artwork are taken out, and the lights around you relight it: "
                     "their color, darker rounded edges, glowing rims against lights behind it, and highlights that slide over "
-                    "the metal as you look around and the weapon bobs.")}},
+                    "the metal as you look around and the weapon bobs."),
+                check("window_glass","Window glass",&s.windowGlass,
+                    "Windows found in the map's geometry get a pane of glass: grimy at the edges, streaked with highlights that "
+                    "slide as you move, reflecting the sky from outside. The first shot, projectile or blast through it shatters "
+                    "it into shards; shots and sight pass exactly as in vanilla.")}},
             {"Glow",{
                 check("emissive","Emissive textures",&s.emissive,
                     "Lamp strips, computer displays, lava and nukage glow with soft bloom and colored light on nearby surfaces."),
@@ -108,6 +112,10 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("sun_shadows","Sun shadows",&s.sun,"Shadows and sunlit patches baked at level load from the sky texture and map geometry."),
                 check("bounce_light","Bounce light",&s.bounce,
                     "Sunlit and lamp-lit surfaces tint and lift what faces them, including ceilings; baked at level load."),
+                slider("bounce_tint","Room color from bounce",&s.bounceTint,0,4,0.5,
+                    "Light from colored lamps, bounced around the room, tints its even light level too, so corners "
+                    "the lamps never reach directly still take their color.",
+                    [](const Settings &d){return d.bakedLights!=0&&d.bounce!=0;}),
                 check("sky_light","Sky light",&s.skyLight,
                     "A cool fill from the visible sky, tinted by the sky texture: windows glow faintly, overhangs and alcoves outdoors stay darker."),
                 check("baked_occlusion","Ambient occlusion",&s.bakedAO,"Corners, ledges, stair risers and alcoves darken in light-level steps."),

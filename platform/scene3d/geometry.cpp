@@ -403,6 +403,7 @@ void geometry(const Uniforms &camera,float fraction) {
     wallGeometry(camera,skyTop);
     collectSurfaceLights();
     buildImpacts(camera);
+    buildGlass(camera);
     std::vector<Caster> casters;
     const Flash *beam=settings.flashlightShadows&&flashlightOn&&camera.effects[2]==0&&flashes.count&&flashes.lights[0].direction[3]>0?&flashes.lights[0]:nullptr;
     uint64_t spritesStart=profileStart();

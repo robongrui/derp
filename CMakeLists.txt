@@ -167,6 +167,7 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/surface_lights.cpp
         platform/scene3d/thing_light.cpp
         platform/scene3d/weapon.cpp
+        platform/scene3d/windows.cpp
     )
     # The SDL_gpu backend that draws it; gpu3d/internal.h holds what its files share.
     set(DOOM_GPU3D_SOURCES

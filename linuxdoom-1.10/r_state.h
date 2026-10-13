@@ -112,6 +112,9 @@ extern void (*R_BloodHit)(mobj_t *target, fixed_t x, fixed_t y, fixed_t z, fixed
 // Renderer-only hitscan floor or ceiling impact (la_freeaim shots); true when
 // the renderer shows it as a splash, so no puff is spawned.
 extern boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fixed_t y, fixed_t z);
+// Renderer-only: a hitscan shot passes through a two-sided line's opening at
+// x,y,z, travelling along dx,dy (window glass breaks).
+extern void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
 extern boolean r_uncapped;
 extern unsigned r_levelserial;
 extern fixed_t		viewx;

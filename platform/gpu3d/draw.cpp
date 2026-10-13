@@ -27,7 +27,7 @@ void uploadFrame(SDL_GPUCommandBuffer *command,const std::vector<const std::vect
         bytes=(bytes+(Uint32)(vertices.size()*sizeof(Vertex))+255)&~Uint32(255);
     };
     for(const auto *groups:{&batches,&shadowBatches,&decalBatches})for(const auto &batch:*groups)place(batch.second);
-    place(mistVertices);place(shaftVertices);place(particleVertices);place(heatVertices);place(skyVertices);
+    place(mistVertices);place(shaftVertices);place(particleVertices);place(heatVertices);place(skyVertices);place(glassVertices);
     for(const auto *vertices:transient)place(*vertices);
     Uint32 blockerBytes=(Uint32)(lightWords.size()*sizeof(lightWords[0]));
     Uint32 sectorBytes=(Uint32)(sectors.size()*sizeof(sectors[0]));
@@ -105,6 +105,7 @@ void bindWorld(SDL_GPURenderPass *pass,SDL_GPUTexture *reflection) {
     SDL_GPUBuffer *storage[]={blockerArena.buffer,sectorArena.buffer};
     SDL_BindGPUFragmentStorageBuffers(pass,0,storage,2);
 }
+void bindLightBlockers(SDL_GPURenderPass *pass) {SDL_BindGPUFragmentStorageBuffers(pass,0,&blockerArena.buffer,1);}
 // Binds a batch texture with its next animation frame and crossfade amount;
 // world passes also take its screen glass frame and bump relief.
 void bindSurface(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,int key,Uint32 blendSlot,bool world) {

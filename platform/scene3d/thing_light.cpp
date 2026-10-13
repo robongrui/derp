@@ -132,8 +132,10 @@ std::array<float,3> bakedLightAt(float x,float y,float z,const sector_t *sector,
         int cx=std::clamp((int)std::floor((x-mapOrigin[0])/mapCell),0,mapWidth-1);
         int cy=std::clamp((int)std::floor((y-mapOrigin[1])/mapCell),0,mapHeight-1);
         size_t cell=(size_t)cy*mapWidth+cx;
-        for(int c=0;c<3;++c)
-            result[c]+=(flatCell(floorBounce,cell)[c]+flatCell(ceilingBounce,cell)[c])/255.0f*bounceStrength;
+        for(int c=0;c<3;++c) {
+            statics.bounce[c]=(flatCell(floorBounce,cell)[c]+flatCell(ceilingBounce,cell)[c])/255.0f*bounceStrength;
+            result[c]+=statics.bounce[c];
+        }
     }
     if(sample)*sample=statics;
     return result;
@@ -141,7 +143,7 @@ std::array<float,3> bakedLightAt(float x,float y,float z,const sector_t *sector,
 // The lamp color of the sector light at a sprite lit at that level (lampTint),
 // packed for Vertex::lampTint; white without static light.
 unsigned packedLampTint(const StaticSample &statics,float light) {
-    float tint[3];lampTint(statics.color.data(),light,tint);
+    float tint[3];lampTint(statics.color.data(),statics.bounce.data(),settings.bounce?settings.bounceTint:0,light,tint);
     unsigned packed=0xFF000000u;
     for(int c=0;c<3;++c)packed|=(unsigned)std::lround(std::clamp(tint[c],0.0f,1.0f)*255)<<(8*c);
     return packed;
