@@ -82,7 +82,9 @@ static void findProbes() {
 // A window is a thin frame sector between two others, with a sill and a
 // lintel: its floor above both neighbors and its ceiling below them (or
 // under the sky beside it), too high a step to walk in or behind an
-// impassable line, at least 32 units wide and tall. Sectors that move or
+// impassable line, at least 32 units wide and tall and at most 96 deep (deep
+// recesses like E1M2's side windows, sectors 50 and 57, are 72; deeper ones
+// are alcoves). Sectors that move or
 // that line specials act on are left alone: a lift is not a window. The
 // glass goes on the side facing the sky, or else the larger room.
 static void findWindows() {
@@ -119,7 +121,7 @@ static void findWindows() {
         if(!window||sides.size()<2)continue;
         auto box=sectorBox(frame);
         float thin=std::min(box[2]-box[0],box[3]-box[1]),wide=std::max(box[2]-box[0],box[3]-box[1]);
-        if(thin>64||wide<32)continue;
+        if(thin>96||wide<32)continue;
         auto rank=[&](int o){return std::make_pair(skySector(&sectors[o]),area[o]);};
         int outer=*std::max_element(sides.begin(),sides.end(),[&](int a,int b){return rank(a)<rank(b);}),inner=-1;
         for(int o:sides)if(o!=outer&&(inner<0||area[o]>area[inner]))inner=o;
