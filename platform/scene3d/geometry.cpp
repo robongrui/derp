@@ -287,7 +287,10 @@ static float sinkInLiquid(const mobj_t *thing,int i,const Image &image,float x,f
     return std::min(8.0f,image.height*0.35f);
 }
 // The glass mirror's view (glassMirrorActive) for the sprites drawn into it:
-// the mirrored eye and the mirrored camera's right.
+// the mirrored eye, and the right of an ordinary camera there. The mirror
+// pass's own axes are reflected, which already flips its whole image left
+// to right, so sprites are laid out as that unflipped camera sees them, the
+// reflected right reversed; otherwise they turn the wrong way in the glass.
 struct MirrorView { float eye[2],right[2]; };
 // One thing in sector i: its shadows, light, liquid footclip and sprite
 // quad. Things the flashlight beam can outline join casters. With mirror,
@@ -428,7 +431,7 @@ void geometry(const Uniforms &camera,float fraction) {
     if(glassMirrorActive&&camera.effects[2]==0) {
         const float *n=glassMirrorPlane;
         float side=n[0]*camera.eye[0]+n[1]*camera.eye[1]-n[3],along=n[0]*camera.right[0]+n[1]*camera.right[1];
-        mirror={{camera.eye[0]-2*side*n[0],camera.eye[1]-2*side*n[1]},{camera.right[0]-2*along*n[0],camera.right[1]-2*along*n[1]}};
+        mirror={{camera.eye[0]-2*side*n[0],camera.eye[1]-2*side*n[1]},{2*along*n[0]-camera.right[0],2*along*n[1]-camera.right[1]}};
     }
     bool mirrored=glassMirrorActive&&camera.effects[2]==0;
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
