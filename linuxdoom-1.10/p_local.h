@@ -90,6 +90,7 @@ void	P_PlayerThink (player_t* player);
 boolean P_UseResponsiveMovement (void);
 boolean P_DebugAllowed (void);
 boolean P_Flying (void);
+boolean P_Unseen (mobj_t* mo);
 void P_SetCheat (player_t* player, boolean* setting, boolean on);
 void P_SetTour (player_t* player, boolean on);
 // View pitch in radians, written by the 3D renderer; flight follows it.

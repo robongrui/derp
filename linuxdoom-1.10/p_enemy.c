@@ -160,6 +160,8 @@ P_NoiseAlert
 ( mobj_t*	target,
   mobj_t*	emmiter )
 {
+    if (P_Unseen (target))
+	return;
     soundtarget = target;
     validcount++;
     P_RecursiveSound (emmiter->subsector->sector, 0);
@@ -527,6 +529,9 @@ P_LookForPlayers
 	if (player->health <= 0)
 	    continue;		// dead
 
+	if (P_Unseen (player->mo))
+	    continue;
+
 	if (!P_CheckSight (actor, player->mo))
 	    continue;		// out of sight
 			
@@ -607,7 +612,8 @@ void A_Look (mobj_t* actor)
     targ = actor->subsector->sector->soundtarget;
 
     if (targ
-	&& (targ->flags & MF_SHOOTABLE) )
+	&& (targ->flags & MF_SHOOTABLE)
+	&& !P_Unseen (targ) )
     {
 	actor->target = targ;
 
@@ -698,6 +704,10 @@ void A_Chase (mobj_t*	actor)
 	else if (delta < 0)
 	    actor->angle += ANG90/2;
     }
+
+    // forget a player who turned on "no target"
+    if (P_Unseen (actor->target))
+	actor->target = NULL;
 
     if (!actor->target
 	|| !(actor->target->flags&MF_SHOOTABLE))

@@ -99,6 +99,7 @@ boolean         debugfly;
 boolean         debugnoclip;
 boolean         debuggod;
 boolean         debugnomonsters;
+boolean         debugnotarget;
 boolean         respawnparm;	// checkparm of -respawn
 boolean         fastparm;	// checkparm of -fast
 boolean         classicmovement; // original player acceleration and friction

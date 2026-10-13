@@ -52,6 +52,7 @@ extern  boolean	debugfly;
 extern  boolean	debugnoclip;
 extern  boolean	debuggod;
 extern  boolean	debugnomonsters;
+extern  boolean	debugnotarget;
 extern  boolean	respawnparm;	// checkparm of -respawn
 extern  boolean	fastparm;	// checkparm of -fast
 extern  boolean classicmovement;

@@ -81,6 +81,12 @@ boolean P_Flying (void)
     return debugfly && P_DebugAllowed ();
 }
 
+// "No target": monsters neither see nor hear the player.
+boolean P_Unseen (mobj_t* mo)
+{
+    return mo && mo->player && debugnotarget && P_DebugAllowed ();
+}
+
 void P_SetCheat (player_t* player, boolean* setting, boolean on)
 {
     int		bit = setting == &debugnoclip ? CF_NOCLIP

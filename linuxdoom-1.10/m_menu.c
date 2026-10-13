@@ -457,6 +457,7 @@ menu_t  SoundDef =
 void M_CheatFly(int choice);
 void M_CheatNoclip(int choice);
 void M_CheatGod(int choice);
+void M_CheatNoTarget(int choice);
 void M_CheatMonsters(int choice);
 void M_CheatGive(int choice);
 void M_CheatPick(int choice);
@@ -469,6 +470,7 @@ enum
     dbg_fly,
     dbg_noclip,
     dbg_god,
+    dbg_notarget,
     dbg_monsters,
     dbg_give,
     dbg_pick,
@@ -482,6 +484,7 @@ menuitem_t CheatMenu[]=
     {2,"",M_CheatFly,'f'},
     {2,"",M_CheatNoclip,'n'},
     {2,"",M_CheatGod,'g'},
+    {2,"",M_CheatNoTarget,'t'},
     {2,"",M_CheatMonsters,'m'},
     {1,"",M_CheatGive,'a'},
     {2,"",M_CheatPick,'p'},
@@ -495,7 +498,7 @@ menu_t  CheatDef =
     NULL,
     CheatMenu,
     M_DrawCheats,
-    72,36,
+    72,28,
     0
 };
 
@@ -1801,11 +1804,12 @@ void M_DrawCheats(void)
 	debugfly,
 	(player->cheats & CF_NOCLIP) != 0,
 	(player->cheats & CF_GODMODE) != 0,
+	debugnotarget,
 	debugnomonsters
     };
     char*	labels[dbg_end] =
     {
-	"FLY", "NO CLIPPING", "GOD MODE", "NO MONSTERS",
+	"FLY", "NO CLIPPING", "GOD MODE", "NO TARGET", "NO MONSTERS",
 	"GIVE WEAPONS AND KEYS", "MAP", "WARP TO MAP", "RESTART MAP"
     };
     char	mapname[16];
@@ -1844,6 +1848,11 @@ void M_CheatGod(int choice)
 {
     player_t*	player = &players[consoleplayer];
     P_SetCheat(player, &debuggod, !(player->cheats & CF_GODMODE));
+}
+
+void M_CheatNoTarget(int choice)
+{
+    debugnotarget = !debugnotarget;
 }
 
 void M_CheatMonsters(int choice)
