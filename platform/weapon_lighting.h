@@ -128,7 +128,7 @@ inline doom_weapon_maps doom_weapon_delight(int w, int h, const unsigned char *p
         maps.pixels[i * 2] = (unsigned char)cached;
     }
 
-    /* Normals: a rounded profile from the silhouette (as spriteNormals; the
+    /* Normals: a rounded rim from the silhouette (the
        frame's bottom edge is cut off by the screen, not an outline), tilted by
        the painted shading read as height, bright standing proud (blurred,
        so the artwork's dithering does not turn into grit). */

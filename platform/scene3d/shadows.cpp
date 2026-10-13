@@ -54,7 +54,7 @@ void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
     }
 }
 
-// Flashlight silhouettes: the beam's light sits low and right of the eye
+// Flashlight silhouettes: the beam's light sits right of the eye
 // (collectFlashes), so a thing it catches throws its sprite's outline onto
 // the wall behind it, enlarged with distance. The
 // outline is projected through a grid of cells clipped to the wall's span

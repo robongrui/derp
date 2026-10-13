@@ -260,7 +260,8 @@ static float dynamicThingLight(const mobj_t *thing,float x,float y,float z,std::
             float dynamic=contribution*(1-(bakedLightsActive?flashes.lights[n].baked:0));
             for(int c=0;c<3;++c) pulse[c]+=dynamic*flashes.lights[n].color[c];
         }
-        if(lightSources[n]!=thing&&flashes.lights[n].position[2]>z+8&&contribution>strongest) {
+        bool bounce=lightKinds[n]==I_RENDER3D_LIGHT_FLASHLIGHT&&flashes.lights[n].direction[3]<=0;
+        if(!bounce&&lightSources[n]!=thing&&flashes.lights[n].position[2]>z+8&&contribution>strongest) {
             strongest=contribution;const Flash &f=flashes.lights[n];
             shadowLight={f.position[0],f.position[1],f.position[2],contribution};
         }
@@ -386,7 +387,7 @@ static void playerShadow(const Uniforms &camera,float fraction) {
     ShadowLight light={};float strongest=0.025f;bool found=false;
     for(unsigned n=0;n<flashes.count;++n) {
         const Flash &f=flashes.lights[n];
-        if(fogOnly[n]||lightSources[n]==self||f.direction[3]>0||f.position[2]<=z+8)continue;
+        if(fogOnly[n]||lightSources[n]==self||lightKinds[n]==I_RENDER3D_LIGHT_FLASHLIGHT||f.position[2]<=z+8)continue;
         float amount=flashAt(x,y,z+28,f);
         if(amount>strongest) {strongest=amount;light={f.position[0],f.position[1],f.position[2],amount};found=true;}
     }

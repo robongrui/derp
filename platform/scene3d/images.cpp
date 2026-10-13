@@ -1,4 +1,4 @@
-/* Textures from the WAD: upload with palette mips, sprite normals, bump
+/* Textures from the WAD: upload with palette mips (sprites with their normals), bump
    relief, emissive masks and monitor glass; average and brightest colors. */
 #include "internal.h"
 
@@ -26,32 +26,6 @@ void buildCloudTexture() {
     }
     cloudTexture=gpuCreateTexture(GpuFormat::R8,64,64,pixels.data(),64);
     if(!cloudTexture)I_Error((char*)"Could not allocate cloud texture");
-}
-// Puffy sprite normals: a chamfer distance field over the alpha mask gives a
-// rounded height profile; its gradient tilts the normal toward the silhouette.
-// Packed as unsigned x/y (texture down) for the sprite's B/A channels.
-static std::vector<byte> spriteNormals(int w,int h,const byte *pixels) {
-    std::vector<float> distance((size_t)w*h);
-    for(size_t i=0;i<distance.size();++i)distance[i]=pixels[2*i+1]?1e6f:0;
-    auto at=[&](int x,int y){return x<0||y<0||x>=w||y>=h?0.0f:distance[(size_t)y*w+x];};
-    for(int pass=0;pass<2;++pass) {
-        int step=pass?-1:1;
-        for(int y=pass?h-1:0;y>=0&&y<h;y+=step)for(int x=pass?w-1:0;x>=0&&x<w;x+=step) {
-            float &d=distance[(size_t)y*w+x];if(d==0)continue;
-            d=std::min({d,at(x-step,y)+1,at(x,y-step)+1,at(x-step,y-step)+1.4142f,at(x+step,y-step)+1.4142f});
-        }
-    }
-    float radius=std::clamp(std::min(w,h)*0.25f,3.0f,12.0f);
-    auto height=[&](int x,int y){float t=std::min(1.0f,at(x,y)/radius);return std::sqrt(std::max(0.0f,1-(1-t)*(1-t)));};
-    std::vector<byte> normals((size_t)w*h*2,128);
-    for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
-        if(!pixels[((size_t)y*w+x)*2+1])continue;
-        float gx=(height(x+1,y)-height(x-1,y))*0.5f,gy=(height(x,y+1)-height(x,y-1))*0.5f;
-        float nx=-gx*radius,ny=-gy*radius,length=std::sqrt(nx*nx+ny*ny+1);
-        normals[((size_t)y*w+x)*2]=(byte)std::lround((nx/length*0.5f+0.5f)*255);
-        normals[((size_t)y*w+x)*2+1]=(byte)std::lround((ny/length*0.5f+0.5f)*255);
-    }
-    return normals;
 }
 // Palette mip levels for walls and flats, as software Quake built them: each
 // level texel averages the colors it covers (weighted by coverage) and snaps

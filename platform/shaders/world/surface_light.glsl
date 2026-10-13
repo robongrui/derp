@@ -96,7 +96,10 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
         float bakedShare=useBake?lights[i].baked:0.0;
         amount*=mix(1.0,staticKept,bakedShare);
         if(classicBeam(i)) beamLight+=lights[i].color.rgb*beamSteps(amount)*flashFacing(vWorld,bumped,i);
-        else pulse+=lights[i].color.rgb*amount*(flashFacing(vWorld,bumped,i)-bakedShare*flashFacing(vWorld,normal,i));
+        else {
+            vec3 added=lights[i].color.rgb*amount*(flashFacing(vWorld,bumped,i)-bakedShare*flashFacing(vWorld,normal,i));
+            pulse+=added;addedLight+=max(added,vec3(0));
+        }
         if(gloss>0.0) {
             vec3 toLight=normalize(lights[i].position.xyz-vWorld);
             float highlight=pow(saturate(dot(bumped,normalize(toLight+view))),shininess);

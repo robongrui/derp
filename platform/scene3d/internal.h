@@ -119,6 +119,9 @@ std::array<float,3> paletteColor(const std::array<float,3> &color);
 const std::array<float,3> &brightestColor(Image &image);
 std::array<float,3> texelColor(Image &image);
 
+// sprite_normals.cpp
+std::vector<byte> spriteNormals(int w,int h,const byte *pixels);
+
 // map.cpp
 void mapShutdown();
 extern std::vector<std::vector<Point>> floors;
@@ -346,6 +349,7 @@ bool planGlassCaptures(const Uniforms &camera);
 void exposureShutdown();
 void updateExposure(Uniforms &camera);
 void updateFlashlightTint(Uniforms &camera);
+bool flashlightBounce(float position[3],float normal[2],std::array<float,3> &color,float &strength);
 
 // Small helpers and templates shared across files.
 // Adds the time since start to total while profiling.

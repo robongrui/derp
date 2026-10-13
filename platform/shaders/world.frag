@@ -78,6 +78,9 @@ layout(location=0) out vec4 outColor;
 #include "world/mirror.glsl"
 // The classic flashlight's light, gathered apart from pulse (classicBeam).
 vec3 beamLight=vec3(0);
+// What dynamic lights add to walls and flats on top of the static light, for
+// the saturation lift and highlight rolloff.
+vec3 addedLight=vec3(0);
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
@@ -162,7 +165,8 @@ void main() {
         illumination=clamp(illumination+pulse+c.flashlightTint.rgb,vec3(0),vec3(2.2));
         // Like extralight, the classic beam brightens toward a little past
         // the palette's own colors and never beyond that.
-        illumination+=beamLight*max(BEAM_CEILING-illumination,vec3(0));
+        vec3 beam=beamLight*max(BEAM_CEILING-illumination,vec3(0));
+        illumination+=beam;addedLight+=beam;
         if(glassy) {
             // Where the pane curves away from the eye it catches the room's
             // light as a thin sheen, in brightness only, in 1/16 steps.
@@ -186,7 +190,29 @@ void main() {
         if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
     }
     vec3 albedo=color.rgb;
-    color.rgb=color.rgb*illumination+specular;
+    color.rgb=color.rgb*illumination;
+    // Map surfaces only: sprites keep their painted color and the shading
+    // of their silhouette normals (billboardLight) under the beam.
+    if(c.effects.z==0.0&&!sprite&&any(greaterThan(addedLight,vec3(0)))) {
+        // Dynamic light (the flashlight, shots, fireballs) also spills toward
+        // its own color by how saturated the texel is, as the palette's ramps
+        // brighten toward white: by multiplying alone pure dark blue carpet,
+        // a few percent luminance, swallowed the beam.
+        float chroma=max(albedo.r,max(albedo.g,albedo.b))-dot(albedo,vec3(0.299,0.587,0.114));
+        color.rgb+=addedLight*chroma*0.6*(1.0-emission);
+        // What it adds rolls off on bright texels, as an eye or camera keeps
+        // a hotspot from blowing out: a bright wall in the beam no longer
+        // jumps far ahead of the dark floor beside it. Dark texels and the
+        // light without it keep their values.
+        vec3 unlit=albedo*max(illumination-addedLight,vec3(emission));
+        float lit=dot(color.rgb,vec3(0.299,0.587,0.114)),base=dot(unlit,vec3(0.299,0.587,0.114));
+        const float knee=0.45;
+        if(lit>knee&&lit>base+0.001) {
+            float rolled=max(knee+(1.0-knee)*(1.0-exp(-(lit-knee)/(1.0-knee))),base);
+            color.rgb=unlit+(color.rgb-unlit)*((rolled-base)/(lit-base));
+        }
+    }
+    color.rgb+=specular;
     if(mapped&&(bakeFlags&FEATURE_CAUSTICS)!=0u&&(abs(normal.z)<=0.5||(normal.z<-0.5&&(bakeFlags&FEATURE_CEILING_CAUSTICS)!=0u))) color.rgb+=caustics(vWorld,normal,sector,false);
     // FEATURE_CAUSTICS_SPRITES: things in the world (not the weapon or effect sprites)
     // near liquids catch the caustics too, in their own colors so the painted
