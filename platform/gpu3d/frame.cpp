@@ -73,6 +73,7 @@ static SDL_GPUTexture *probeAtlas,*probeDepth;
 static unsigned probeAtlasSerial=~0u;
 // The world drawn again at reduced resolution from the mirrored camera,
 // clipped to the eye's side of plane (unit normal toward the eye, offset).
+// Its sprites: the main view's, or extra in their place.
 static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &mirror,const float plane[4],MirrorTarget &target,
                        const std::map<int,std::vector<Vertex>> *extra=nullptr) {
     int divisor=settings.retroReflections?8:2;
@@ -93,7 +94,7 @@ static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const 
     SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
     pushWorldUniforms(render,mirror);
     SDL_PushGPUVertexUniformData(render,1,plane,4*sizeof(float));
-    drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr);
+    drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr,nullptr,nullptr,!extra);
     if(extra) {
         SDL_BindGPUGraphicsPipeline(pass,reflectWorldPipeline);bindWorld(pass,nullptr);
         for(const auto &batch:*extra) if(!batch.second.empty()) {bindSurface(render,pass,batch.first,3);drawVertices(pass,batch.second);}
@@ -162,7 +163,7 @@ static void captureGlassProbes(SDL_GPUCommandBuffer *render,const Uniforms &came
 // window's upright plane (glassMirrorPlane), so each point of the mirrored
 // view lands where its reflection shows on the pane and glass.frag reads it
 // at its own screen position. water stays 0: nothing in it is a liquid
-// mirror. The player's own sprite (mirrorBatches) joins it here.
+// mirror. Its sprites are its own (mirrorBatches), the player's included.
 static bool drawGlassReflection(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera) {
     if(!worldPending||!glassMirrorActive)return false;
     const float *n=glassMirrorPlane;

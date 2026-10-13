@@ -151,7 +151,8 @@ extern std::vector<LightBlocker> lightBlockers;
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
 extern std::unordered_map<int,Image> images;
 extern std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches;
-// Drawn only in the glass mirror pass: the player's own sprite (playerReflection).
+// The sprites of the glass mirror pass, seen from the mirrored eye, the
+// player's own included (addThing in scene3d/geometry.cpp).
 extern std::map<int,std::vector<Vertex>> mirrorBatches;
 extern std::vector<Vertex> mistVertices,particleVertices,heatVertices;
 // Sunbeam ribbons, drawn additively in the mist pass.
