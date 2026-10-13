@@ -31,8 +31,6 @@ project like this.
 The defaults are how I like to play. Almost everything can be changed in the
 graphics panel with **F4**.
 
-<img width="2560" height="1600" alt="DOOM-195357624916" src="https://github.com/user-attachments/assets/34ea0d19-4032-4cd5-b2a4-29a1defd3687" />
-
 ## At a glance
 
 - **Accelerated 3D renderer:** SDL_gpu, using Metal on macOS and Vulkan on
