@@ -217,10 +217,11 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
                                               {probeAtlas?probeAtlas:paletteTexture,nearestClamp}};
         SDL_BindGPUFragmentSamplers(pass,0,images,4);bindLightBlockers(pass);
         // Where the mirrored view sits on screen (z is 0 without a
-        // reflection), the probe face size, then each probe's point and box.
+        // reflection), the probe face size and the mirror's fade-in, then each
+        // probe's point and box.
         static std::vector<std::array<float,4>> mirror(2+3*maxGlassProbes);
         mirror[0]={view.worldX,view.worldY,glassReflected?1/view.worldW:0,1/view.worldH};
-        mirror[1]={(float)glassProbeSize,0,0,0};
+        mirror[1]={(float)glassProbeSize,glassMirrorFade,0,0};
         for(size_t i=0;i<glassProbes.size();++i) {
             const GlassProbe &p=glassProbes[i];
             mirror[2+3*i]={p.at[0],p.at[1],p.at[2],0};mirror[3+3*i]={p.low[0],p.low[1],p.low[2],0};mirror[4+3*i]={p.high[0],p.high[1],p.high[2],0};

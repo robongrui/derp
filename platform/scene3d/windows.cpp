@@ -8,7 +8,7 @@
 namespace doom3d {
 std::vector<Vertex> glassVertices;
 bool glassMirrorActive=false;
-float glassMirrorPlane[4]={};
+float glassMirrorPlane[4]={},glassMirrorFade=1;
 std::vector<GlassProbe> glassProbes;
 std::vector<int> glassCaptures;
 unsigned glassProbeSerial=0,settingsSerial=0;
@@ -283,33 +283,59 @@ void watchGlass() {
 // face normal, blue 1 on a face out under the sky; statics the pane's seed,
 // top bit set once broken; lightMask[0] 1 on panes in the mirror's plane;
 // lampTint the captured probe on the eye's side plus one (0: none).
-// Glass reflections (settings.glassReflections): the pane that fills the
-// most of the view within 512 units, whole and in front of the camera,
+// Glass reflections (settings.glassReflections): the pane the eye looks at
 // becomes the mirror the world is drawn again through (glassMirrorPlane:
-// its normal toward the eye and offset). Panes in the same plane share it.
+// its normal toward the eye and offset; panes in the same plane share it).
+// That is the pane the view's center ray meets, or else the one whose
+// nearest point to that ray lies closest to it in angle, within 1024 units,
+// whole, facing the eye, in view and not behind a wall. So a window is live
+// already while the eye walks up to it. The mirror only moves to another
+// plane once that one is clearly nearer the center (hysteresis), and
+// glassMirrorFade then brings it in from its probe over a quarter second.
+static float lastPlane[4];
+static bool lastActive=false;
+static uint64_t mirrorSince=0;
 static void chooseMirror(const Uniforms &camera) {
     glassMirrorActive=false;
-    if(!settings.glassReflections||camera.effects[2]!=0||(profile.skip&I_RENDER3D_SKIP_REFLECTIONS))return;
-    float best=0;
+    if(!settings.glassReflections||camera.effects[2]!=0||(profile.skip&I_RENDER3D_SKIP_REFLECTIONS)) {lastActive=false;return;}
+    const float *e=camera.eye,*f=camera.forward;
+    float best=1e9f,kept=1e9f,bestPlane[4]={};
     for(const GlassPane &p:panes) {
         if(p.broken)continue;
         float bottom,top;paneHeights(p,bottom,top);
         float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
-        if(top-bottom<1||len<1)continue;
-        float nx=ey/len,ny=-ex/len,facing=(camera.eye[0]-p.ax)*nx+(camera.eye[1]-p.ay)*ny;
+        if(top-bottom<4||len<4)continue;
+        float nx=ey/len,ny=-ex/len,facing=(e[0]-p.ax)*nx+(e[1]-p.ay)*ny;
         if(facing<0) {nx=-nx;ny=-ny;facing=-facing;}
         if(facing<1)continue;
-        float t=std::clamp(((camera.eye[0]-p.ax)*ex+(camera.eye[1]-p.ay)*ey)/(len*len),0.0f,1.0f);
-        float cx=p.ax+ex*t,cy=p.ay+ey*t,cz=std::clamp(camera.eye[2],bottom,top);
-        float distance=std::hypot(std::hypot(cx-camera.eye[0],cy-camera.eye[1]),cz-camera.eye[2]);
-        if(distance>512)continue;
-        bool ahead=false;
-        for(float u:{0.0f,1.0f})for(float z:{bottom,top})
-            ahead|=(p.ax+ex*u-camera.eye[0])*camera.forward[0]+(p.ay+ey*u-camera.eye[1])*camera.forward[1]+(z-camera.eye[2])*camera.forward[2]>0;
-        if(!ahead)continue;
-        float score=len*(top-bottom)*(facing/std::max(distance,1.0f))/std::max(distance*distance,256.0f);
-        if(score>best) {best=score;glassMirrorActive=true;glassMirrorPlane[0]=nx;glassMirrorPlane[1]=ny;glassMirrorPlane[2]=0;glassMirrorPlane[3]=nx*p.ax+ny*p.ay;}
+        // Where the center ray meets the pane's plane, clamped onto the
+        // pane, 2 units inside its frame.
+        float toward=-(f[0]*nx+f[1]*ny),hit[3];
+        if(toward>1e-3f) {float t=facing/toward;for(int i=0;i<3;++i)hit[i]=e[i]+f[i]*t;}
+        else {hit[0]=p.ax+ex*0.5f;hit[1]=p.ay+ey*0.5f;hit[2]=(bottom+top)/2;}
+        float along=std::clamp(((hit[0]-p.ax)*ex+(hit[1]-p.ay)*ey)/len,2.0f,len-2);
+        float px=p.ax+ex/len*along,py=p.ay+ey/len*along,pz=std::clamp(hit[2],bottom+2,top-2);
+        float dx=px-e[0],dy=py-e[1],dz=pz-e[2],distance=std::sqrt(dx*dx+dy*dy+dz*dz);
+        if(distance>1024||distance<1)continue;
+        float angle=std::acos(std::clamp((dx*f[0]+dy*f[1]+dz*f[2])/distance,-1.0f,1.0f));
+        if(angle>0.9f)continue; // Off screen, about.
+        float flat=std::hypot(dx,dy);WallHit wall;
+        if(flat>1&&firstSolidWall(e[0],e[1],e[2],dx/flat,dy/flat,dz/flat,flat-1,wall))continue;
+        float plane[4]={nx,ny,0,nx*p.ax+ny*p.ay};
+        bool same=lastActive&&nx*lastPlane[0]+ny*lastPlane[1]>0.999f&&std::abs(plane[3]-lastPlane[3])<1;
+        if(same)kept=std::min(kept,angle);
+        if(angle<best) {best=angle;std::copy(plane,plane+4,bestPlane);}
     }
+    if(best>=1e9f) {lastActive=false;return;}
+    glassMirrorActive=true;
+    if(kept<1e9f&&kept<best+0.1f) std::copy(lastPlane,lastPlane+4,glassMirrorPlane);
+    else {
+        std::copy(bestPlane,bestPlane+4,glassMirrorPlane);
+        std::copy(bestPlane,bestPlane+4,lastPlane);mirrorSince=SDL_GetTicksNS();
+    }
+    if(!lastActive)mirrorSince=SDL_GetTicksNS();
+    lastActive=true;
+    glassMirrorFade=std::clamp((SDL_GetTicksNS()-mirrorSince)/0.25e9f,0.0f,1.0f);
 }
 // Which probes to capture this frame: those not yet captured since the
 // level's bakes or the settings last changed, four at a time so a level's

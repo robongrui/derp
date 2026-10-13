@@ -161,9 +161,10 @@ extern std::vector<Vertex> skyVertices;
 // Window panes (scene3d/windows.cpp), blended over the finished world by glass.frag.
 extern std::vector<Vertex> glassVertices;
 // With glass reflections: whether the world is mirrored in a window this
-// frame, and that pane's plane (unit normal toward the eye, offset).
+// frame, that pane's plane (unit normal toward the eye, offset), and how far
+// it has faded in from its probe since it became the mirror (0-1).
 extern bool glassMirrorActive;
-extern float glassMirrorPlane[4];
+extern float glassMirrorPlane[4],glassMirrorFade;
 // Glass reflection probes: cube maps captured from in front of each window
 // on each side, for panes without the live mirror. at: where; low/high: the
 // room's box, which reflected rays are projected onto for parallax. The

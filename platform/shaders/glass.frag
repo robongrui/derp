@@ -28,7 +28,8 @@ layout(std140,set=3,binding=1) uniform Lights FLASH_BLOCK;
 layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // The world view's corner (xy) and inverse size (zw) on screen, to read the
 // mirrored view (z is 0 when no pane is mirrored this frame); the probe face
-// size (probeInfo.x); per probe its point, and its room box's low and high
+// size (probeInfo.x) and how far the mirror has faded in over its probe
+// (probeInfo.y); per probe its point, and its room box's low and high
 // corners (scene3d.h GlassProbe).
 layout(std140,set=3,binding=3) uniform Mirror { vec4 mirrorView,probeInfo; vec4 probeData[192]; };
 layout(location=0) out vec4 outColor;
@@ -110,20 +111,20 @@ void main() {
     // through contrast rather than as a film. Other panes take the probe on
     // the eye's side (vLampTint: probe+1) the same way; without one they
     // fall back to the sky outdoors, and indoors to the dim room, barely.
-    if(vLightMask.x!=0u&&mirrorView.z>0.0) {
-        vec2 uv=(gl_FragCoord.xy-mirrorView.xy)*mirrorView.zw;
-        vec3 mirrored;
-        if((uint(c.flashlightTint.w)&FEATURE_RETRO_REFLECTIONS)!=0u) {
-            ivec2 size=textureSize(mirror,0);
-            mirrored=texelFetch(mirror,clamp(ivec2(floor(uv*vec2(size))),ivec2(0),size-1),0).rgb;
-        } else mirrored=textureLod(mirror,uv,0.0).rgb;
+    bool live=vLightMask.x!=0u&&mirrorView.z>0.0;
+    if(live||vLampTint>0u) {
+        vec3 probed=vLampTint>0u?probeAlong(vLampTint-1u,vWorld,reflect(-view,normal)):vec3(0),mirrored=probed;
+        if(live) {
+            vec2 uv=(gl_FragCoord.xy-mirrorView.xy)*mirrorView.zw;
+            if((uint(c.flashlightTint.w)&FEATURE_RETRO_REFLECTIONS)!=0u) {
+                ivec2 size=textureSize(mirror,0);
+                mirrored=texelFetch(mirror,clamp(ivec2(floor(uv*vec2(size))),ivec2(0),size-1),0).rgb;
+            } else mirrored=textureLod(mirror,uv,0.0).rgb;
+            // A pane that just became the mirror fades in from its probe.
+            mirrored=mix(probed,mirrored/max(c.fx.x,0.01),vLampTint>0u?probeInfo.y:1.0);
+        }
         float bright=smoothstep(0.08,0.6,dot(mirrored,vec3(0.299,0.587,0.114)));
-        over(result,mirrored/max(c.fx.x,0.01),(0.22+0.45*grazing)*mix(0.35,1.0,bright));
-    }
-    else if(vLampTint>0u) {
-        vec3 mirrored=probeAlong(vLampTint-1u,vWorld,reflect(-view,normal));
-        float bright=smoothstep(0.08,0.6,dot(mirrored,vec3(0.299,0.587,0.114)));
-        over(result,mirrored,(0.22+0.45*grazing)*mix(0.35,1.0,bright));
+        over(result,mirrored,(0.22+0.45*grazing)*mix(0.35,1.0,bright)*(live&&vLampTint==0u?probeInfo.y:1.0));
     }
     else if(vTint.z>0.5) over(result,skyAlong(reflect(-view,normal))*max(light,0.5),0.18+0.5*grazing);
     else over(result,vec3(0.3,0.33,0.32)*light,0.05+0.25*grazing);
