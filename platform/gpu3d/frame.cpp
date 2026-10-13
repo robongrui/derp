@@ -1,11 +1,9 @@
-/* One frame: the scene prepared by prepareFrame drawn in passes (liquid
-   reflection, depth for the mist, the main view with mist and overlays,
+/* One frame: the scene prepared by prepareFrame drawn in passes (liquid and
+   glass reflections, depth for the mist, the main view with mist and overlays,
    bloom), then presented with the HUD and the settings panel. */
 #include "internal.h"
 
 namespace gpu3d {
-static SDL_GPUTexture *reflectionTexture,*reflectionDepth;
-static int reflectionWidth,reflectionHeight;
 // The in-game settings panel: a quad over the whole drawable whose texture
 // coordinates place the 640x400 image at a whole-pixel scale in the middle;
 // beyond it the clamped border texels dim the view.
@@ -65,37 +63,64 @@ static void layoutSettingsPanel(Uint32 drawableWidth,Uint32 drawableHeight,std::
     screenQuad(settingsQuad,-1,1,2,2,-settingsOrigin[0]/pw,-settingsOrigin[1]/ph,
                (dw-settingsOrigin[0])/pw,(dh-settingsOrigin[1])/ph);
 }
-// Liquid reflections: the world drawn again at reduced resolution from a
-// camera mirrored at the liquid height, clipped to above the surface.
-// Its alpha holds how near each point is to the surface along the
-// mirrored ray; the mirror pass is flagged by water = (plane, 0, 0, 1).
-static void drawReflection(SDL_GPUCommandBuffer *render,const FrameView &view,Uniforms &camera) {
-    camera.water[2]=camera.water[3]=0;
-    if(!worldPending||!reflectionActive)return;
+// A mirror's render target at the reflection resolution, reallocated when the view changes size.
+struct MirrorTarget { SDL_GPUTexture *color=nullptr,*depth=nullptr; int width=0,height=0; };
+static MirrorTarget liquidMirror,glassMirror;
+static bool glassReflected; // This frame drew a glass reflection.
+// The world drawn again at reduced resolution from the mirrored camera,
+// clipped to the eye's side of plane (unit normal toward the eye, offset).
+static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &mirror,const float plane[4],MirrorTarget &target) {
     int divisor=settings.retroReflections?8:2;
     int rw=std::max(1,(int)(view.worldW/divisor)),rh=std::max(1,(int)(view.worldH/divisor));
-    if(!reflectionTexture||rw!=reflectionWidth||rh!=reflectionHeight) {
-        release(reflectionTexture);release(reflectionDepth);
-        reflectionTexture=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,rw,rh,SDL_GPU_TEXTUREUSAGE_COLOR_TARGET|SDL_GPU_TEXTUREUSAGE_SAMPLER);
-        reflectionDepth=createTexture(depthFormat,rw,rh,SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
-        if(!reflectionTexture||!reflectionDepth)I_Error((char*)"Could not allocate reflection targets");
-        reflectionWidth=rw;reflectionHeight=rh;
+    if(!target.color||rw!=target.width||rh!=target.height) {
+        release(target.color);release(target.depth);
+        target.color=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,rw,rh,SDL_GPU_TEXTUREUSAGE_COLOR_TARGET|SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        target.depth=createTexture(depthFormat,rw,rh,SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+        if(!target.color||!target.depth)I_Error((char*)"Could not allocate reflection targets");
+        target.width=rw;target.height=rh;
     }
-    Uniforms mirror=camera;
-    mirror.eye[2]=2*reflectionPlane-camera.eye[2];mirror.forward[2]=-camera.forward[2];mirror.up[2]=-camera.up[2];
-    mirror.water[0]=reflectionPlane;mirror.water[3]=1;
     SDL_GPUColorTargetInfo color={};
-    color.texture=reflectionTexture;color.load_op=SDL_GPU_LOADOP_CLEAR;color.store_op=SDL_GPU_STOREOP_STORE;
+    color.texture=target.color;color.load_op=SDL_GPU_LOADOP_CLEAR;color.store_op=SDL_GPU_STOREOP_STORE;
     color.clear_color={0.025f,0.025f,0.03f,1};
     SDL_GPUDepthStencilTargetInfo depth={};
-    depth.texture=reflectionDepth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_DONT_CARE;
+    depth.texture=target.depth;depth.clear_depth=1;depth.load_op=SDL_GPU_LOADOP_CLEAR;depth.store_op=SDL_GPU_STOREOP_DONT_CARE;
     depth.stencil_load_op=SDL_GPU_LOADOP_DONT_CARE;depth.stencil_store_op=SDL_GPU_STOREOP_DONT_CARE;
     SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
     pushWorldUniforms(render,mirror);
-    float plane[4]={reflectionPlane,0,0,0};SDL_PushGPUVertexUniformData(render,1,plane,sizeof(plane));
+    SDL_PushGPUVertexUniformData(render,1,plane,4*sizeof(float));
     drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr);
     SDL_EndGPURenderPass(pass);
+}
+// Liquid reflections: the camera mirrored at the liquid height, clipped to
+// above the surface. Its alpha holds how near each point is to the surface
+// along the mirrored ray; the mirror pass is flagged by water = (plane, 0, 0, 1).
+static void drawReflection(SDL_GPUCommandBuffer *render,const FrameView &view,Uniforms &camera) {
+    camera.water[2]=camera.water[3]=0;
+    if(!worldPending||!reflectionActive)return;
+    Uniforms mirror=camera;
+    mirror.eye[2]=2*reflectionPlane-camera.eye[2];mirror.forward[2]=-camera.forward[2];mirror.up[2]=-camera.up[2];
+    mirror.water[0]=reflectionPlane;mirror.water[3]=1;
+    float plane[4]={0,0,1,reflectionPlane};
+    drawMirror(render,view,mirror,plane,liquidMirror);
     camera.water[0]=view.worldX;camera.water[1]=view.worldY;camera.water[2]=1/view.worldW;camera.water[3]=1/view.worldH;
+}
+// Glass reflections: the camera and its axes mirrored across the chosen
+// window's upright plane (glassMirrorPlane), so each point of the mirrored
+// view lands where its reflection shows on the pane and glass.frag reads it
+// at its own screen position. water stays 0: nothing in it is a liquid mirror.
+static bool drawGlassReflection(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera) {
+    if(!worldPending||!glassMirrorActive)return false;
+    const float *n=glassMirrorPlane;
+    Uniforms mirror=camera;
+    float side=n[0]*camera.eye[0]+n[1]*camera.eye[1]-n[3];
+    mirror.eye[0]-=2*side*n[0];mirror.eye[1]-=2*side*n[1];
+    for(float *axis:{mirror.forward,mirror.right,mirror.up}) {
+        float along=n[0]*axis[0]+n[1]*axis[1];
+        axis[0]-=2*along*n[0];axis[1]-=2*along*n[1];
+    }
+    for(float &w:mirror.water)w=0;
+    drawMirror(render,view,mirror,n,glassMirror);
+    return true;
 }
 // Soft mist needs single-sample scene depth; under MSAA a depth-only prepass supplies it.
 static void drawMistDepth(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera) {
@@ -121,7 +146,7 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     // before nearer ones cover them; with it each pixel shades once.
     SDL_BindGPUGraphicsPipeline(pass,prepassPipeline);
     for(const auto &batch:batches) if(opaqueBatch(batch)) drawVertices(pass,batch.second);
-    drawWorld(render,pass,opaquePipeline,skySurfacePipeline,skyPipeline,worldPipeline,camera.water[2]>0?reflectionTexture:nullptr,
+    drawWorld(render,pass,opaquePipeline,skySurfacePipeline,skyPipeline,worldPipeline,camera.water[2]>0?liquidMirror.color:nullptr,
               coveragePipeline,cutoutPipeline);
     // The completed world depth hides shadows behind walls and enemies.
     SDL_BindGPUGraphicsPipeline(pass,shadowPipeline);
@@ -132,8 +157,13 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     // Window glass over everything behind it, shards included; it writes no depth.
     if(!glassVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,glassPipeline);
-        SDL_GPUTextureSamplerBinding skyImage[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp}};
-        SDL_BindGPUFragmentSamplers(pass,0,skyImage,2);bindLightBlockers(pass);drawVertices(pass,glassVertices);
+        SDL_GPUTextureSamplerBinding images[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp},
+                                              {glassReflected?glassMirror.color:paletteTexture,nearestClamp}};
+        SDL_BindGPUFragmentSamplers(pass,0,images,3);bindLightBlockers(pass);
+        // Where the mirrored view sits on screen; z is 0 without a reflection.
+        float mirror[4]={view.worldX,view.worldY,glassReflected?1/view.worldW:0,1/view.worldH};
+        SDL_PushGPUFragmentUniformData(render,3,mirror,sizeof(mirror));
+        drawVertices(pass,glassVertices);
     }
     // Hot air marks the color target's alpha for the shimmer in present.
     if(!heatVertices.empty()) {SDL_BindGPUGraphicsPipeline(pass,heatPipeline);drawVertices(pass,heatVertices);}
@@ -236,7 +266,9 @@ static void submitProfiled(SDL_GPUCommandBuffer *render,uint64_t frameStart) {
     uint64_t done=SDL_GetTicksNS();
     profile.frame.cpuMs=(submit-frameStart)/1e6;profile.frame.gpuMs=(done-submit)/1e6;
 }
-void releaseReflection() {release(reflectionTexture);release(reflectionDepth);reflectionWidth=reflectionHeight=0;}
+void releaseReflection() {
+    for(MirrorTarget *t:{&liquidMirror,&glassMirror}) {release(t->color);release(t->depth);t->width=t->height=0;}
+}
 } // namespace gpu3d
 
 using namespace gpu3d;
@@ -275,6 +307,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     if(!render) I_Error((char*)"GPU command buffer: %s",SDL_GetError());
     uploadFrame(render,transient,sectorInfo(),palette,overlay,settingsImage);
     drawReflection(render,view,camera);
+    glassReflected=drawGlassReflection(render,view,camera);
     if(drawMist&&msaa)drawMistDepth(render,view,camera);
     drawMainView(render,view,camera,drawMist,msaa,weapons,hud,cross);
     if(camera.materials[1]>0)drawBloom(render,view,camera,weapons);

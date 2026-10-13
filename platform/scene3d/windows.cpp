@@ -7,6 +7,8 @@
 
 namespace doom3d {
 std::vector<Vertex> glassVertices;
+bool glassMirrorActive=false;
+float glassMirrorPlane[4]={};
 // A pane fills the opening of one line between a window's frame sector and
 // the sector it looks out on (outer); inner is the room on the other side.
 // The panes of one frame break together.
@@ -239,10 +241,39 @@ void watchGlass() {
 // the outdoors' light and reflects the sky, the inner one the room's.
 // Vertex: uv the texel on the pane, (sunU, sunV) its size, (red, green) the
 // face normal, blue 1 on a face out under the sky; statics the pane's seed,
-// top bit set once broken.
+// top bit set once broken; lightMask[0] 1 on panes in the mirror's plane.
+// Glass reflections (settings.glassReflections): the pane that fills the
+// most of the view within 512 units, whole and in front of the camera,
+// becomes the mirror the world is drawn again through (glassMirrorPlane:
+// its normal toward the eye and offset). Panes in the same plane share it.
+static void chooseMirror(const Uniforms &camera) {
+    glassMirrorActive=false;
+    if(!settings.glassReflections||camera.effects[2]!=0||(profile.skip&I_RENDER3D_SKIP_REFLECTIONS))return;
+    float best=0;
+    for(const GlassPane &p:panes) {
+        if(p.broken)continue;
+        float bottom,top;paneHeights(p,bottom,top);
+        float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
+        if(top-bottom<1||len<1)continue;
+        float nx=ey/len,ny=-ex/len,facing=(camera.eye[0]-p.ax)*nx+(camera.eye[1]-p.ay)*ny;
+        if(facing<0) {nx=-nx;ny=-ny;facing=-facing;}
+        if(facing<1)continue;
+        float t=std::clamp(((camera.eye[0]-p.ax)*ex+(camera.eye[1]-p.ay)*ey)/(len*len),0.0f,1.0f);
+        float cx=p.ax+ex*t,cy=p.ay+ey*t,cz=std::clamp(camera.eye[2],bottom,top);
+        float distance=std::hypot(std::hypot(cx-camera.eye[0],cy-camera.eye[1]),cz-camera.eye[2]);
+        if(distance>512)continue;
+        bool ahead=false;
+        for(float u:{0.0f,1.0f})for(float z:{bottom,top})
+            ahead|=(p.ax+ex*u-camera.eye[0])*camera.forward[0]+(p.ay+ey*u-camera.eye[1])*camera.forward[1]+(z-camera.eye[2])*camera.forward[2]>0;
+        if(!ahead)continue;
+        float score=len*(top-bottom)*(facing/std::max(distance,1.0f))/std::max(distance*distance,256.0f);
+        if(score>best) {best=score;glassMirrorActive=true;glassMirrorPlane[0]=nx;glassMirrorPlane[1]=ny;glassMirrorPlane[2]=0;glassMirrorPlane[3]=nx*p.ax+ny*p.ay;}
+    }
+}
 void buildGlass(const Uniforms &camera) {
-    glassVertices.clear();
+    glassVertices.clear();glassMirrorActive=false;
     if(!settings.windowGlass||glassLevelSerial!=r_levelserial)return;
+    chooseMirror(camera);
     for(const GlassPane &p:panes) {
         float bottom,top;paneHeights(p,bottom,top);
         float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
@@ -260,8 +291,9 @@ void buildGlass(const Uniforms &camera) {
         Point a={p.ax,p.ay},b={p.bx,p.by};
         if((b.x-a.x)*-ny+(b.y-a.y)*nx<0)std::swap(a,b);
         unsigned statics=(p.seed&0x7fffffffu)|(p.broken?0x80000000u:0u);
+        bool mirror=glassMirrorActive&&nx*glassMirrorPlane[0]+ny*glassMirrorPlane[1]>0.999f&&std::abs(nx*p.ax+ny*p.ay-glassMirrorPlane[3])<1;
         auto vertex=[&](Point at,float u,float z) {
-            Vertex v={at.x,at.y,z,u,z-bottom,light,0};
+            Vertex v={at.x,at.y,z,u,z-bottom,light,0};v.lightMask[0]=mirror?1u:0u;
             v.red=nx;v.green=ny;v.blue=outside&&skySector(&sectors[p.outer])?1.0f:0.0f;
             v.sunU=len;v.sunV=top-bottom;v.statics=statics;return v;
         };

@@ -115,6 +115,7 @@ struct Settings {
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
     int glossyScreens=1; // Monitor glass found in computer textures bulges, refracts the screen behind it and catches light.
     int windowGlass=1; // Windows found in the map get glass that reflects and shatters when shot through.
+    int glassReflections=1; // Experiment: the nearest window mirrors the world, drawn again like the liquid reflection.
     int weaponLighting=1; // The weapon's painted sheen and light come out at load; lights around the player relight it.
     // Sound, though graphics.cfg keeps it: the mixer is told in applySettings.
     int roomAcoustics=1; // Echoes and a reverb tail measured from the room around the player.
@@ -157,6 +158,10 @@ extern std::vector<Vertex> shaftVertices;
 extern std::vector<Vertex> skyVertices;
 // Window panes (scene3d/windows.cpp), blended over the finished world by glass.frag.
 extern std::vector<Vertex> glassVertices;
+// With glass reflections: whether the world is mirrored in a window this
+// frame, and that pane's plane (unit normal toward the eye, offset).
+extern bool glassMirrorActive;
+extern float glassMirrorPlane[4];
 extern GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 // Bake-only lights: where static light comes from, per wall atlas texel and
 // floor/ceiling cell (see bakeLights).

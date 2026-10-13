@@ -13,17 +13,23 @@
 // vStatic the pane's seed with the top bit set once broken.
 layout(set=2,binding=0) uniform sampler2D sky;
 layout(set=2,binding=1) uniform sampler2D palette;
+// Glass reflections: the world drawn again mirrored in the chosen pane
+// (drawGlassReflection in gpu3d/frame.cpp).
+layout(set=2,binding=2) uniform sampler2D mirror;
 // The lights' blockers (buildLightWords in scene3d/lights.cpp), numbered after
-// the samplers in SPIR-V and after the three uniform blocks on Metal.
+// the samplers in SPIR-V and after the four uniform blocks on Metal.
 #ifdef METAL
-#define BLOCKER_BINDING 3
+#define BLOCKER_BINDING 4
 #else
-#define BLOCKER_BINDING 2
+#define BLOCKER_BINDING 3
 #endif
 layout(std430,set=2,binding=BLOCKER_BINDING) readonly buffer Blockers { uvec4 lightWords[]; };
 layout(std140,set=3,binding=0) uniform Camera CAMERA_BLOCK c;
 layout(std140,set=3,binding=1) uniform Lights FLASH_BLOCK;
 layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
+// The world view's corner (xy) and inverse size (zw) on screen, to read the
+// mirrored view; z is 0 when no pane is mirrored this frame.
+layout(std140,set=3,binding=3) uniform Mirror { vec4 mirrorView; };
 layout(location=0) out vec4 outColor;
 #include "indexed.glsl"
 #define BLOCKERS
@@ -75,8 +81,24 @@ void main() {
     vec4 result=vec4(0);
     // The glass itself: faint green-grey, thicker to the eye at a glance.
     over(result,vec3(0.38,0.5,0.5)*light,0.15+0.25*grazing);
-    // Outdoors it mirrors the sky; indoors the dim room, barely.
-    if(vTint.z>0.5) over(result,skyAlong(reflect(-view,normal))*max(light,0.5),0.18+0.5*grazing);
+    // A pane in the mirror's plane (lightMask.x) shows the world drawn again
+    // behind it, read at its own screen position like the liquid mirror,
+    // in whole reflection pixels in retro style. It is already lit and
+    // exposed. Reflectance rises toward a glance, and bright things (lamps,
+    // sky, fire, shots) hold up while dim walls stay faint, so it reads
+    // through contrast rather than as a film. Other panes fall back:
+    // outdoors they mirror the sky, indoors the dim room, barely.
+    if(vLightMask.x!=0u&&mirrorView.z>0.0) {
+        vec2 uv=(gl_FragCoord.xy-mirrorView.xy)*mirrorView.zw;
+        vec3 mirrored;
+        if((uint(c.flashlightTint.w)&FEATURE_RETRO_REFLECTIONS)!=0u) {
+            ivec2 size=textureSize(mirror,0);
+            mirrored=texelFetch(mirror,clamp(ivec2(floor(uv*vec2(size))),ivec2(0),size-1),0).rgb;
+        } else mirrored=textureLod(mirror,uv,0.0).rgb;
+        float bright=smoothstep(0.08,0.6,dot(mirrored,vec3(0.299,0.587,0.114)));
+        over(result,mirrored/max(c.fx.x,0.01),(0.22+0.45*grazing)*mix(0.35,1.0,bright));
+    }
+    else if(vTint.z>0.5) over(result,skyAlong(reflect(-view,normal))*max(light,0.5),0.18+0.5*grazing);
     else over(result,vec3(0.3,0.33,0.32)*light,0.05+0.25*grazing);
     // Grime: dust settled along the frame and thickest on the sill, single
     // texels gathered in patches.

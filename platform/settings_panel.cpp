@@ -82,7 +82,11 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("window_glass","Window glass",&s.windowGlass,
                     "Windows found in the map's geometry get a pane of glass: grimy at the edges, streaked with highlights that "
                     "slide as you move, reflecting the sky from outside. The first shot, projectile or blast through it shatters "
-                    "it into shards; shots and sight pass exactly as in vanilla.")}},
+                    "it into shards; shots and sight pass exactly as in vanilla."),
+                check("glass_reflections","Glass reflections",&s.glassReflections,
+                    "Experimental: the window filling most of the view mirrors the room in front of it, monsters and shots "
+                    "included, drawn a second time like the liquid reflections and at their resolution. Costs about as much as they do.",
+                    [](const Settings &d){return d.windowGlass!=0;})}},
             {"Glow",{
                 check("emissive","Emissive textures",&s.emissive,
                     "Lamp strips, computer displays, lava and nukage glow with soft bloom and colored light on nearby surfaces."),
