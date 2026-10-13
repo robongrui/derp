@@ -336,7 +336,7 @@ void selectFogLights(const Uniforms &camera) {
 // A sphere that misses a triangle's bounds cannot illuminate any fragment
 // of it. The conservative mask preserves every light inside its radius.
 void assignLightMasks() {
-    for(auto &batch:batches) {
+    for(auto *group:{&batches,&mirrorBatches})for(auto &batch:*group) {
         auto &vertices=batch.second;
         for(size_t n=0;n+2<vertices.size();n+=3) {
             unsigned mask[2]={};

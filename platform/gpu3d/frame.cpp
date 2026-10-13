@@ -73,7 +73,8 @@ static SDL_GPUTexture *probeAtlas,*probeDepth;
 static unsigned probeAtlasSerial=~0u;
 // The world drawn again at reduced resolution from the mirrored camera,
 // clipped to the eye's side of plane (unit normal toward the eye, offset).
-static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &mirror,const float plane[4],MirrorTarget &target) {
+static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &mirror,const float plane[4],MirrorTarget &target,
+                       const std::map<int,std::vector<Vertex>> *extra=nullptr) {
     int divisor=settings.retroReflections?8:2;
     int rw=std::max(1,(int)(view.worldW/divisor)),rh=std::max(1,(int)(view.worldH/divisor));
     if(!target.color||rw!=target.width||rh!=target.height) {
@@ -93,6 +94,10 @@ static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const 
     pushWorldUniforms(render,mirror);
     SDL_PushGPUVertexUniformData(render,1,plane,4*sizeof(float));
     drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr);
+    if(extra) {
+        SDL_BindGPUGraphicsPipeline(pass,reflectWorldPipeline);bindWorld(pass,nullptr);
+        for(const auto &batch:*extra) if(!batch.second.empty()) {bindSurface(render,pass,batch.first,3);drawVertices(pass,batch.second);}
+    }
     SDL_EndGPURenderPass(pass);
 }
 // Liquid reflections: the camera mirrored at the liquid height, clipped to
@@ -156,7 +161,8 @@ static void captureGlassProbes(SDL_GPUCommandBuffer *render,const Uniforms &came
 // Glass reflections: the camera and its axes mirrored across the chosen
 // window's upright plane (glassMirrorPlane), so each point of the mirrored
 // view lands where its reflection shows on the pane and glass.frag reads it
-// at its own screen position. water stays 0: nothing in it is a liquid mirror.
+// at its own screen position. water stays 0: nothing in it is a liquid
+// mirror. The player's own sprite (mirrorBatches) joins it here.
 static bool drawGlassReflection(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera) {
     if(!worldPending||!glassMirrorActive)return false;
     const float *n=glassMirrorPlane;
@@ -168,7 +174,7 @@ static bool drawGlassReflection(SDL_GPUCommandBuffer *render,const FrameView &vi
         axis[0]-=2*along*n[0];axis[1]-=2*along*n[1];
     }
     for(float &w:mirror.water)w=0;
-    drawMirror(render,view,mirror,n,glassMirror);
+    drawMirror(render,view,mirror,n,glassMirror,&mirrorBatches);
     return true;
 }
 // Soft mist needs single-sample scene depth; under MSAA a depth-only prepass supplies it.

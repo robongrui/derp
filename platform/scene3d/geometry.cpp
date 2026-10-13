@@ -360,6 +360,46 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         if(soft)vertices[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
     }
 }
+// The player's own reflection in the glass mirror (glassMirrorActive): the
+// player's sprite, seen from the mirrored eye, so its frame shows the side
+// facing the glass and its billboard faces the mirrored camera; drawn only
+// in that pass (mirrorBatches). Lit like other things: the sector light at
+// the feet with flow, seams and sun, the bake through the light mask.
+// Monsters stay the main view's billboards.
+static void playerReflection(const Uniforms &camera,float fraction) {
+    mobj_t *self=players[displayplayer].mo;
+    if(!glassMirrorActive||!self||self->sprite<0||self->sprite>=numsprites||camera.effects[2]!=0)return;
+    const auto &sprite=sprites[self->sprite];int frame=self->frame&FF_FRAMEMASK;
+    if(frame>=sprite.numframes)return;
+    const float *n=glassMirrorPlane;
+    float side=n[0]*camera.eye[0]+n[1]*camera.eye[1]-n[3];
+    float mx=camera.eye[0]-2*side*n[0],my=camera.eye[1]-2*side*n[1];
+    float x,y,z;interpolatedPosition(*self,fraction,x,y,z);
+    const auto &sf=sprite.spriteframes[frame];
+    unsigned rotation=sf.rotate?spriteRotation(x-mx,y-my,self->angle):0;
+    int lump=firstspritelump+sf.lump[rotation];Image &image=lumpImage(lump,false);
+    // The mirrored camera's right: the eye's, reflected in the plane.
+    float along=n[0]*camera.right[0]+n[1]*camera.right[1];
+    float rx=camera.right[0]-2*along*n[0],ry=camera.right[1]-2*along*n[1];
+    const sector_t *sector=self->subsector->sector;
+    bool bright=self->frame&FF_FULLBRIGHT;
+    float light=lighting(sector,bright);
+    if(!bright)light=sunLightAt(x,y,sector,flowLightAt(x,y,sector,seamLightAt(x,y,sector,light)));
+    unsigned mode=MODE_SPRITE|(self->flags&MF_SHADOW?MODE_FUZZ:0);
+    if(settings.detail&&!bright)mode|=MODE_RELIT|(sf.flip[rotation]?MODE_FLIPPED:0);
+    StaticSample statics;
+    auto baked=bakedLightAt(x,y,z+units(self->height)*0.5f,sector,&statics);
+    float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
+    float u0=sf.flip[rotation]?image.width:0,u1=sf.flip[rotation]?0:image.width;
+    auto &out=mirrorBatches[-1-lump];
+    quad(out,{x+rx*left,y+ry*left,top,u0,0,light,mode},{x+rx*right,y+ry*right,top,u1,0,light,mode},
+        {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,mode},{x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,mode});
+    unsigned tint=bright?0xFFFFFFFFu:packedLampTint(statics,light);
+    for(size_t v=out.size()-6;v<out.size();++v) {
+        if(!bright) {out[v].red=baked[0];out[v].green=baked[1];out[v].blue=baked[2];}
+        out[v].lampTint=tint;
+    }
+}
 // The player's own shadow: the player sprite as seen from the strongest
 // light above (not the flashlight or the player's own shots), or from
 // the sun where the player stands in it.
@@ -395,6 +435,7 @@ static void playerShadow(const Uniforms &camera,float fraction) {
 void geometry(const Uniforms &camera,float fraction) {
     for(auto &batch:batches)batch.second.clear();
     for(auto &batch:shadowBatches)batch.second.clear();
+    for(auto &batch:mirrorBatches)batch.second.clear();
     surfaceLights.clear();
     std::copy(camera.eye,camera.eye+3,surfaceEye);collectFlashes(fraction,camera);
     collectFlatLights();
@@ -418,6 +459,7 @@ void geometry(const Uniforms &camera,float fraction) {
         flashlightSilhouette(*c.thing,*c.image,c.lump,c.flip,c.x,c.y,c.z,camera,*beam);
     }
     playerShadow(camera,fraction);
+    playerReflection(camera,fraction);
     buildBlood(camera);
     buildHeat(camera);
     buildDust(camera);

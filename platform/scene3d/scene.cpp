@@ -14,7 +14,7 @@ FlashSet flashes;
 FogLights fogLights;
 std::vector<LightBlocker> lightBlockers;
 std::unordered_map<int,Image> images;
-std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches;
+std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches,mirrorBatches;
 std::vector<Vertex> mistVertices,particleVertices,heatVertices,skyVertices,shaftVertices;
 GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 GpuTextureRef wallDirectionTexture,flatDirectionTexture;
@@ -97,7 +97,7 @@ void sceneShutdown() {
     stopRelight();
     R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
-    batches.clear();shadowBatches.clear();decalBatches.clear();particleVertices.clear();
+    batches.clear();shadowBatches.clear();decalBatches.clear();mirrorBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
     imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();exposureShutdown();
     bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
@@ -107,7 +107,7 @@ void sceneShutdown() {
 // level, then the map and what is built from it at level load.
 static void startLevel() {
     stopRelight();
-    batches.clear();shadowBatches.clear();clearSurfaceLights();
+    batches.clear();shadowBatches.clear();mirrorBatches.clear();clearSurfaceLights();
     bakeAtlasNewLevel();sunNewLevel();lightBakeNewLevel();clearStaticGrid();indirectNewLevel();
     oldThings.clear();oldHeights.clear();tickTime=0;
     buildMap();
