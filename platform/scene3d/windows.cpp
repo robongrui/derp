@@ -339,13 +339,17 @@ static void chooseMirror(const Uniforms &camera) {
 }
 // Which probes to capture this frame: those not yet captured since the
 // level's bakes or the settings last changed, four at a time so a level's
-// worth spreads over a few frames. The capture key covers what changes how
-// the world looks lit.
+// worth spreads over a few frames, and only once the bakes switched on have
+// all finished, so a level is captured once rather than per bake. The
+// capture key covers what changes how the world looks lit.
 static int captureKey=-1;
 static std::vector<char> captured;
 bool planGlassCaptures(const Uniforms &camera) {
     glassCaptures.clear();
     if(!settings.windowGlass||glassLevelSerial!=r_levelserial||glassProbes.empty()||camera.effects[2]!=0)return false;
+    bool baking=(settings.bakedLights&&lightBakeKey!=lightBakeInputs())||(settings.bounce&&bounceKey!=bounceInputs())||
+        ((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)||(settings.lightFlow&&flowKey!=flowInputs())||(settings.sun&&!sunBaked);
+    if(baking)return false;
     int key=(int)hash32(lightBakeSerial*31u+(unsigned)bounceKey*7u+(unsigned)ambientKey*13u+(unsigned)flowKey*17u+(sunBaked?1u:0u)+
                         (unsigned)skytexture*19u+settingsSerial*23u+glassProbeSerial*29u);
     if(key!=captureKey||captured.size()!=glassProbes.size()) {captureKey=key;captured.assign(glassProbes.size(),0);}

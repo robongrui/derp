@@ -63,6 +63,12 @@ static void layoutSettingsPanel(Uint32 drawableWidth,Uint32 drawableHeight,std::
     screenQuad(settingsQuad,-1,1,2,2,-settingsOrigin[0]/pw,-settingsOrigin[1]/ph,
                (dw-settingsOrigin[0])/pw,(dh-settingsOrigin[1])/ph);
 }
+// Mirrors and probes draw the whole map from elsewhere; a depth prepass of
+// the opaque batches first, as in the main view, lets each pixel shade once.
+static void mirrorPrepass(SDL_GPURenderPass *pass) {
+    SDL_BindGPUGraphicsPipeline(pass,reflectPrepassPipeline);
+    for(const auto &batch:batches) if(opaqueBatch(batch)) drawVertices(pass,batch.second);
+}
 // A mirror's render target at the reflection resolution, reallocated when the view changes size.
 struct MirrorTarget { SDL_GPUTexture *color=nullptr,*depth=nullptr; int width=0,height=0; };
 static MirrorTarget liquidMirror,glassMirror;
@@ -94,6 +100,7 @@ static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const 
     SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(render,&color,1,&depth);
     pushWorldUniforms(render,mirror);
     SDL_PushGPUVertexUniformData(render,1,plane,4*sizeof(float));
+    mirrorPrepass(pass);
     drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr,nullptr,nullptr,!extra);
     if(extra) {
         SDL_BindGPUGraphicsPipeline(pass,reflectWorldPipeline);bindWorld(pass,nullptr);
@@ -154,6 +161,7 @@ static void captureGlassProbes(SDL_GPUCommandBuffer *render,const Uniforms &came
             SDL_PushGPUFragmentUniformData(render,1,&noFlashes,sizeof(noFlashes));
             SDL_PushGPUFragmentUniformData(render,2,&noFog,sizeof(noFog));
             SDL_PushGPUVertexUniformData(render,1,noClip,sizeof(noClip));
+            mirrorPrepass(pass);
             drawWorld(render,pass,reflectOpaquePipeline,reflectSkySurfacePipeline,reflectSkyPipeline,reflectWorldPipeline,nullptr,nullptr,nullptr,false);
         }
     }

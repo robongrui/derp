@@ -291,22 +291,22 @@ static float sinkInLiquid(const mobj_t *thing,int i,const Image &image,float x,f
 struct MirrorView { float eye[2],right[2]; };
 // One thing in sector i: its shadows, light, liquid footclip and sprite
 // quad. Things the flashlight beam can outline join casters. With mirror,
-// only its quad for the glass mirror instead (mirrorBatches): seen from the
-// mirrored eye, so its frame shows the side facing the glass, and facing the
-// mirrored camera; the player's own sprite is drawn there too.
+// also its quad for the glass mirror (mirrorBatches), from the same light:
+// seen from the mirrored eye, so its frame shows the side facing the glass,
+// and facing the mirrored camera. The player's own sprite gets only that one.
 static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,const Flash *beam,std::vector<Caster> &casters,
                      const MirrorView *mirror=nullptr) {
-    float rx=mirror?mirror->right[0]:camera.right[0],ry=mirror?mirror->right[1]:camera.right[1];
-    const float *from=mirror?mirror->eye:camera.eye;
-    if((!mirror&&thing==players[displayplayer].mo)||thing->sprite<0||thing->sprite>=numsprites) return;
+    bool self=thing==players[displayplayer].mo;
+    if((self&&!mirror)||thing->sprite<0||thing->sprite>=numsprites) return;
     const auto &sprite=sprites[thing->sprite]; int frame=thing->frame&FF_FRAMEMASK;
     if(frame>=sprite.numframes) return;
     const auto &sf=sprite.spriteframes[frame];
-    unsigned rotation=sf.rotate?spriteRotation(units(thing->x)-from[0],units(thing->y)-from[1],thing->angle):0;
+    auto rotationFrom=[&](const float *eye){return sf.rotate?spriteRotation(units(thing->x)-eye[0],units(thing->y)-eye[1],thing->angle):0u;};
+    unsigned rotation=rotationFrom(camera.eye);
     int lump=firstspritelump+sf.lump[rotation]; Image &image=lumpImage(lump,false);
     float x,y,z;interpolatedPosition(*thing,fraction,x,y,z);
-    if(!mirror)addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera);
-    if(!mirror&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(thing->frame&FF_FULLBRIGHT))
+    if(!self)addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera);
+    if(!self&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(thing->frame&FF_FULLBRIGHT))
         casters.push_back({thing,&image,lump,(bool)sf.flip[rotation],x,y,z,std::hypot(x-camera.eye[0],y-camera.eye[1])});
     std::array<float,3> pulse={},beamLight={};ShadowLight shadowLight={};
     float strongest=dynamicThingLight(thing,x,y,z,pulse,beamLight,shadowLight);
@@ -316,13 +316,10 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     auto baked=bakedLightAt(x,y,z+units(thing->height)*0.5f,&sectors[i],&statics);
     ShadowLight fixedLight;
     if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;shadowLight=fixedLight;}
-    if(!mirror&&strongest>0.025f) addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera,&shadowLight);
-    float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
-    float sink=sinkInLiquid(thing,i,image,x,y,camera,!mirror);top-=sink;bottom-=sink;
-    float u0=sf.flip[rotation]?image.width:0,u1=sf.flip[rotation]?0:image.width;
+    if(!self&&strongest>0.025f) addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera,&shadowLight);
     float light=lighting(&sectors[i],thing->frame&FF_FULLBRIGHT); unsigned mode=MODE_SPRITE|(thing->flags&MF_SHADOW?MODE_FUZZ:0);
-    // Per-pixel lighting from silhouette normals, flipped with a mirrored frame.
-    if(settings.detail&&!(thing->frame&FF_FULLBRIGHT))mode|=MODE_RELIT|(sf.flip[rotation]?MODE_FLIPPED:0);
+    // Per-pixel lighting from silhouette normals (flipped with a mirrored frame, below).
+    if(settings.detail&&!(thing->frame&FF_FULLBRIGHT))mode|=MODE_RELIT;
     // Airborne blood shines like the floor blood (needs the normals of MODE_RELIT).
     if(settings.bloodShine&&thing->type==MT_BLOOD&&(mode&MODE_RELIT))mode|=MODE_WET_SPRITE;
     if(!(thing->frame&FF_FULLBRIGHT))light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
@@ -335,11 +332,6 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         float phase=(float)((uintptr_t)thing%997)*0.37f;
         light=std::max(light,0.5f+0.08f*std::sin(gameSeconds()*3.0f+phase));mode|=MODE_PICKUP;
     }
-    auto &vertices=(mirror?mirrorBatches:batches)[-1-lump];
-    quad(vertices,{x+rx*left,y+ry*left,top,u0,0,light,mode},
-        {x+rx*right,y+ry*right,top,u1,0,light,mode},
-        {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,mode},
-        {x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,mode});
     // Emissive WAD frames keep their original white cores and artwork;
     // their light still illuminates surrounding surfaces and other sprites.
     // Detail sprites light themselves per pixel from the light mask, so
@@ -361,12 +353,25 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     float lift=units(thing->z-thing->floorz),grounding=1-lift/32;
     bool grounded=settings.detail&&grounding>0&&!(thing->frame&FF_FULLBRIGHT)&&!soft&&thing->type!=MT_BLOOD&&
         !(thing->flags&(MF_SHADOW|MF_MISSILE|MF_SPAWNCEILING));
-    for(size_t n=vertices.size()-6;n<vertices.size();++n) {
-        vertices[n].red=pulse[0];vertices[n].green=pulse[1];vertices[n].blue=pulse[2];vertices[n].statics=packedStatics;
-        vertices[n].lampTint=tint;
-        if(grounded) {vertices[n].mode|=MODE_GROUNDED;vertices[n].sunU=grounding;vertices[n].sunV=vertices[n].z-z+lift;}
-        if(soft)vertices[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
-    }
+    // The quad for one view: that view's frame, facing along its right.
+    auto emit=[&](std::map<int,std::vector<Vertex>> &out,unsigned seen,float rx,float ry,bool collar) {
+        int lump=firstspritelump+sf.lump[seen]; Image &image=lumpImage(lump,false);
+        float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
+        float sink=sinkInLiquid(thing,i,image,x,y,camera,collar);top-=sink;bottom-=sink;
+        float u0=sf.flip[seen]?image.width:0,u1=sf.flip[seen]?0:image.width;
+        unsigned m=mode|((mode&MODE_RELIT)&&sf.flip[seen]?MODE_FLIPPED:0);
+        auto &vertices=out[-1-lump];
+        quad(vertices,{x+rx*left,y+ry*left,top,u0,0,light,m},{x+rx*right,y+ry*right,top,u1,0,light,m},
+            {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,m},{x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,m});
+        for(size_t n=vertices.size()-6;n<vertices.size();++n) {
+            vertices[n].red=pulse[0];vertices[n].green=pulse[1];vertices[n].blue=pulse[2];vertices[n].statics=packedStatics;
+            vertices[n].lampTint=tint;
+            if(grounded) {vertices[n].mode|=MODE_GROUNDED;vertices[n].sunU=grounding;vertices[n].sunV=vertices[n].z-z+lift;}
+            if(soft)vertices[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
+        }
+    };
+    if(!self)emit(batches,rotation,camera.right[0],camera.right[1],true);
+    if(mirror)emit(mirrorBatches,rotationFrom(mirror->eye),mirror->right[0],mirror->right[1],false);
 }
 // The player's own shadow: the player sprite as seen from the strongest
 // light above (not the flashlight or the player's own shots), or from
@@ -425,10 +430,10 @@ void geometry(const Uniforms &camera,float fraction) {
         float side=n[0]*camera.eye[0]+n[1]*camera.eye[1]-n[3],along=n[0]*camera.right[0]+n[1]*camera.right[1];
         mirror={{camera.eye[0]-2*side*n[0],camera.eye[1]-2*side*n[1]},{camera.right[0]-2*along*n[0],camera.right[1]-2*along*n[1]}};
     }
+    bool mirrored=glassMirrorActive&&camera.effects[2]==0;
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
-        addThing(thing,i,camera,fraction,beam,casters);
-        if(glassMirrorActive&&camera.effects[2]==0&&glassMirrorPlane[0]*units(thing->x)+glassMirrorPlane[1]*units(thing->y)>glassMirrorPlane[3])
-            addThing(thing,i,camera,fraction,beam,casters,&mirror);
+        bool inFront=mirrored&&glassMirrorPlane[0]*units(thing->x)+glassMirrorPlane[1]*units(thing->y)>glassMirrorPlane[3];
+        addThing(thing,i,camera,fraction,beam,casters,inFront?&mirror:nullptr);
     }
     profileAdd(profile.frame.spritesMs,spritesStart);
     std::sort(casters.begin(),casters.end(),[](const Caster &a,const Caster &b){return a.distance<b.distance;});
