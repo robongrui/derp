@@ -128,6 +128,9 @@ static visplane_t* R_NewVisplane (visplane_t** keep)
 	visplanes = realloc (visplanes, numvisplanes * sizeof(*visplanes));
 	if (!visplanes)
 	    I_Error ("R_NewVisplane: out of memory");
+	// R_DrawPlanes reads bottom[] one column past a plane's edges, so
+	// fresh planes must start with valid rows, as vanilla's static ones did.
+	memset (visplanes + used, 0, (numvisplanes - used) * sizeof(*visplanes));
 	lastvisplane = visplanes + used;
 	if (floor >= 0) floorplane = visplanes + floor;
 	if (ceiling >= 0) ceilingplane = visplanes + ceiling;
