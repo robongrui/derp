@@ -28,6 +28,13 @@ illusions that look the part.
 If an idea in here is useful to somebody else or inspires another experiment,
 the project has already done something worthwhile.
 
+This is an art project, not a code project. The thing I'm making is how DOOM
+looks, sounds and feels to play; the code is just how I get there. An effect
+stays or goes based on how it reads in-game, not on how clean or general its
+implementation is. The source is built for trying out a look, not to be a
+reference engine or a library to build on. The "duct tape" in the name is
+meant honestly.
+
 Claude is used extensively as the implementation tool that makes this
 experiment practical in my spare time. I decide the visual direction,
 rendering constraints and features, test the resulting behaviour in-game,
