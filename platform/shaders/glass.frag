@@ -174,7 +174,9 @@ void main() {
         streak*=0.7+0.3*hash(vec2(cell,5),seed);
     }
     if(streak>0.0) {
-        vec3 shade=vec3(0.88,0.96,1.0)*min(0.45+lit*0.75,vec3(1.2));
+        // A whole pane's streaks keep some light so they read in dim rooms;
+        // the teeth of a broken one take only the light there.
+        vec3 shade=vec3(0.88,0.96,1.0)*min(broken?lit:0.45+lit*0.75,vec3(1.2));
         over(result,saturate(shade),streak*(0.3+0.22*grazing));
     }
     if(vTint.z>0.5&&c.sun.w>0.0) {
@@ -184,8 +186,10 @@ void main() {
     specular=saturate(specular);
     float shine=max(specular.r,max(specular.g,specular.b));
     if(shine>0.004) over(result,specular/shine,shine);
-    // A fresh break catches the light along its edge.
-    if(broken&&cut<1.5) over(result,vec3(0.85,0.95,1.0)*max(light,0.35),0.55);
+    // A fresh break catches the light along its edge: the room's and the
+    // dynamic lights', so it glints under the flashlight and stays dark in
+    // a dark room.
+    if(broken&&cut<1.5) over(result,vec3(0.85,0.95,1.0)*min(lit,vec3(1.2)),0.45);
     if(result.a<=0.002) discard;
     vec3 color=result.rgb/result.a*c.fx.x;
     if(c.materials.z>0.0&&c.effects.z==0.0)
