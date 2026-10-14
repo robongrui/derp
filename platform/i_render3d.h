@@ -24,6 +24,9 @@ void I_Render3DSettingsKey(int scancode, int shift);
 void I_Render3DSettingsClick(int x, int y, int button);
 void I_Render3DSettingsDraw(unsigned *pixels);
 void I_Render3DSettingsMouse(float x, float y, int button);
+/* The loading screen, in the same 640x400 image and font: title, a bar
+   fraction (0-1) full and the stage under it, on black. */
+void I_Render3DLoadingDraw(unsigned *pixels, const char *title, const char *stage, float fraction);
 void I_Render3DScreenshot(void);
 void I_Render3DToggleFlashlight(void);
 int I_Render3DIsAccelerated(void);

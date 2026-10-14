@@ -59,17 +59,35 @@ bool flashPasses(uint j,vec3 origin3,vec3 delta,inout float low,inout float high
 // after the blockers (doom_flash_slice_blockers): a table of first<<16|count
 // per slice, then 16-bit indices. A ray meets no wall outside its azimuth.
 #define FLASH_SLICES 256u
-float flashAt(vec3 point,vec3 normal,uint i) {
+// FEATURE_STIPPLED_SHADOWS: the flashlight's lamp is a short diagonal
+// segment across the ray, FLASH_LAMP_RADIUS each way, instead of a point.
+// Each pixel still casts one ray, from the point on it its ordered-dither
+// threshold picks (flashStipple, in -1..1), so a shadow stays hard and only
+// its edge breaks into a stipple: lit, sparse dots, checkerboard, dense
+// dots, shadow. The
+// stipple is 1 Doom pixel where a blocker meets its shadow and widens with
+// the distance behind it. Diagonal, so the steps run in order across both
+// the vertical edges of wall ends and the level ones of lintels and steps.
+#define FLASH_LAMP_RADIUS 1.5
+float flashAt(vec3 point,vec3 normal,uint i,float stipple) {
     float amount=flashAtOpen(point,normal,i);
     if(amount<=0.0) return 0.0;
     vec3 origin3=lights[i].position.xyz;
     vec3 delta=point-origin3;
+    // Blockers are listed by the slice of the lamp's own ray (below); the
+    // segment is short enough that a ray from its end meets the same ones.
+    vec3 sliceDelta=delta;
+    if(stipple!=0.0&&lights[i].direction.w>0.0&&dot(delta.xy,delta.xy)>1.0) {
+        vec2 across=normalize(vec2(-delta.y,delta.x));
+        origin3+=vec3(across,1.0)*(stipple*FLASH_LAMP_RADIUS);
+        delta=point-origin3;
+    }
     float extent=lights[i].direction.w>0.0?0.0:lights[i].direction.x,low=-extent,high=extent;
     uint first=lights[i].first&0x7fffffffu,count=lights[i].count;
     if((lights[i].first&0x80000000u)!=0u) {
         // Straight above or below the light no wall is crossed.
-        if(delta.x!=0.0||delta.y!=0.0) {
-            float turn=(atan(delta.y,delta.x)+3.14159265)*(float(FLASH_SLICES)/6.2831853);
+        if(sliceDelta.x!=0.0||sliceDelta.y!=0.0) {
+            float turn=(atan(sliceDelta.y,sliceDelta.x)+3.14159265)*(float(FLASH_SLICES)/6.2831853);
             uint slice=min(uint(max(turn,0.0)),FLASH_SLICES-1u);
             uint table=first+2u*count,indices=table+FLASH_SLICES/4u;
             uint entry=lightWords[table+slice/4u][slice%4u];
@@ -81,7 +99,30 @@ float flashAt(vec3 point,vec3 normal,uint i) {
     } else for(uint j=first;j<first+2u*count;j+=2u) if(!flashPasses(j,origin3,delta,low,high)) return 0.0;
     return extent>0.0?amount*(high-low)/(2.0*extent):amount;
 }
-float flashAt(vec3 point,uint i) {return flashAt(point,vec3(0),i);}
+float flashAt(vec3 point,vec3 normal,uint i) {return flashAt(point,normal,i,0.0);}
+float flashAt(vec3 point,uint i) {return flashAt(point,vec3(0),i,0.0);}
+// The stipple threshold for a point, the same for every light, so callers
+// work it out once outside their light loops. Anchored to the surface, not
+// the screen: on floors and ceilings by map x/y, on walls by distance along
+// the wall and height, on sprites (normal vec3(0)) across the view. A cell
+// is two map units (a chunky pair of texels of unscaled artwork), grown in
+// powers of two to stay at least a Doom pixel far off, so the pattern holds
+// still while the swaying beam's edge moves over it. A 2x2 pattern: its four
+// steps read as clean dot patterns where 4x4's sixteen looked like noise.
+// 0 when off.
+float flashStipple(vec3 point,vec3 normal) {
+    if((uint(c.flashlightTint.w)&FEATURE_STIPPLED_SHADOWS)==0u) return 0.0;
+    vec2 anchor;
+    if(abs(normal.z)>0.5) anchor=point.xy;
+    else if(dot(normal.xy,normal.xy)>0.0) anchor=vec2(dot(point.xy,normalize(vec2(-normal.y,normal.x))),point.z);
+    else anchor=vec2(dot(point.xy,normalize(c.right.xy)),point.z);
+    float depth=max(dot(point-c.eye.xyz,c.forward.xyz),1.0);
+    float pixel=depth/(max(c.projection.y,0.01)*100.0);
+    float cell=exp2(max(1.0,ceil(log2(pixel))));
+    ivec2 q=ivec2(floor(anchor/cell))&1;
+    float level=float(2*(q.x^q.y)+q.y); // Bayer's 2x2: 0 2 / 3 1
+    return (level+0.5)/2.0-1.0;
+}
 #endif
 // Lambert facing, blended toward 1 by the light's directionality (color.w):
 // near-surface emissive sources stay soft so they still light their own wall.

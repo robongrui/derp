@@ -216,6 +216,29 @@ next to it.
 See [`platform/scene3d/lights.cpp`](platform/scene3d/lights.cpp) and
 [`platform/scene3d/exposure.cpp`](platform/scene3d/exposure.cpp).
 
+### Flashlight shadows have stippled edges
+
+The flashlight's shadows have dithered edges by default. This is a deliberate
+choice: a lamp that is a single point casts perfectly sharp shadows, and those
+read as too sharp, closer to a modern renderer than to DOOM. Its beam already
+brightens in hard steps, so its shadows step too. They stay hard, but each edge
+breaks into a coarse ordered dither in four steps: lit, sparse dots,
+checkerboard, dense dots, shadow. On a CRT, the dither blurs into something
+like a soft shadow.
+
+The edge is about a pixel wide where a wall meets its own shadow and widens the
+farther the shadow falls behind it, as a real lamp's penumbra (soft edge band)
+does. Each pixel still casts one ray, so it costs nothing extra. The pattern is
+pinned to the walls and floors instead of the screen, so it holds still while
+the swaying beam's edge moves over it. Monster silhouettes thrown on walls get
+the same dither, laid on the sprite's own pixels.
+
+To get the sharp shadows back, turn off **Stippled shadow edges** in the F4
+menu under Flashlight and shadows.
+
+See `flashStipple` in [`platform/shaders/lighting.glsl`](platform/shaders/lighting.glsl)
+and [`platform/shaders/shadow.frag`](platform/shaders/shadow.frag).
+
 ### Shadows are squashed sprites
 
 A monster's shadow is its current animation frame flattened onto the floor as a
@@ -223,7 +246,8 @@ dark translucent decal, clipped to the sector's floor polygons. It spreads and
 fades when the monster rises into the air. Monsters get a second flattened
 shadow pointing away from the strongest dynamic light nearby.
 
-The flashlight can throw hard-edged sprite silhouettes onto walls, and the
+The flashlight can throw sprite silhouettes onto walls, with stippled edges by
+default (see above), and the
 player can cast a shadow from the sun or the strongest suitable light.
 
 See [`platform/scene3d/shadows.cpp`](platform/scene3d/shadows.cpp).
@@ -380,8 +404,8 @@ and the camera are interpolated between DOOM's 35 Hz game tics.
 ## How the sound cheats
 
 Sound gets the same treatment as the graphics. Everything is worked out from
-the map while you play, and the original effects are still mixed as crunchy
-8-bit samples. The target is a late-90s A3D or EAX sound card, with a fairly
+the map while you play, and by default the original effects are still mixed
+as crunchy 8-bit samples. The target is a late-90s A3D or EAX sound card, with a fairly
 short and lo-fi reverb. Music stays dry. The settings are in the **Sound** tab
 of the F4 panel.
 
@@ -434,13 +458,42 @@ moves.
 Muffling only changes the tone. Volume is the same as in vanilla DOOM, so you
 can locate monsters by ear as well as before.
 
+### Samples get treble they never had
+
+DOOM's effects are mostly 11 kHz samples, so they hold nothing above about
+5.5 kHz. Played back at 44.1 kHz with each sample held, as vanilla does, the
+gap fills with mirror images of the sound. That sizzle is most of the crack in
+the pistol, but it rings metallic because it turns the sound's spectrum upside
+down. **Sample playback** in the Sound tab offers three ways to read between
+the samples:
+
+- **Original** (the default) holds each sample: raw, gritty and sizzling.
+- **Smooth** draws a cubic curve through the samples and keeps a little of the
+  sizzle.
+- **Clean** uses a windowed-sinc filter and removes the sizzle entirely.
+
+Smooth and Clean on their own sound muffled, because the sizzle was the
+treble. So they make up new treble as the sound plays. The top octave the
+sample does have is rectified, which doubles its frequencies: tones gain their
+own overtones, and noise, which is most of a shot or a blast, stays noise, only
+higher. A second pass adds air above 11 kHz. Only what lands above the
+sample's own band is mixed in, so the recording itself comes through
+untouched. The extra treble follows the sound's pitch and goes in before the
+muffling, so a sound behind a wall still loses it.
+
+The **Made-up treble** slider sets how much. At 100% it is about as bright as
+Original, without the metallic ring. Rare spikes are rounded off so they don't
+set off the limiter.
+
 The mixer uses DOOM's 0–15 effects volume scale and DMX-style panning. A peak
 limiter briefly ducks the mix when many shots fire at once, so it doesn't
 crackle.
 
 See [`platform/audio/room.c`](platform/audio/room.c),
 [`platform/audio/reverb.c`](platform/audio/reverb.c),
-[`platform/audio/occlusion.c`](platform/audio/occlusion.c) and
+[`platform/audio/occlusion.c`](platform/audio/occlusion.c),
+[`platform/audio/resample.c`](platform/audio/resample.c),
+[`platform/audio/treble.c`](platform/audio/treble.c) and
 [`platform/i_sdl_sound.c`](platform/i_sdl_sound.c).
 
 ## Game data

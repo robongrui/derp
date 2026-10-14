@@ -87,11 +87,12 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     }
     pulse+=staticLight;
     if(mapped) pulse+=bounce*c.bake.y*occlusion;
+    float stipple=flashStipple(vWorld,normal);
     while(any(notEqual(mask,uvec2(0)))) {
         uint word=mask.x!=0u?0u:1u;
         uint i=word*32u+uint(findLSB(mask[word]));
         mask[word]&=mask[word]-1u;
-        float amount=flashAt(vWorld,normal,i);
+        float amount=flashAt(vWorld,normal,i,stipple);
         if(amount<=0.0) continue;
         float bakedShare=useBake?lights[i].baked:0.0;
         amount*=mix(1.0,staticKept,bakedShare);

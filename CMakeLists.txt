@@ -207,6 +207,7 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/impacts.cpp
         platform/scene3d/lights.cpp
         platform/scene3d/liquids.cpp
+        platform/scene3d/loading.cpp
         platform/scene3d/map.cpp
         platform/scene3d/relight.cpp
         platform/scene3d/scene.cpp
@@ -222,6 +223,7 @@ if(DOOM_BUILD_SDL)
         platform/gpu3d/device.cpp
         platform/gpu3d/draw.cpp
         platform/gpu3d/frame.cpp
+        platform/gpu3d/loading.cpp
         platform/gpu3d/pipelines.cpp
     )
     if(NOT MSVC)
@@ -239,8 +241,9 @@ if(DOOM_BUILD_SDL)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
         target_compile_definitions(${target} PRIVATE DOOM_RENDER3D)
     endfunction()
-    # Sound in the map for the SDL mixer: room reverb, muffling and the map reads they share.
-    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/reverb.c platform/audio/room.c)
+    # Sound in the map for the SDL mixer: room reverb, muffling, the map reads they share, and sample playback.
+    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c
+        platform/audio/treble.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)

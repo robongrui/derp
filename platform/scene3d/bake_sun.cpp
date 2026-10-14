@@ -43,6 +43,7 @@ void sunStrip(const BakeMap &map,const BakeStrip &strip,const float direction[3]
     });
 }
 void bakeSun() {
+    loadingStage(LoadStage::Sun);
     finishRelight();
     sunBaked=true;sunLevel=0;
     if(contactCells.empty())return;

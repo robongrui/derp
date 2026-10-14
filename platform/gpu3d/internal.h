@@ -83,6 +83,13 @@ void drawOverlays(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,const Fr
 
 // frame.cpp
 void releaseReflection();
+// A 640x400 panel image (settings, loading) at a whole-pixel scale in the
+// middle of the drawable, as a quad over all of it; origin and scale in drawable pixels.
+std::vector<Vertex> panelQuad(Uint32 drawableWidth,Uint32 drawableHeight,float origin[2],float &scale);
+
+// loading.cpp
+void showLoading(const char *title,const char *stage,float fraction);
+void releaseLoading();
 
 inline SDL_GPUTexture *gpu(const GpuTextureRef &texture) {return texture?texture->texture:nullptr;}
 template<class T> inline void release(T *&object,void (*destroy)(SDL_GPUDevice*,T*)) {if(object&&device)destroy(device,object);object=nullptr;}

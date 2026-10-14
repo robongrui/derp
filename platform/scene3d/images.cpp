@@ -247,6 +247,7 @@ static std::vector<byte> emissionMask(const char *name,bool flat,int w,int h,con
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
 Image &wallImage(int index) {
     auto found=images.find(index); if(found!=images.end()) return found->second;
+    loadingTick();
     int w,h; R_TextureDimensions(index,&w,&h);
     if(w<1||h<1||w>8192||h>8192) I_Error((char*)"Unsupported texture dimensions");
     std::vector<byte> pixels((size_t)w*h*2); R_CopyIndexedTexture(index,pixels.data());
@@ -263,6 +264,7 @@ Image &wallImage(int index) {
 }
 Image &lumpImage(int lump,bool flat) {
     int key=-1-lump; auto found=images.find(key); if(found!=images.end()) return found->second;
+    loadingTick();
     int size=W_LumpLength(lump);
     const byte *data=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
     if(flat) {

@@ -10,6 +10,8 @@
 #include "w_wad.h"
 #include "z_zone.h"
 #include "audio/occlusion.h"
+#include "audio/resample.h"
+#include "audio/treble.h"
 #include "audio/reverb.h"
 #include "audio/sf2_synth.h"
 #include "audio/sound_options.h"
@@ -32,6 +34,7 @@ typedef struct {
     float left, right, send;
     /* Lowpass: cutoff glides to target; two one-pole stages of state. */
     float cutoff, target, low[2];
+    treble_t treble;
     int handle, measured;
 } channel_t;
 static sample_t samples[NUMSFX];
@@ -39,6 +42,8 @@ static channel_t channels[MIX_CHANNELS];
 static SDL_AudioStream *stream;
 static int next_handle = 1;
 static int acoustics = 1, muffle_walls = 1, muffle_distance = 1;
+static int resampling = RESAMPLE_ORIGINAL;
+static float treble_amount = 1;
 static float next_cutoff = OCCLUSION_OPEN_HZ;
 static float reverb_amount = 1;
 static float limiter_gain = 1;
@@ -60,6 +65,7 @@ static void gains(channel_t *channel, int volume, int separation, int pitch)
     channel->right = SFX_GAIN * level * SDL_min(1.0f, separation / 127.0f);
     channel->send = SFX_GAIN * sqrtf(level);
     channel->step = channel->sample.rate / (double)OUTPUT_RATE * pow(2.0, (pitch - 128) / 64.0);
+    Treble_Tune(&channel->treble, (float)(0.5 * channel->step * OUTPUT_RATE), OUTPUT_RATE);
 }
 
 static void audio(void *userdata, SDL_AudioStream *output, int additional, int total)
@@ -78,11 +84,14 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
             if (!channel->handle) continue;
             channel->cutoff *= powf(channel->target / channel->cutoff, 1 - expf(-count / (MUFFLE_GLIDE_SECONDS * OUTPUT_RATE)));
             float keep = expf(-2 * SDL_PI_F * channel->cutoff / OUTPUT_RATE);
+            /* Held samples bring their own sizzle up there instead. */
+            int treble = resampling != RESAMPLE_ORIGINAL && treble_amount > 0;
             for (int i = 0; i < count; ++i)
             {
                 int position = (int)channel->position;
                 if (position >= channel->sample.length) { channel->handle = 0; break; }
-                float value = ((int)channel->sample.data[position] - 128) / 128.0f;
+                float value = Resample_At(channel->sample.data, channel->sample.length, channel->position, resampling);
+                if (treble) value = Treble_Process(&channel->treble, value, treble_amount);
                 channel->low[0] = value + (channel->low[0] - value) * keep;
                 channel->low[1] = channel->low[0] + (channel->low[1] - channel->low[0]) * keep;
                 value = channel->low[1];
@@ -136,6 +145,7 @@ void I_InitSound(void)
     { fprintf(stderr, "Audio unavailable: %s\n", SDL_GetError()); return; }
     SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, OUTPUT_RATE };
     Reverb_Init(OUTPUT_RATE);
+    Resample_Init();
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio, NULL);
     if (!stream) { fprintf(stderr, "Audio unavailable: %s\n", SDL_GetError()); return; }
     SDL_ResumeAudioStreamDevice(stream);
@@ -167,6 +177,13 @@ void I_SetSoundOptions(int enabled, float amount, int walls, int distance)
     reverb_amount = SDL_clamp(amount, 0.0f, 2.0f);
     muffle_walls = walls != 0;
     muffle_distance = distance != 0;
+    if (stream) SDL_UnlockAudioStream(stream);
+}
+void I_SetSfxPlayback(int mode, float treble)
+{
+    if (stream) SDL_LockAudioStream(stream);
+    resampling = SDL_clamp(mode, RESAMPLE_ORIGINAL, RESAMPLE_CLEAN);
+    treble_amount = SDL_clamp(treble, 0.0f, 2.0f);
     if (stream) SDL_UnlockAudioStream(stream);
 }
 
@@ -212,6 +229,7 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
     channel->position = 0;
     channel->cutoff = channel->target = cutoff;
     channel->low[0] = channel->low[1] = 0;
+    Treble_Reset(&channel->treble);
     channel->measured = gametic;
     if (next_handle == INT_MAX) next_handle = 1;
     channel->handle = next_handle++;

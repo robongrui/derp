@@ -103,13 +103,14 @@ void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool f
     }
     float lift=2*decalLift(span.a.x+tx*len*0.5f,span.a.y+ty*len*0.5f,camera)+0.6f; // Above wall blood.
     auto &out=decalBatches[lump];
+    unsigned mode=MODE_HARD_SILHOUETTE|(settings.stippledShadows?MODE_STIPPLED:0);
     for(int j=0;j<rows;++j)for(int i=0;i<columns;++i) {
         int k[4]={j*(columns+1)+i,j*(columns+1)+i+1,(j+1)*(columns+1)+i+1,(j+1)*(columns+1)+i};
         if(!valid[k[0]]||!valid[k[1]]||!valid[k[2]]||!valid[k[3]])continue;
         std::vector<WallPoint> cell={grid[k[0]],grid[k[1]],grid[k[2]],grid[k[3]]};
         cell=clipWallPolygon(cell,false,0,true);cell=clipWallPolygon(cell,false,len,false);
         cell=clipWallPolygon(cell,true,span.bottom,true);cell=clipWallPolygon(cell,true,span.top,false);
-        auto vertex=[&](const WallPoint &p){return Vertex{span.a.x+tx*p.s+nx*lift,span.a.y+ty*p.s+ny*lift,p.z,p.u,p.v,opacity,MODE_HARD_SILHOUETTE};};
+        auto vertex=[&](const WallPoint &p){return Vertex{span.a.x+tx*p.s+nx*lift,span.a.y+ty*p.s+ny*lift,p.z,p.u,p.v,opacity,mode};};
         for(size_t n=1;n+1<cell.size();++n)for(size_t m:{size_t(0),n,n+1})out.push_back(vertex(cell[m]));
     }
 }

@@ -89,13 +89,16 @@ void layoutBake() {
     }
 }
 // Runs work(n) for n in [0,count) on all cores (at most threads); work must
-// touch only its own texels.
+// touch only its own texels. Under the loading screen the calling thread
+// keeps the screen drawn with the progress and a worker takes its place.
 void parallelFor(int count,const std::function<void(int)> &work,unsigned threads) {
-    std::atomic<int> next{0};
-    auto run=[&] {for(int n;(n=next++)<count;)work(n);};
+    std::atomic<int> next{0},done{0};
+    auto run=[&] {for(int n;(n=next++)<count;) {work(n);++done;}};
+    bool loading=loadingOnThisThread();
     std::vector<std::thread> workers;
-    for(unsigned n=1;n<std::clamp(std::thread::hardware_concurrency(),1u,std::max(1u,threads));++n)workers.emplace_back(run);
-    run();
+    for(unsigned n=loading?0:1;n<std::clamp(std::thread::hardware_concurrency(),1u,std::max(1u,threads));++n)workers.emplace_back(run);
+    if(loading)while(done<count) {loadingTick((float)done/std::max(1,count));SDL_Delay(2);}
+    else run();
     for(auto &worker:workers)worker.join();
 }
 void uploadWallBake() {

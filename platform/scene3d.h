@@ -89,6 +89,7 @@ struct Settings {
     int bloodShine=1; // Fresh blood glints under dynamic lights, then dries matte.
     int flashlightShadows=1; // Things in the flashlight beam cast their silhouette on the wall behind.
     int classicFlashlight=1; // A shorter, warmer beam that raises light in steps to a little past full brightness, never further.
+    int stippledShadows=1; // The flashlight's shadow edges, from walls and things, break into an ordered-dither stipple instead of a clean line.
     int softSprites=1; // Explosions and puffs stop slicing into walls; dithered toward floors.
     int heatHaze=0; // Stepped raster shimmer above lava, hot floors and flames.
     int eyeAdaptation=1; // Brief stepped over/underexposure when the light changes.
@@ -119,6 +120,8 @@ struct Settings {
     int weaponLighting=1; // The weapon's painted sheen and light come out at load; lights around the player relight it.
     // Sound, though graphics.cfg keeps it: the mixer is told in applySettings.
     int musicDevice=0; // What plays the music: 0 SoundFont, 1 OPL FM, 2 the Mac's own synthesizer.
+    int sfxResampling=0; // Effects between their samples: 0 held (original sizzle), 1 cubic, 2 windowed sinc.
+    float sfxTreble=1; // Made-up treble above the samples' own band, past Original playback (0-2).
     int roomAcoustics=1; // Echoes and a reverb tail measured from the room around the player.
     float reverbAmount=1; // How loud the echoes and tail are (0-2).
     int muffleWalls=1; // Sounds out of sight are muffled, more behind closed doors.
@@ -208,6 +211,13 @@ Image &wallImage(int index);
 Image &lumpImage(int lump,bool flat);
 // Builds the camera, layout and (when the world is visible) all geometry and lights.
 FrameView prepareFrame(int width,int height);
+// Level loading (loading.cpp): when loadPending, the backend calls
+// runLoading before drawing the frame. It does the frame's level building
+// and bakes while show draws the loading screen (level or other title, the
+// current stage, 0-1 done), from the calling thread, a few times a second.
+using LoadingShow=void(*)(const char *title,const char *stage,float fraction);
+bool loadPending();
+void runLoading(int width,int height,LoadingShow show);
 std::vector<unsigned> hudPixels(const unsigned *pixels);
 std::vector<std::array<float,4>> sectorInfo();
 SurfaceBinding surfaceBinding(int key);

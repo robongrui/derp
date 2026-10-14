@@ -58,6 +58,9 @@ void HU_Drawer(void);
 char HU_dequeueChatChar(void);
 void HU_Erase(void);
 
+// The current level's name as the automap shows it ("E1M1: HANGAR").
+const char *HU_LevelTitle(void);
+
 
 #endif
 //-----------------------------------------------------------------------------

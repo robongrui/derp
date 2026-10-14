@@ -355,6 +355,17 @@ bool flashlightBounce(float position[3],float normal[2],std::array<float,3> &col
 // Adds the time since start to total while profiling.
 inline uint64_t profileStart() {return profile.enabled?SDL_GetTicksNS():0;}
 inline void profileAdd(double &total,uint64_t start) {if(profile.enabled)total+=(SDL_GetTicksNS()-start)/1e6;}
+// loading.cpp: the stages of the loading pass (runLoading), in the order they
+// run. Each marks its start; planLoading says which this pass will run (what
+// the bar counts); work on the loading thread calls loadingTick to keep the
+// screen drawn, with how much of its stage is done when it knows.
+enum class LoadStage { Map, Textures, Sun, Lights, Grid, Bounce, Ambient, Flow, Count };
+void planLoading(LoadStage stage,bool planned);
+void loadingStage(LoadStage stage);
+void loadingTick(float part=-1);
+bool loadingOnThisThread();
+// Whether the next world frame builds a level or bakes (scene.cpp).
+bool bakesPending();
 struct ProfileTimer { double &total; uint64_t start=profileStart(); ~ProfileTimer() {profileAdd(total,start);} };
 inline uint8_t *flatCell(FlatLayer layer,size_t cell) {return &flatLightCells[4*((size_t)layer*mapWidth*mapHeight+cell)];}
 inline float floorZ(const sector_t *sector) {return sectorHeight(sector,false);}

@@ -15,7 +15,18 @@ void main() {
 #ifdef DECAL
     float alpha=shadowCoverage(vUV);
     // MODE_HARD_SILHOUETTE: hard-edged silhouettes keep the sprite's pixel outline.
-    if((vMode&MODE_HARD_SILHOUETTE)!=0u) alpha=step(0.5,alpha);
+    // MODE_STIPPLED: as the flashlight's other shadows (flashStipple in
+    // lighting.glsl), the edge breaks into a 2x2 ordered dither in 4 steps.
+    // Coverage spread a texel each way is held against the pattern, laid on
+    // the sprite's own texels: the stipple matches the outline's pixel steps,
+    // moves with the shadow so it never crawls, and widens with the shadow's
+    // enlargement, the farther the wall behind the thing.
+    if((vMode&MODE_STIPPLED)!=0u&&(vMode&MODE_HARD_SILHOUETTE)!=0u) {
+        float spread=alpha*0.4+0.15*(shadowCoverage(vUV+vec2(1,0))+shadowCoverage(vUV-vec2(1,0))+
+                                     shadowCoverage(vUV+vec2(0,1))+shadowCoverage(vUV-vec2(0,1)));
+        ivec2 q=ivec2(floor(vUV))&1;
+        alpha=step((float(2*(q.x^q.y)+q.y)+0.5)/4.0,spread);
+    } else if((vMode&MODE_HARD_SILHOUETTE)!=0u) alpha=step(0.5,alpha);
     if(alpha<0.02) discard;
     outColor=vec4(0,0,0,alpha*vLight);
 #else

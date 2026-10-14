@@ -364,4 +364,17 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
     fill(0,0,1,height,backdrop);fill(width-1,0,1,height,backdrop);
 }
 
+void I_Render3DLoadingDraw(unsigned *pixels,const char *title,const char *stage,float fraction) {
+    image=pixels;
+    loadFont();
+    const unsigned black=0xff000000;
+    fill(0,0,width,height,black);
+    const int titleRow=11,barY=rowY(titleRow+1)+4,barWidth=320,barX=(width-barWidth)/2,barHeight=6;
+    drawTextAt(title,(width-textWidth(title))/2,titleRow,heading);
+    fill(barX-2,barY-2,barWidth+4,barHeight+4,track);
+    fill(barX-1,barY-1,barWidth+2,barHeight+2,black);
+    fill(barX,barY,(int)std::lround(barWidth*std::clamp(fraction,0.0f,1.0f)),barHeight,trackFill);
+    drawTextAt(stage,(width-textWidth(stage))/2,titleRow+2,description);
+}
+
 void I_Render3DSettings(void) { I_Render3DSettingsMenu(); }

@@ -27,3 +27,6 @@
 .vscode/
 .idea/
 *.swp
+
+# Written by the portability test, like portability.cfg and .wad
+/portability.deh

@@ -15,6 +15,7 @@
 #define MODE_BLOOD           256u  // blood decal; vTint carries wetness and drying
 #define MODE_HARD_SILHOUETTE 512u  // shadow pass: keep the sprite's pixel outline
 #define MODE_SOFT            1024u // effect sprite: dithers out at floors, drawn in front of walls
+#define MODE_STIPPLED        1024u // decal pass only: a hard silhouette's edge breaks into a stipple
 #define MODE_WET_SPRITE      2048u // airborne blood glints like floor blood (needs MODE_RELIT)
 // Bits from here up carry sector+1 for map-space lighting; 0 means none.
 #define MODE_SECTOR_SHIFT    12

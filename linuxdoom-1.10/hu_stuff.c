@@ -491,6 +491,11 @@ void HU_Drawer(void)
 
 }
 
+const char *HU_LevelTitle(void)
+{
+    return w_title.l;
+}
+
 void HU_Erase(void)
 {
 

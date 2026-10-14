@@ -142,8 +142,9 @@ void main() {
     // The same lights also light the glass itself (lit), for the streaks.
     vec3 mirrored=reflect(-view,normal),specular=vec3(0),lit=vec3(light);
     float gloss=1.2*(0.7+0.6*grazing);
+    float stipple=flashStipple(vWorld,normal);
     for(uint i=0u;i<flashCount;++i) {
-        float amount=flashAt(vWorld,normal,i);
+        float amount=flashAt(vWorld,normal,i,stipple);
         if(amount<=0.0) continue;
         vec3 toLight=normalize(lights[i].position.xyz-vWorld);
         float front=saturate(dot(normal,toLight)*4.0);

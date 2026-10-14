@@ -76,6 +76,7 @@ void applySettings() {
     if(!settings.look) pitch=0;
     R_SetViewSize(10,0);
     I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance);
+    I_SetSfxPlayback(settings.sfxResampling,settings.sfxTreble);
     I_SetMusicDevice(settings.musicDevice);
 }
 void sceneInit(SDL_Window *window) {
@@ -107,6 +108,7 @@ void sceneShutdown() {
 // A new level, or the first after shutdown: each part forgets the last
 // level, then the map and what is built from it at level load.
 static void startLevel() {
+    loadingStage(LoadStage::Map);
     stopRelight();
     batches.clear();shadowBatches.clear();mirrorBatches.clear();clearSurfaceLights();
     bakeAtlasNewLevel();sunNewLevel();lightBakeNewLevel();clearStaticGrid();indirectNewLevel();
@@ -117,6 +119,24 @@ static void startLevel() {
     layoutBake();
     findDoors();
     levelSerial=r_levelserial;
+}
+static bool levelPending() {return levelSerial!=r_levelserial||floors.empty();}
+bool bakesPending() {
+    return (settings.bakedLights&&lightBakeKey!=lightBakeInputs())||(settings.bounce&&bounceKey!=bounceInputs())||
+        ((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)||(settings.lightFlow&&flowKey!=flowInputs())||(settings.sun&&!sunBaked);
+}
+bool loadPending() {return worldPending&&(levelPending()||settings.thingShadows!=bakeThingsKey||bakesPending());}
+// What this frame builds and bakes, for the loading bar. A new level resets
+// every bake, so each one switched on runs.
+static void planStages(bool level) {
+    bool lights=settings.bakedLights&&(level||lightBakeKey!=lightBakeInputs());
+    planLoading(LoadStage::Map,level);planLoading(LoadStage::Textures,level);
+    planLoading(LoadStage::Sun,settings.sun&&(level||!sunBaked));
+    planLoading(LoadStage::Lights,lights);
+    planLoading(LoadStage::Grid,settings.bakedLights&&settings.gridSpriteLight&&(lights||staticSerial!=lightBakeSerial));
+    planLoading(LoadStage::Bounce,settings.bounce&&(level||lights||bounceKey!=bounceInputs()));
+    planLoading(LoadStage::Ambient,(settings.skyLight||settings.bakedAO)&&(level||ambientKey!=bakeThingsKey));
+    planLoading(LoadStage::Flow,settings.lightFlow&&(level||flowKey!=flowInputs()));
 }
 // Binds a batch texture with its next animation frame and crossfade amount.
 // The engine switches frames before leveltime++, so the phase uses leveltime-1.
@@ -179,7 +199,7 @@ FrameView prepareFrame(int w,int h) {
         (settings.detail&&settings.variedHighlights?FEATURE_VARIED_HIGHLIGHTS:0)|
         (settings.windowLight&&bakedLightsActive?FEATURE_WINDOW_LIGHT:0)|
         (settings.detail&&settings.unevenTiles?FEATURE_UNEVEN_TILES:0)|(settings.detail&&settings.unevenWalls?FEATURE_UNEVEN_WALLS:0)|
-        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0);
+        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0)|(settings.stippledShadows?FEATURE_STIPPLED_SHADOWS:0);
     camera.flashlightTint[3]=(float)features; // see shaders/feature_flags.h
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;
@@ -201,8 +221,10 @@ FrameView prepareFrame(int w,int h) {
     camera.fx2[0]=worldH/200;
     float fraction=1;
     if(worldPending) {
-        if(levelSerial!=r_levelserial||floors.empty())startLevel();
+        bool level=levelPending();
+        if(level) {planStages(true);startLevel();}
         syncBakeThings();
+        if(!level)planStages(false);
         relightMovingSectors();
         if(settings.sun&&!sunBaked)bakeSun();
         bool sun=settings.sun&&sunLevel>0;
@@ -239,6 +261,7 @@ FrameView prepareFrame(int w,int h) {
             camera.texFilter[3]=((leveltime-1)%causticSpeed+fraction)/causticSpeed;
         }
         uint64_t geometryStart=profileStart();
+        if(level)loadingStage(LoadStage::Textures);
         geometry(camera,fraction);
         profileAdd(profile.frame.geometryMs,geometryStart);
         if(profile.enabled)skipProfiledLights();

@@ -37,11 +37,12 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
     // light. Without the bound a strong light from below (a glowing pool)
     // left a sprite over it black while its dynamic copy was selected.
     vec3 tint=pulse,shaped=vec3(0);
+    float stipple=flashStipple(vWorld,vec3(0));
     while(any(notEqual(mask,uvec2(0)))) {
         uint word=mask.x!=0u?0u:1u;
         uint i=word*32u+uint(findLSB(mask[word]));
         mask[word]&=mask[word]-1u;
-        float amount=flashAt(vWorld,i);
+        float amount=flashAt(vWorld,vec3(0),i,stipple);
         if(amount<=0.0) continue;
         if(c.bake.x>0.0) {
             float luminance=amount*max(dot(lights[i].color.rgb,vec3(0.299,0.587,0.114)),0.001);

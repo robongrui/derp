@@ -456,8 +456,9 @@ void D_AdvanceDemo (void)
 
 
 //
-// This cycles through the demo sequences.
-// FIXME - version dependend demo numbers?
+// This cycles through the title pages. The demos that played between them
+// are left out, so no level loads until the player starts a game; -playdemo
+// and -timedemo still play one.
 //
  void D_DoAdvanceDemo (void)
 {
@@ -467,11 +468,9 @@ void D_AdvanceDemo (void)
     paused = false;
     gameaction = ga_nothing;
 
-    if ( gamemode == retail )
-      demosequence = (demosequence+1)%7;
-    else
-      demosequence = (demosequence+1)%6;
-    
+    demosequence = (demosequence+1)%3;
+    gamestate = GS_DEMOSCREEN;
+
     switch (demosequence)
     {
       case 0:
@@ -479,7 +478,6 @@ void D_AdvanceDemo (void)
 	    pagetic = 35 * 11;
 	else
 	    pagetic = 170;
-	gamestate = GS_DEMOSCREEN;
 	pagename = "TITLEPIC";
 	if ( gamemode == commercial )
 	  S_StartMusic(mus_dm2ttl);
@@ -487,23 +485,14 @@ void D_AdvanceDemo (void)
 	  S_StartMusic (mus_intro);
 	break;
       case 1:
-	G_DeferedPlayDemo ("demo1");
-	break;
-      case 2:
 	pagetic = 200;
-	gamestate = GS_DEMOSCREEN;
 	pagename = "CREDIT";
 	break;
-      case 3:
-	G_DeferedPlayDemo ("demo2");
-	break;
-      case 4:
-	gamestate = GS_DEMOSCREEN;
+      case 2:
 	if ( gamemode == commercial)
 	{
 	    pagetic = 35 * 11;
 	    pagename = "TITLEPIC";
-	    S_StartMusic(mus_dm2ttl);
 	}
 	else
 	{
@@ -514,13 +503,6 @@ void D_AdvanceDemo (void)
 	    else
 	      pagename = "HELP2";
 	}
-	break;
-      case 5:
-	G_DeferedPlayDemo ("demo3");
-	break;
-        // THE DEFINITIVE DOOM Special Edition demo
-      case 6:
-	G_DeferedPlayDemo ("demo4");
 	break;
     }
 }

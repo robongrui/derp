@@ -25,5 +25,6 @@
 #define FEATURE_UNEVEN_TILES       131072u // painted floor tiles lie a little crooked
 #define FEATURE_UNEVEN_WALLS       262144u // painted wall and ceiling tiles and bricks too
 #define FEATURE_CLASSIC_FLASHLIGHT 524288u // the flashlight raises light like extralight, in steps
+#define FEATURE_STIPPLED_SHADOWS   1048576u // flashlight shadow edges break into an ordered-dither stipple
 
 #endif

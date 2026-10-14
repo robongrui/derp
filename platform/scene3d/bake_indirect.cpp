@@ -19,6 +19,7 @@ int bounceInputs() {
 // light. Samples are taken every 16 units and spread bilinearly over the
 // cells between them within a sector or wall strip.
 void bakeBounce() {
+    loadingStage(LoadStage::Bounce);
     finishRelight();
     bounceKey=bounceInputs();
     if(flatLightCells.empty()||wallBakeCells.empty())return;
@@ -275,6 +276,7 @@ static void bakeSpread(int step,FlatSample flatSample,FlatWrite flatWrite,WallSa
 // like Doom's light levels, packed into the alpha of the bounce layers:
 // sky in the high nibble, openness in the low one.
 void bakeAmbient() {
+    loadingStage(LoadStage::Ambient);
     finishRelight();
     ambientKey=bakeThingsKey;
     if(flatLightCells.empty()||wallBakeCells.empty())return;
@@ -332,6 +334,7 @@ void bakeAmbient() {
 // light rises toward that sector's current light, so flickering rooms
 // flicker faintly beyond their openings. Doors count as they start (closed).
 void bakeFlow() {
+    loadingStage(LoadStage::Flow);
     finishRelight();
     flowKey=flowInputs();
     bool windows=flowKey&2;

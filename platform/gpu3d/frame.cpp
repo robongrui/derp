@@ -52,16 +52,20 @@ static void capture(SDL_GPUCommandBuffer *command,const FrameView &view,int w,in
         for(unsigned &p:pixels)p=(p&0xff00ff00u)|((p&0xffu)<<16)|((p>>16)&0xffu);
     saveScreenshot(fence?pixels.data():nullptr,w,h,w*4);
 }
+std::vector<Vertex> panelQuad(Uint32 drawableWidth,Uint32 drawableHeight,float origin[2],float &scale) {
+    float dw=(float)drawableWidth,dh=(float)drawableHeight;
+    scale=std::max(1.0f,std::floor(std::min(dw/DOOM_SETTINGS_WIDTH,dh/DOOM_SETTINGS_HEIGHT)));
+    float pw=DOOM_SETTINGS_WIDTH*scale,ph=DOOM_SETTINGS_HEIGHT*scale;
+    origin[0]=std::floor((dw-pw)/2);origin[1]=std::floor((dh-ph)/2);
+    std::vector<Vertex> quad;
+    screenQuad(quad,-1,1,2,2,-origin[0]/pw,-origin[1]/ph,(dw-origin[0])/pw,(dh-origin[1])/ph);
+    return quad;
+}
 // Draws the settings panel into image and places it over the drawable.
 static void layoutSettingsPanel(Uint32 drawableWidth,Uint32 drawableHeight,std::vector<unsigned> &image) {
     image.assign((size_t)DOOM_SETTINGS_WIDTH*DOOM_SETTINGS_HEIGHT,0);
     I_Render3DSettingsDraw(image.data());
-    float dw=(float)drawableWidth,dh=(float)drawableHeight;
-    settingsScale=std::max(1.0f,std::floor(std::min(dw/DOOM_SETTINGS_WIDTH,dh/DOOM_SETTINGS_HEIGHT)));
-    float pw=DOOM_SETTINGS_WIDTH*settingsScale,ph=DOOM_SETTINGS_HEIGHT*settingsScale;
-    settingsOrigin[0]=std::floor((dw-pw)/2);settingsOrigin[1]=std::floor((dh-ph)/2);
-    screenQuad(settingsQuad,-1,1,2,2,-settingsOrigin[0]/pw,-settingsOrigin[1]/ph,
-               (dw-settingsOrigin[0])/pw,(dh-settingsOrigin[1])/ph);
+    settingsQuad=panelQuad(drawableWidth,drawableHeight,settingsOrigin,settingsScale);
 }
 // Mirrors and probes draw the whole map from elsewhere; a depth prepass of
 // the opaque batches first, as in the main view, lets each pixel shade once.
@@ -348,6 +352,15 @@ void releaseReflection() {
 using namespace gpu3d;
 void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     applySampleCount();
+    // A new level's build and bakes run first, with the loading screen up.
+    if(loadPending()) {
+        int w=width,h=height;
+        if(!colorTexture) {
+            int pw=1,ph=1;SDL_GetWindowSizeInPixels(gameWindow,&pw,&ph);
+            w=std::max(1,pw*settings.scale/100);h=std::max(1,ph*settings.scale/100);
+        }
+        runLoading(w,h,showLoading);
+    }
     SDL_GPUCommandBuffer *command=SDL_AcquireGPUCommandBuffer(device);
     if(!command) {fprintf(stderr,"GPU command buffer: %s\n",SDL_GetError());return;}
     SDL_GPUTexture *swapchain=nullptr;Uint32 drawableWidth=0,drawableHeight=0;

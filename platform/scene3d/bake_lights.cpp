@@ -363,6 +363,7 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
 // 32 light rows of COLORMAP. Bake-only lights also light liquid pools as
 // areas and record each texel's light direction and flicker group.
 void bakeLights() {
+    loadingStage(LoadStage::Lights);
     finishRelight();
     lightBakeKey=lightBakeInputs();++lightBakeSerial;
     bool only=lightBakeKey&2;

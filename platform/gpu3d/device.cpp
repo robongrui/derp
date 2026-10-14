@@ -201,7 +201,7 @@ void I_Render3DShutdown(void) {
     for(SDL_GPUTexture **t:{&settingsTexture,&hudTexture,&paletteTexture,&paletteLUT,&dummySeam,&dummyContact,&dummyBake,&dummyRelief,&solidTexel})release(*t);
     releasePipelines();
     for(SDL_GPUSampler **s:{&linearRepeat,&linearClamp,&nearestClamp})release(*s,SDL_ReleaseGPUSampler);
-    releaseFrameUploads();
+    releaseFrameUploads();releaseLoading();
     if(device) {
         if(gameWindow)SDL_ReleaseWindowFromGPUDevice(device,gameWindow);
         SDL_DestroyGPUDevice(device);

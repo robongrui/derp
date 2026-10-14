@@ -58,6 +58,7 @@ StaticCell staticCellAt(const BakeMap &map,int gx,int gy) {
     return cell;
 }
 void bakeStaticGrid() {
+    loadingStage(LoadStage::Grid);
     finishRelight();
     staticSerial=lightBakeSerial;staticGrid.clear();
     if(bakeGrid.empty()||seamCells.empty())return;

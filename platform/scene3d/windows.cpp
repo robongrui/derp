@@ -349,9 +349,8 @@ static std::vector<char> captured;
 bool planGlassCaptures(const Uniforms &camera) {
     glassCaptures.clear();
     if(!settings.windowGlass||glassLevelSerial!=r_levelserial||glassProbes.empty()||camera.effects[2]!=0)return false;
-    bool baking=(settings.bakedLights&&lightBakeKey!=lightBakeInputs())||(settings.bounce&&bounceKey!=bounceInputs())||
-        ((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)||(settings.lightFlow&&flowKey!=flowInputs())||(settings.sun&&!sunBaked);
-    if(baking)return false;
+    // The loading pass's frame is not drawn, so it captures nothing.
+    if(bakesPending()||loadingOnThisThread())return false;
     int key=(int)hash32(lightBakeSerial*31u+(unsigned)bounceKey*7u+(unsigned)ambientKey*13u+(unsigned)flowKey*17u+(sunBaked?1u:0u)+
                         (unsigned)skytexture*19u+settingsSerial*23u+glassProbeSerial*29u);
     if(key!=captureKey||captured.size()!=glassProbes.size()) {captureKey=key;captured.assign(glassProbes.size(),0);}

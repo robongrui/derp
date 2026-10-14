@@ -142,6 +142,9 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("classic_flashlight","Classic flashlight",&s.classicFlashlight,
                     "A shorter, warmer beam that works like Doom's own light levels: it brightens what it hits in "
                     "hard steps to a little past full brightness and no further, so monsters keep their palette colors."),
+                check("stippled_shadows","Stippled shadow edges",&s.stippledShadows,
+                    "The shadows walls, ledges and monsters throw in the flashlight stay hard but break into a coarse dither at the edge: "
+                    "a pixel where the wall meets its shadow, wider the farther the shadow falls behind it."),
                 check("flashlight_shadows","Flashlight silhouettes",&s.flashlightShadows,"Things caught in the flashlight throw their sprite outline onto the wall behind them."),
                 check("player_shadow","Player shadow",&s.playerShadow,"Your own sprite's shadow from the sun or the strongest light above you.")}}}},
         {"Atmosphere",{
@@ -207,6 +210,16 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "SoundFont plays sampled General MIDI instruments, close to the Roland Sound Canvas the music was written on. "
                     "OPL is the FM synthesis of DOS sound cards, with DOOM's own instrument set. "
                     "A .sf2 bank put in the soundfonts folder beside doom.cfg replaces the bundled one.")}},
+            {"Effects",{
+                choice("sfx_resampling","Sample playback",&s.sfxResampling,{"Original","Smooth","Clean"},{0,1,2},
+                    "DOOM's effects are 11 kHz samples. Original holds each sample, raw and gritty, with a bright sizzle on top. "
+                    "Smooth blends between samples and keeps some edge. Clean filters the sizzle out entirely."),
+                slider("sfx_treble","Made-up treble",&s.sfxTreble,0,2,0.25,
+                    "With Smooth or Clean, treble the samples never had is made up from their own top end as they play: "
+                    "overtones for tones, finer hiss for shots and blasts, without the metallic ring of held samples. "
+                    "At 100% about as bright as Original.",
+                    [](const Settings &d){return d.sfxResampling!=0;},
+                    {"Off","25%","50%","75%","100%","125%","150%","175%","200%"})}},
             {"Rooms",{
                 check("room_acoustics","Room acoustics",&s.roomAcoustics,
                     "Sounds echo off the walls around you and ring on in a tail measured from the room: corridors slap back, "
