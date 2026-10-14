@@ -49,6 +49,7 @@ int P_PicAnimationNext(boolean istexture,int pic,int *next);
 #include "../surface_lighting.h"
 #include "../baked_lighting.h"
 #include "../weapon_lighting.h"
+#include "../sprite_eyes.h"
 
 
 namespace doom3d {

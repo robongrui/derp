@@ -92,7 +92,10 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "Lamp strips, computer displays, lava and nukage glow with soft bloom and colored light on nearby surfaces."),
                 check("glossy_screens","Glossy monitor screens",&s.glossyScreens,
                     "Screens found in computer textures get curved CRT glass: the picture bends and shifts behind it as you move, "
-                    "and it catches sharp highlights from lamps, shots and the flashlight.")}}}},
+                    "and it catches sharp highlights from lamps, shots and the flashlight."),
+                check("glowing_eyes","Glowing eyes",&s.glowingEyes,
+                    "The eyes painted into monster artwork glow in the dark: the zombies' and imp's red, the demon's yellow, "
+                    "the cacodemon's and mancubus's green, the arachnotron's blue. Found in the sprites at load; bloom needs emissive textures.")}}}},
         {"Lighting",{
             {"Baked at level load",{
                 check("baked_lights","Baked static lights",&s.bakedLights,

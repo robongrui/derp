@@ -27,6 +27,13 @@ vec2 sharpen(vec2 uv,vec2 width) {
     vec2 p=uv-0.5,q=floor(p),w=clamp(width,vec2(1e-3),vec2(1.0))*0.5;
     return q+smoothstep(0.5-w,0.5+w,p-q)+0.5;
 }
+// Glowing eyes (platform/sprite_eyes.h, stamped in scene3d/images.cpp) sit
+// in sprite normals no silhouette has: x all the way right, y over halfway
+// down. Returns the glow: 1 at the painted spot, 2/3 where it spread.
+float eyeGlow(sampler2D image,vec2 uv) {
+    vec2 n=texelFetch(image,clamp(ivec2(floor(uv)),ivec2(0),textureSize(image,0)-1),0).ba;
+    return n.x>0.995&&n.y>0.74?(n.y*255.0-192.0)/63.0:0.0;
+}
 // Masks (texture B channel) read as nearest or bilinear with repeat; the
 // image is bound with a linear repeat sampler.
 float maskAt(sampler2D image,vec2 uv,bool filtered) {

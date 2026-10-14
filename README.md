@@ -1,14 +1,21 @@
 # Duct-Tape DOOM
 
-A for-fun experimental port of id Software's 1997 DOOM source release to
-macOS, Linux and Windows. It keeps the original game simulation and adds an
-optional GPU renderer that builds a 3D scene from the loaded WAD while the game
-runs.
+An idea of how DOOM could have looked if id had kept iterating on this engine,
+and if we still played on CRTs. It tries to look newer without looking modern:
+light comes from lamps and windows, monsters are lit as rounded bodies, water
+reflects the room and sound echoes off the walls, while the light still steps
+like DOOM's light levels, shadow edges break into dither and the pixels stay
+DOOM-sized.
+
+Under the hood it is a for-fun experimental port of id Software's 1997 DOOM
+source release to macOS, Linux and Windows. It keeps the original game
+simulation and adds an optional GPU renderer that builds a 3D scene from the
+loaded WAD while the game runs.
 
 Everything the renderer adds is worked out from the original artwork, maps and
 game state. It needs no replacement textures, models, authored lighting or
-edited maps. The aim is for DOOM to feel more physically coherent while staying
-the same game.
+edited maps. DOOM should feel more physically coherent while staying the same
+game.
 
 ## Why this exists
 
@@ -18,8 +25,9 @@ project. Effects stay or go based on how they look in-game, and the code is
 written for trying ideas out quickly. It is not meant to be a reference engine
 or a library to build on, and the "duct tape" in the name is accurate.
 
-Most of the effects are fake-modern: cheap tricks of the kind I liked in older
-games. They work from the WAD data alone, so ordinary vanilla and
+To fit the idea at the top, most of the effects are fake-modern: cheap tricks
+of the kind I liked in late-90s games, not the techniques a modern engine
+would use. They work from the WAD data alone, so ordinary vanilla and
 limit-removing WADs get them without their authors preparing anything. I'd be
 glad if some of these ideas end up in other projects.
 
@@ -49,6 +57,9 @@ graphics panel with **F4**.
   and shatters when something goes through it.
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
   muffled behind walls and dulled by distance.
+- **Music synths of its own:** a SoundFont synth with the bundled GeneralUser
+  GS bank, an OPL FM synth written from the chip's manual, or the Mac's system
+  synth, plus an offline renderer for comparing them.
 - **Settings panel:** **F4** switches the individual graphics and sound effects
   on and off and tunes them.
 - A headless demo runner, regression tests and a GPU performance smoke test
@@ -125,6 +136,16 @@ of DOOM texels.
 Doors, lifts and lowering walls re-light the area around them as they move, so
 light spreads under an opening while it opens.
 
+The bake keeps more than a color. With bake-only lights (see below), each wall
+texel and floor or ceiling cell also stores the direction most of its light
+comes from, how much comes from that direction, and which flickering lamp
+dominates it. Torches, candles and other animated decorations are sorted into
+15 flicker groups that step like DOOM's flickering sectors. The shaders read
+the direction to light bump, gloss and the monsters' rounded shading, and they
+step each texel with its group's flicker. A torch-lit wall keeps flickering
+with its torch, and its seams still catch the light from the right side, even
+though the torch is no longer a live light.
+
 ![A corridor with baked light falling darker into the corners](screens/baked-corridor.jpg)
 
 See
@@ -183,7 +204,38 @@ that shape, and the painted shading stays visible on top.
 <img src="screens/monsters-red-light.jpg" width="49%" alt="Zombies lit red by the lamps of a big room" />
 </p>
 
-See [`platform/scene3d/sprite_normals.cpp`](platform/scene3d/sprite_normals.cpp).
+Eyes the artists painted in a color the body around them never uses glow in
+the dark: the zombies' and imp's red, the demon's yellow, the cacodemon's and
+mancubus's green, the arachnotron's blue. They are found in each sprite frame
+when it loads and get a little bloom.
+
+See [`platform/scene3d/sprite_normals.cpp`](platform/scene3d/sprite_normals.cpp)
+and [`platform/sprite_eyes.h`](platform/sprite_eyes.h).
+
+### Per-frame light work can move into the bake
+
+By default the bake is only part of the picture. Lamps near the player also
+run as live lights for flicker, bump and gloss detail, and every monster and
+item traces rays to the baked lights each frame. Those rays find the
+static light's color, the direction most of it comes from, its flicker group
+and the lamp the thing's shadow should fall from.
+
+Two switches under **Performance** in F4 move that work to level load. They
+are off by default and meant to look nearly the same:
+
+- **Bake-only static lights:** lamps and glowing textures stop being live
+  lights. Their flicker, bump detail and gloss come from the direction and
+  flicker group stored in the bake, and lava and nukage pools each glow as a
+  single light. Shots, explosions and the flashlight stay live.
+- **Grid lighting for monsters:** the traces are replaced by a grid baked
+  after the lights: one sample every 32 units, a second one higher up in tall
+  rooms, blended between the nearest cells. Monsters keep their per-pixel
+  rounded shading, which now gets cheaper inputs.
+
+See
+[`platform/scene3d/bake_lights.cpp`](platform/scene3d/bake_lights.cpp),
+[`platform/scene3d/thing_light.cpp`](platform/scene3d/thing_light.cpp) and
+[`platform/scene3d/lights.cpp`](platform/scene3d/lights.cpp).
 
 ### Shots and explosions light in their own colors
 
@@ -489,12 +541,38 @@ The mixer uses DOOM's 0–15 effects volume scale and DMX-style panning. A peak
 limiter briefly ducks the mix when many shots fire at once, so it doesn't
 crackle.
 
+### Music plays on synths of its own
+
+DOOM's scores are MUS and MIDI files, and how they sound depends on the synth
+that plays them. Bobby Prince wrote them on a Roland Sound Canvas. Three
+synths are available, picked under **Music** in the Sound tab. The first two
+are built in: both read MUS and MIDI into one list of timed events and render
+it in the game's own mixer.
+
+- **SoundFont** (the default): the bundled GeneralUser GS bank through
+  TinySoundFont, restrained and close to the Sound Canvas. A `.sf2` bank in the
+  `soundfonts` folder beside `doom.cfg` replaces it.
+- **OPL FM:** an emulated YMF262 chip playing the WAD's own GENMIDI
+  instruments, the way DOS DOOM sounded on Sound Blaster cards. The voice
+  handling was written from the chip's manual and the published lump formats
+  alone; [`opl_music_spec.md`](platform/audio/opl_music_spec.md) documents it.
+- **System synth** (Mac only): Apple's built-in General MIDI synthesizer.
+
+`doom-music-render` renders a WAD's songs to WAV files without starting the
+game, so synths and banks can be compared by ear:
+
+```sh
+build/play/doom-music-render freedoom1.wad -synth sf2 -song D_E1M1
+```
+
 See [`platform/audio/room.c`](platform/audio/room.c),
 [`platform/audio/reverb.c`](platform/audio/reverb.c),
 [`platform/audio/occlusion.c`](platform/audio/occlusion.c),
 [`platform/audio/resample.c`](platform/audio/resample.c),
-[`platform/audio/treble.c`](platform/audio/treble.c) and
-[`platform/i_sdl_sound.c`](platform/i_sdl_sound.c).
+[`platform/audio/treble.c`](platform/audio/treble.c),
+[`platform/i_sdl_sound.c`](platform/i_sdl_sound.c),
+[`platform/i_music.c`](platform/i_music.c) and
+[`platform/audio/mixer_music.c`](platform/audio/mixer_music.c).
 
 ## Game data
 

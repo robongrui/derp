@@ -115,6 +115,7 @@ struct Settings {
     int sunShafts=1; // Soft sunbeams slanting down through ceiling holes and windows, with the dust motes in them.
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
     int glossyScreens=1; // Monitor glass found in computer textures bulges, refracts the screen behind it and catches light.
+    int glowingEyes=1; // The eyes painted into monster artwork glow in the dark, with bloom (sprite_eyes.h).
     int windowGlass=1; // Windows found in the map get glass that reflects and shatters when shot through.
     int glassReflections=1; // Experiment: the nearest window mirrors the world, drawn again like the liquid reflection.
     int weaponLighting=1; // The weapon's painted sheen and light come out at load; lights around the player relight it.

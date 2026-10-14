@@ -244,6 +244,29 @@ static std::vector<byte> emissionMask(const char *name,bool flat,int w,int h,con
     }
     return mask;
 }
+// Sprite lumps a living monster shows in its ordinary (not fullbright)
+// frames: those its spawn, chase, pain and attack states lead through, read
+// from the state table so DEHACKED monsters count. Death frames never get eyes,
+// nor the cyberdemon (the red roots of its horns read as eyes) or the
+// Wolfenstein SS (its face does).
+static bool livingMonsterLump(int lump) {
+    static std::vector<char> living;
+    if(living.empty()) {
+        living.assign(numlumps,0);
+        for(const mobjinfo_t &info:mobjinfo) {
+            if(!(info.flags&MF_COUNTKILL))continue;
+            for(int start:{info.spawnstate,info.seestate,info.painstate,info.meleestate,info.missilestate})
+                for(int s=start,steps=0;s>0&&s<NUMSTATES&&steps<64;s=states[s].nextstate,++steps) {
+                    const state_t &state=states[s];int frame=state.frame&FF_FRAMEMASK;
+                    if((state.frame&FF_FULLBRIGHT)||state.sprite<0||state.sprite>=numsprites||frame>=sprites[state.sprite].numframes)continue;
+                    if(!strncmp(sprnames[state.sprite],"CYBR",4)||!strncmp(sprnames[state.sprite],"SSWV",4))continue;
+                    for(short rotation:sprites[state.sprite].spriteframes[frame].lump)
+                        if(rotation>=0&&firstspritelump+rotation<numlumps)living[firstspritelump+rotation]=1;
+                }
+        }
+    }
+    return lump>=0&&lump<(int)living.size()&&living[lump];
+}
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
 Image &wallImage(int index) {
     auto found=images.find(index); if(found!=images.end()) return found->second;
@@ -298,11 +321,17 @@ Image &lumpImage(int lump,bool flat) {
             pos+=data[pos+1]+4;
         }
     }
-    auto normals=spriteNormals(w,h,pixels.data());
-    Image image=upload(w,h,pixels.data(),SHORT(patch->leftoffset),SHORT(patch->topoffset),nullptr,normals.data());
     int paletteLump=W_GetNumForName((char*)"PLAYPAL");
     if(W_LumpLength(paletteLump)<768) I_Error((char*)"Invalid lighting palette");
     const byte *palette=(const byte*)W_CacheLumpNum(paletteLump,PU_CACHE);
+    auto normals=spriteNormals(w,h,pixels.data());
+    // Glowing eyes take normals no silhouette has: x all the way right
+    // and y over halfway down, the glow in y's top quarter (eyeGlow).
+    if(livingMonsterLump(lump)) {
+        auto eyes=doom_sprite_eyes(w,h,pixels.data(),palette);
+        for(size_t i=0;i<eyes.size();++i)if(eyes[i]) {normals[2*i]=255;normals[2*i+1]=(byte)(192+eyes[i]*63/255);}
+    }
+    Image image=upload(w,h,pixels.data(),SHORT(patch->leftoffset),SHORT(patch->topoffset),nullptr,normals.data());
     image.glowWeight=doom_sprite_glow(pixels.data(),(size_t)w*h,palette,image.glow.data());
     return images.emplace(key,std::move(image)).first->second;
 }

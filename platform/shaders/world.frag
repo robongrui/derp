@@ -173,6 +173,12 @@ void main() {
         }
     }
     float emission=0.0;
+    // MODE_GLOWING_EYES: a monster's painted eyes shine a little past full
+    // brightness whatever light falls on it.
+    if(sprite&&(vMode&MODE_GLOWING_EYES)!=0u&&c.effects.z==0.0) {
+        emission=eyeGlow(image,uv);
+        illumination=max(illumination,vec3(emission*1.2));
+    }
     if(!sprite&&c.materials.x>0.0&&c.effects.z==0.0) {
         // The blue channel carries a mask, independent of palette/coverage.
         vec2 at=c.effects.x==2.0?sharpen(uv,texelPixel+c.texFilter.x):uv;

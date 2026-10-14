@@ -326,6 +326,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     if(settings.detail&&!(thing->frame&FF_FULLBRIGHT))mode|=MODE_RELIT;
     // Airborne blood shines like the floor blood (needs the normals of MODE_RELIT).
     if(settings.bloodShine&&thing->type==MT_BLOOD&&(mode&MODE_RELIT))mode|=MODE_WET_SPRITE;
+    if(settings.glowingEyes&&(thing->flags&MF_COUNTKILL)&&thing->health>0)mode|=MODE_GLOWING_EYES;
     if(!(thing->frame&FF_FULLBRIGHT))light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
     // MODE_SOFT: effect sprites (shots, puffs, fogs) dither out at floors
     // and ceilings and draw in front of walls within half their width.

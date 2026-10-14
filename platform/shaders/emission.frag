@@ -14,7 +14,9 @@ void main() {
     vec4 color=indexed(image,palette,vUV,false,!sprite);
     if(blend>0.0) color=mix(color,indexed(nextImage,palette,vUV,false,true),blend);
     if(color.a<0.45) discard;
-    float e=sprite?((vMode&MODE_PICKUP)!=0u?0.3:0.0):mix(maskAt(image,vUV,true),blend>0.0?maskAt(nextImage,vUV,true):0.0,blend);
+    // Glowing eyes bloom; a spectre's stay hidden.
+    float eyes=(vMode&(MODE_GLOWING_EYES|MODE_FUZZ))==MODE_GLOWING_EYES?eyeGlow(image,vUV)*0.6:0.0;
+    float e=sprite?((vMode&MODE_PICKUP)!=0u?0.3:eyes):mix(maskAt(image,vUV,true),blend>0.0?maskAt(nextImage,vUV,true):0.0,blend);
     // White strips glow in every channel at once and wash the view out up
     // close; colored bulbs keep their full bloom.
     float hi=max(color.r,max(color.g,color.b)),lo=min(color.r,min(color.g,color.b));
