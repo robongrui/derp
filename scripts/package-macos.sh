@@ -20,10 +20,14 @@ rm -rf "$output_app"
 ditto "$source_app" "$output_app"
 resources="$output_app/Contents/Resources"
 mkdir -p "$resources/Licenses"
-cp "$project_dir/LICENSE.TXT" "$resources/Licenses/DOOM-GPL-2.txt"
-cp "$project_dir/third_party/xbr/LICENSE.txt" "$resources/Licenses/Hyllian-xBR.txt"
-cp "$project_dir/third_party/spleen/LICENSE.txt" "$resources/Licenses/Spleen-font.txt"
+cp "$project_dir/LICENSE.TXT" "$resources/Licenses/GPL-3.txt"
+cp "$project_dir/NOTICE.txt" "$resources/Licenses/NOTICE.txt"
+cp "$project_dir/THIRD_PARTY.md" "$resources/Licenses/THIRD_PARTY.md"
+cp "$project_dir/third_party/SDL3-NOTICES.txt" "$resources/Licenses/SDL3-third-party-notices.txt"
 cp "$project_dir/PLAY.md" "$resources/PLAY.md"
+if [ -f "$build_dir/_deps/tinysoundfont-src/LICENSE" ]; then
+    cp "$build_dir/_deps/tinysoundfont-src/LICENSE" "$resources/Licenses/TinySoundFont-MIT.txt"
+fi
 if [ -f "$build_dir/_deps/nukedopl3-src/LICENSE" ]; then
     cp "$build_dir/_deps/nukedopl3-src/LICENSE" "$resources/Licenses/Nuked-OPL3-LGPL-2.1.txt"
 fi

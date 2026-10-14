@@ -14,6 +14,7 @@ const float tileStep=1.0;  // Largest rise or drop from the surface, in map unit
 const float tileLip=0.35;  // Lip slope per map unit of height between neighbors.
 uint tileHash(ivec2 p,uint seed) {
     uint h=uint(p.x)*0x8da6b343u^uint(p.y)*0xd8163841u^seed*0xcb1ab31fu;
+    // A two-round mixer from Chris Wellons' hash-prospector (public domain).
     h^=h>>15;h*=0x2c1b3c6du;h^=h>>12;h*=0x297a2d39u;h^=h>>15;
     return h;
 }

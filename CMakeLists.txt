@@ -11,6 +11,7 @@ option(DOOM_BUILD_SDL "Build the native playable SDL3 app" OFF)
 option(DOOM_RENDER3D "Build the accelerated 3D renderer (SDL_gpu: Metal or Vulkan)" ON)
 option(DOOM_TEST_GPU "Test 3D renderer gameplay (requires a desktop with Metal or Vulkan)" OFF)
 set(DOOM_GAME_DATA "" CACHE FILEPATH "Optional IWAD to bundle as the default game")
+option(DOOM_SOUNDFONT "Bundle the GeneralUser GS SoundFont (32 MB download) for SoundFont music" ON)
 set(DOOM_RELEASE_VERSION "0.1.0" CACHE STRING "Release version shown in the Mac app")
 option(DOOM_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 include(CTest)
@@ -144,6 +145,52 @@ if(DOOM_BUILD_SDL)
     FetchContent_MakeAvailable(NukedOPL3)
     add_library(nuked_opl3 STATIC "${nukedopl3_SOURCE_DIR}/opl3.c")
     target_include_directories(nuked_opl3 PUBLIC "${nukedopl3_SOURCE_DIR}")
+    # TinySoundFont (MIT) plays General MIDI scores from a SoundFont bank.
+    FetchContent_Declare(TinySoundFont
+        URL https://github.com/schellingb/TinySoundFont/archive/853a0a171759f1ddba0de1442133a75912bbeffa.tar.gz
+        URL_HASH SHA256=76c356df524f71f2a34f67fa0cb2cb946036fe7a65d2930a849569c5e742fa57)
+    FetchContent_MakeAvailable(TinySoundFont)
+    # Music: the score loaders and player, the OPL synth (built from the chip
+    # manual and the lump formats, see platform/audio/opl_music_spec.md) and
+    # the SoundFont synth. platform/i_music.c and platform/audio/mixer_music.c
+    # are the game's side.
+    add_library(doom_music STATIC platform/audio/music_score.c platform/audio/music_player.c
+        platform/audio/opl_chip.c platform/audio/opl_genmidi.c platform/audio/opl_voices.c
+        platform/audio/sf2_synth.c)
+    target_include_directories(doom_music PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10"
+        "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
+    target_include_directories(doom_music PRIVATE "${tinysoundfont_SOURCE_DIR}")
+    target_link_libraries(doom_music PUBLIC nuked_opl3 doom_options)
+    if(NOT WIN32)
+        target_link_libraries(doom_music PUBLIC m)
+    endif()
+    # GeneralUser GS v2.0.3 (S. Christian Collins; its own license allows
+    # bundling) is the default SoundFont bank, beside the game in soundfonts/.
+    if(DOOM_SOUNDFONT)
+        set(DOOM_SOUNDFONT_COMMIT 97049183643d5fc5a9322a69c5b09efb667c6c3a)
+        set(DOOM_SOUNDFONT_DIR "${CMAKE_CURRENT_BINARY_DIR}/soundfonts")
+        # A source release carries the bank, so it builds offline.
+        set(DOOM_SOUNDFONT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/dependencies/soundfonts")
+        if(NOT EXISTS "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS.sf2" AND EXISTS "${DOOM_SOUNDFONT_SOURCE}/GeneralUser-GS.sf2")
+            file(COPY "${DOOM_SOUNDFONT_SOURCE}/GeneralUser-GS.sf2" "${DOOM_SOUNDFONT_SOURCE}/GeneralUser-GS-LICENSE.txt"
+                DESTINATION "${DOOM_SOUNDFONT_DIR}")
+        endif()
+        if(NOT EXISTS "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS.sf2")
+            file(DOWNLOAD
+                "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/${DOOM_SOUNDFONT_COMMIT}/GeneralUser-GS.sf2"
+                "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS.sf2"
+                EXPECTED_HASH SHA256=9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe)
+        endif()
+        if(NOT EXISTS "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS-LICENSE.txt")
+            file(DOWNLOAD
+                "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/${DOOM_SOUNDFONT_COMMIT}/documentation/LICENSE.txt"
+                "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS-LICENSE.txt")
+        endif()
+    endif()
+    # Renders a WAD's music to WAV files without the game, through either synth:
+    # doom-music-render <wad> [-song D_E1M1|all] [-synth opl|sf2] [-sf2 bank.sf2] ...
+    add_executable(doom-music-render tests/music_render.c)
+    target_link_libraries(doom-music-render PRIVATE doom_music)
     # The 3D scene, one file per subsystem; scene3d/internal.h holds what they share.
     set(DOOM_SCENE3D_SOURCES
         platform/scene3d/atmosphere.cpp
@@ -179,7 +226,7 @@ if(DOOM_BUILD_SDL)
     )
     if(NOT MSVC)
         # The engine headers' #pragma interface, once per file.
-        set_source_files_properties(${DOOM_SCENE3D_SOURCES} ${DOOM_GPU3D_SOURCES} PROPERTIES COMPILE_OPTIONS -Wno-unknown-pragmas)
+        set_source_files_properties(${DOOM_SCENE3D_SOURCES} ${DOOM_GPU3D_SOURCES} platform/settings_menu.cpp PROPERTIES COMPILE_OPTIONS -Wno-unknown-pragmas)
     endif()
     # The accelerated 3D renderer: SDL_gpu drives Metal on macOS and Vulkan on
     # Linux and Windows (SDL_GPU_DRIVER=vulkan selects MoltenVK on a Mac).
@@ -195,9 +242,9 @@ if(DOOM_BUILD_SDL)
     # Sound in the map for the SDL mixer: room reverb, muffling and the map reads they share.
     set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/reverb.c platform/audio/room.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
-        platform/i_sdl_sound.c platform/i_opl_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
+        platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
-    target_link_libraries(doom PRIVATE doom_core SDL3::SDL3 nuked_opl3)
+    target_link_libraries(doom PRIVATE doom_core SDL3::SDL3 doom_music)
     target_compile_definitions(doom PRIVATE DOOM_NATIVE)
     set_target_properties(doom PROPERTIES WIN32_EXECUTABLE TRUE)
     doom_add_renderer(doom ${DOOM_RENDER3D})
@@ -211,23 +258,37 @@ if(DOOM_BUILD_SDL)
             MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.robongrui.duct-tape-doom"
             MACOSX_BUNDLE_BUNDLE_NAME "Play DOOM"
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/Info.plist.in")
+        if(DOOM_SOUNDFONT)
+            add_custom_command(TARGET doom POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:doom>/Contents/Resources/soundfonts"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS.sf2"
+                    "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS-LICENSE.txt" "$<TARGET_BUNDLE_DIR:doom>/Contents/Resources/soundfonts")
+        endif()
         if(DOOM_GAME_DATA)
             add_custom_command(TARGET doom POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:doom>/Contents/Resources"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DOOM_GAME_DATA}"
                     "$<TARGET_BUNDLE_DIR:doom>/Contents/Resources/default.wad")
         endif()
-    elseif(DOOM_GAME_DATA)
+    else()
+        if(DOOM_SOUNDFONT)
+            add_custom_command(TARGET doom POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:doom>/soundfonts"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS.sf2"
+                    "${DOOM_SOUNDFONT_DIR}/GeneralUser-GS-LICENSE.txt" "$<TARGET_FILE_DIR:doom>/soundfonts")
+        endif()
+    endif()
+    if(NOT APPLE AND DOOM_GAME_DATA)
         add_custom_command(TARGET doom POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DOOM_GAME_DATA}" "$<TARGET_FILE_DIR:doom>/default.wad")
     endif()
     if(BUILD_TESTING)
         function(doom_add_smoke target renderer)
             add_executable(${target} ${ARGN} platform/i_sdl_video.c
-                platform/i_sdl_sound.c platform/i_opl_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
+                platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
                 platform/i_portable_system.c)
             target_compile_definitions(${target} PRIVATE DOOM_TEST_DRIVER)
-            target_link_libraries(${target} PRIVATE doom_core SDL3::SDL3 nuked_opl3)
+            target_link_libraries(${target} PRIVATE doom_core SDL3::SDL3 doom_music)
             doom_add_renderer(${target} ${renderer})
             if(APPLE)
                 target_sources(${target} PRIVATE platform/i_mac_music.c)

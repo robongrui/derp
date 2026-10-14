@@ -9,6 +9,11 @@ play straight away; add your own WADs to play DOOM, DOOM II or custom maps.
 | Windows 10/11, 64-bit | `DuctTapeDOOM-windows.zip` | Unzip, drop your `.wad` files into the `wads` folder and run `doom.exe`. |
 | Linux, x86-64 | `DuctTapeDOOM-linux.tar.gz` | Unpack, drop your `.wad` files into `wads` and run `./doom`. |
 
+`DuctTapeDOOM-source.tar.gz` is the complete source of these downloads: the
+game's code plus the exact SDL and Nuked OPL3 sources it is built with, so it
+builds without an internet connection. GitHub's "Source code" archives hold
+the game's code only.
+
 With no WADs in the `wads` folder, Freedoom starts. With a base game (such as
 `doom.wad` or `doom2.wad`) and a custom map WAD, the map is loaded on top of the
 game. Controls and options are in `PLAY.md`.

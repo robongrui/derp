@@ -59,8 +59,8 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "With smooth or sharp walls and floors: far and grazing surfaces read smaller versions snapped to the WAD palette, "
                     "as software Quake did, instead of shimmering. Crisp pixels stay vanilla.",
                     [](const Settings &d){return d.filter!=0;}),
-                choice("sprite_filter","Sprites",&s.spriteFilter,{"Crisp pixels","Soft (bilinear)","Pixel-art upscale (xBR)"},{0,1,2},
-                    "xBR reconstructs diagonal edges of enlarged sprites from their original colors.")}},
+                choice("sprite_filter","Sprites",&s.spriteFilter,{"Crisp pixels","Soft (bilinear)"},{0,1},
+                    "Crisp keeps the artwork's pixels square; soft blends them smoothly.")}},
             {"Surface detail",{
                 check("surface_detail","Bump detail and metal gloss",&s.detail,
                     "Bump detail and metal gloss derived from the WAD artwork; affects dynamic lights, and static ones with bake-only lights."),
@@ -197,6 +197,16 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("splashes","Splashes",&s.splashes,"Ripple rings where things land, wade or are shot in liquids, and spouts where shots and projectiles hit them. "
                     "Things standing in liquids sink in; nukage, slime, blood and lava splash thick and bubble.")}}}},
         {"Sound",{
+            {"Music",{
+                choice("music_device","Music",&s.musicDevice,
+#ifdef __APPLE__
+                    {"SoundFont","OPL (FM)","Mac synthesizer"},{0,1,2},
+#else
+                    {"SoundFont","OPL (FM)"},{0,1},
+#endif
+                    "SoundFont plays sampled General MIDI instruments, close to the Roland Sound Canvas the music was written on. "
+                    "OPL is the FM synthesis of DOS sound cards, with DOOM's own instrument set. "
+                    "A .sf2 bank put in the soundfonts folder beside doom.cfg replaces the bundled one.")}},
             {"Rooms",{
                 check("room_acoustics","Room acoustics",&s.roomAcoustics,
                     "Sounds echo off the walls around you and ring on in a tail measured from the room: corridors slap back, "

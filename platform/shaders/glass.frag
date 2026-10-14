@@ -39,6 +39,7 @@ layout(location=0) out vec4 outColor;
 float hash(vec2 p,uint seed) {
     uvec2 q=uvec2(ivec2(floor(p))+32768);
     uint h=q.x*73856093u^q.y*19349663u^seed;
+    // Chris Wellons' lowbias32 (hash-prospector, public domain).
     h^=h>>16u;h*=0x7feb352du;h^=h>>15u;h*=0x846ca68bu;h^=h>>16u;
     return float(h&0xffffffu)/16777216.0;
 }

@@ -4,17 +4,21 @@
 #include "doomdef.h"
 #include "doomstat.h"
 #include "i_sound.h"
-#include "i_opl_music.h"
+#include "i_mixer_music.h"
+#include "i_music.h"
 #include "m_argv.h"
 #include "w_wad.h"
 #include "z_zone.h"
 #include "audio/occlusion.h"
 #include "audio/reverb.h"
+#include "audio/sf2_synth.h"
 #include "audio/sound_options.h"
 #include <SDL3/SDL.h>
 
 #define OUTPUT_RATE 44100
 #define MIX_CHANNELS 32
+/* SoundFont voices, allocated up front: GeneralUser GS peaks at 286 (D_SHAWN). */
+#define SF2_VOICES 512
 /* Effects at full volume, center: headroom for a few at once before the limiter. */
 #define SFX_GAIN 0.75f
 #define LIMIT 0.9f
@@ -89,7 +93,7 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
             }
         }
         if (acoustics) Reverb_Process(send, buffer, count, reverb_amount);
-        OPL_RenderMusic(buffer, count);
+        MixerMusic_Render(buffer, count);
         /* A peak limiter: drops at once to keep the mix under LIMIT, recovers
            slowly, so a burst of shots ducks the mix instead of crackling. */
         float release = 1 - expf(-1.0f / (LIMIT_RELEASE_SECONDS * OUTPUT_RATE));
@@ -243,37 +247,37 @@ void I_UpdateSoundParams(int handle, int volume, int separation, int pitch)
     SDL_UnlockAudioStream(stream);
 }
 
-/* OPL music renders inside the mixer above, so these take the stream lock. */
+/* OPL and SoundFont music render inside the mixer above, so these take
+   the stream lock. */
 static void lock_music(void) { if (stream) SDL_LockAudioStream(stream); }
 static void unlock_music(void) { if (stream) SDL_UnlockAudioStream(stream); }
 
-void I_OPL_ShutdownMusic(void) { lock_music(); OPL_UnRegisterSong(); unlock_music(); }
-void I_OPL_SetMusicVolume(int volume) { lock_music(); OPL_SetMusicVolume(volume); unlock_music(); }
-void I_OPL_PauseSong(void) { lock_music(); OPL_PauseSong(); unlock_music(); }
-void I_OPL_ResumeSong(void) { lock_music(); OPL_ResumeSong(); unlock_music(); }
-void I_OPL_StopSong(void) { lock_music(); OPL_StopSong(); unlock_music(); }
-void I_OPL_PlaySong(int looping) { lock_music(); OPL_PlaySong(looping != 0); unlock_music(); }
-int I_OPL_RegisterSong(void *data)
+void I_Mixer_UnRegisterSong(void) { lock_music(); MixerMusic_UnRegister(); unlock_music(); }
+void I_Mixer_SetMusicVolume(int volume) { lock_music(); MixerMusic_SetVolume(volume); unlock_music(); }
+void I_Mixer_PauseSong(void) { lock_music(); MixerMusic_Pause(); unlock_music(); }
+void I_Mixer_ResumeSong(void) { lock_music(); MixerMusic_Resume(); unlock_music(); }
+void I_Mixer_StopSong(void) { lock_music(); MixerMusic_Stop(); unlock_music(); }
+void I_Mixer_PlaySong(int looping) { lock_music(); MixerMusic_Play(looping != 0); unlock_music(); }
+int I_Mixer_RegisterSong(void *data, int soundfont)
 {
     int size = 0;
     if (!stream) return 0;
     for (int i = 0; i < numlumps; ++i)
         if (lumpcache[i] == data) { size = W_LumpLength(i); break; }
     lock_music();
-    int registered = OPL_InitMusic(OUTPUT_RATE) && OPL_RegisterSong(data, size);
+    int registered = MixerMusic_Register(data, size, OUTPUT_RATE, soundfont != 0);
     unlock_music();
     return registered;
 }
 
-#ifndef __APPLE__
-/* The Mac uses its system synthesizer unless -opl is given; see i_mac_music.c. */
-void I_InitMusic(void) { }
-void I_ShutdownMusic(void) { I_OPL_ShutdownMusic(); }
-void I_SetMusicVolume(int volume) { I_OPL_SetMusicVolume(volume); }
-void I_PauseSong(int handle) { (void)handle; I_OPL_PauseSong(); }
-void I_ResumeSong(int handle) { (void)handle; I_OPL_ResumeSong(); }
-int I_RegisterSong(void *data) { return I_OPL_RegisterSong(data); }
-void I_PlaySong(int handle, int looping) { if (handle) I_OPL_PlaySong(looping); }
-void I_StopSong(int handle) { (void)handle; I_OPL_StopSong(); }
-void I_UnRegisterSong(int handle) { (void)handle; I_OPL_ShutdownMusic(); }
-#endif
+/* Reading a bank takes a while, so only the swap holds the lock. */
+int I_Mixer_LoadSoundFont(const char *path)
+{
+    sf2_bank_t *bank = SF2_Open(path, OUTPUT_RATE, SF2_VOICES);
+    if (!bank) return 0;
+    lock_music();
+    sf2_bank_t *last = MixerMusic_UseBank(bank);
+    unlock_music();
+    SF2_Close(last);
+    return 1;
+}

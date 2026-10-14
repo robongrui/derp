@@ -107,7 +107,7 @@ takes a screenshot.
 **Textures**
 
 - **Walls and floors:** crisp pixels, smooth bilinear, or sharp bilinear, which keeps texels flat and only softens the step between them (**Edge softness** sets how far). **Palette mipmaps** keep distant smooth or sharp surfaces from shimmering.
-- **Sprites:** crisp pixels (default), pixel-art upscale (xBR), or soft bilinear filtering.
+- **Sprites:** crisp pixels (default) or soft bilinear filtering.
 - **Bump detail and metal gloss:** derived from the WAD artwork, plus rounded sprite lighting with rim light on backlit enemies; affects dynamic lights only. Optional **varied highlights** make them tight on smooth artwork and broad on busy artwork.
 - **Emissive textures:** glowing lamp strips, computer displays, lava and nukage, with soft bloom and colored light on nearby surfaces. The room's own light takes their color where they light it, monsters and the weapon included, and wall panels light only what they face.
 - **Glossy monitor screens:** screens in computer textures get curved CRT glass that bends the picture and catches highlights.
@@ -153,13 +153,6 @@ sparks and leave a scorch mark on the floor. Torches, candles, lamps and
 other glowing decorations cast colored light sized to their artwork; flames
 flicker in DOOM's own stepped fire-flicker rhythm. With atmospheric fog on, the
 sky hazes toward the horizon.
-
-**Pixel-art upscale (xBR)**, an option beside the default crisp pixels, smooths
-enlarged enemies, items and weapon sprites. It reconstructs diagonal edges on the GPU using original
-sprite colors and transparency, adapting to their size on screen. Smaller
-sprites use alpha-aware filtering to reduce shimmer. This option is independent
-of wall/floor smoothing. It preserves the original WAD artwork and requires no
-asset conversion or download. The classic renderer retains its original sprites.
 
 Emissive textures keep selected pixels bright in dark rooms, using the original
 WAD artwork and palette. They add soft bloom around visible glowing pixels and
@@ -222,12 +215,17 @@ coordinates; Retina displays may supply more physical pixels). You can also
 use `-fullscreen`, `-fov 100`, or `-classic`. Sizes between 320×240 and
 8192×8192 are accepted; resizing adjusts the render targets automatically.
 
-Launch with `-opl` to hear the music through an emulated OPL3 FM chip with
-the WAD's own instrument bank, as on a DOS Sound Blaster, instead of the Mac's
-synthesizer. Other options for custom WADs: `-deh file.deh` applies extra
+Music plays from a SoundFont: sampled General MIDI instruments, close to the
+Roland Sound Canvas the DOOM scores were written on. The bundled bank is
+GeneralUser GS. Put another `.sf2` in the `soundfonts` folder beside `doom.cfg`
+and it is used instead (the first one, alphabetically), or launch with
+`-soundfont bank.sf2`. **F4 → Sound → Music** switches to OPL: an emulated OPL3
+FM chip with the WAD's own instrument bank, as on a DOS Sound Blaster. On the
+Mac it also offers the system synthesizer. `-opl`, `-soundfont` and
+`-systemsynth` (Mac) pick one for a single session. Other options for custom WADs: `-deh file.deh` applies extra
 patches, `-nodeh` ignores patches inside WADs, and `-blockmap` rebuilds each
 map's collision blockmap.
 
 On macOS the app renders with Metal. The same 3D
-renderer runs on Linux and Windows through Vulkan, with OPL music. Multiplayer is
+renderer runs on Linux and Windows through Vulkan, with the same music. Multiplayer is
 not implemented. Build instructions are in [BUILDING.md](BUILDING.md).

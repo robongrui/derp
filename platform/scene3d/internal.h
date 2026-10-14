@@ -374,6 +374,7 @@ inline float luminance(const float color[3]) {return 0.299f*color[0]+0.587f*colo
 inline unsigned sectorMode(const sector_t *sector) {return unsigned(sector-sectors+1)<<MODE_SECTOR_SHIFT;}
 inline float gameSeconds() {return (leveltime+renderFraction)/(float)TICRATE;}
 inline float randomRange(float low,float high) {return std::uniform_real_distribution<float>(low,high)(impactRandom);}
+// Chris Wellons' lowbias32 integer hash (hash-prospector, public domain).
 inline uint32_t hash32(uint32_t x) {x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;x^=x>>16;return x;}
 inline float hashUnit(int x,int y,uint32_t seed) {return (hash32((uint32_t)x*73856093u^(uint32_t)y*19349663u^seed)&0xffffff)/16777216.0f;}
 // Decal depth offset: grows with distance so depth precision never lets the

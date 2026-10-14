@@ -7,8 +7,8 @@ checks on macOS, Linux, and Windows. No game data is needed to build or test.
 The optional SDL3 backend adds a playable desktop window, keyboard/mouse input,
 fullscreen, sound effects and an accelerated 3D renderer built on SDL_gpu:
 Metal on macOS, Vulkan on Linux and Windows, from one renderer and one set of
-shaders. It draws a scene built at runtime from the WAD by `platform/scene3d/`. macOS also has MIDI/MUS music
-through the system synthesizer. The headless backend remains available for
+shaders. It draws a scene built at runtime from the WAD by `platform/scene3d/`. Music plays from a
+SoundFont or an emulated OPL3 chip, and on macOS also through the system synthesizer. The headless backend remains available for
 verification.
 
 The repository contains no game data. Download Freedoom from
@@ -26,15 +26,21 @@ ctest --test-dir build/play --output-on-failure
 
 CMake uses an installed SDL3 package or downloads and builds SDL3 v3.4.18.
 For an offline build, set `CMAKE_PREFIX_PATH` to an existing SDL3 installation.
-CMake also downloads the Nuked OPL3 emulator (LGPL-2.1+, pinned commit) for
-OPL music; offline, set `FETCHCONTENT_SOURCE_DIR_NUKEDOPL3` to a copy of it.
+CMake also downloads the Nuked OPL3 emulator (LGPL-2.1+) and TinySoundFont
+(MIT) at pinned commits; offline, set `FETCHCONTENT_SOURCE_DIR_NUKEDOPL3` and
+`FETCHCONTENT_SOURCE_DIR_TINYSOUNDFONT` to copies of them. It also downloads the
+GeneralUser GS SoundFont (32 MB, pinned and hash-checked) into
+`build/play/soundfonts/` and copies it beside the game; `-DDOOM_SOUNDFONT=OFF`
+skips it, and music then falls back to OPL (to the system synthesizer on macOS).
 On macOS, game data is copied into `build/play/Play DOOM.app`. You can supply
 an original DOOM/DOOM II IWAD instead. Without bundled data, the app presents
 a file picker at launch. On Linux and Windows use `doom -iwad /path/to/game.wad`.
-On Linux and Windows, music plays through `platform/i_opl_music.c`: MUS and
-MIDI scores drive an emulated OPL3 chip with the WAD's GENMIDI instruments,
-following the DMX library's voice handling. macOS uses the system synthesizer
-unless the app is started with `-opl`.
+`platform/i_music.c` picks the music device. MUS and MIDI scores go through
+`platform/audio/`: either TinySoundFont with a `.sf2` bank, or an emulated OPL3
+chip with the WAD's GENMIDI instruments, built from the published chip and lump
+documents (`platform/audio/opl_music_spec.md`). `doom-music-render <wad>`
+writes a WAD's songs to WAV files through either synth without starting the
+game (`-synth opl|sf2`, `-sf2 bank.sf2`, `-song D_E1M1`).
 `-DDOOM_RENDER3D=OFF` builds the classic software renderer only. Without a
 Metal or Vulkan driver at runtime the app starts with the classic renderer.
 
@@ -107,16 +113,10 @@ HUD/menu patch coverage is composited over the world, preserving black pixels
 and transparent regions. The F4 panel saves graphics choices separately from
 the original game configuration. Classic rendering can be selected at runtime.
 
-Sprite enlargement uses an adaptation of Hyllian's `xBR-lv2-noblend`
-shader, with alpha-aware edge classification and direct indexed/palette reads.
-It runs in the sprite fragment shader at the projected resolution; no fixed
-upscale factor, intermediate enlarged texture, or per-frame CPU resampling is
-needed. Enlarged sprites select source colors along detected contours without
-bilinear color blending. Minified sprites use premultiplied-alpha filtering,
-avoiding color bleed from transparent pixels. The `sprite_filter` setting is
-separate from world smoothing: 0 is nearest, 1 bilinear, and 2 xBR (default).
-The upstream MIT notice is in `third_party/xbr/LICENSE.txt` and bundled with
-the app. The adaptation is in `platform/shaders/xbr.glsl`.
+Sprites are read straight from their palette indices. The `sprite_filter`
+setting is separate from world smoothing: 0 is nearest (default) and 1 is
+bilinear with premultiplied alpha, which avoids color bleed from transparent
+pixels.
 
 Enemy floor shadows reuse the current WAD sprite's alpha mask, with soft,
 translucent black shading in a separate depth-tested pass that does not write
@@ -291,9 +291,9 @@ soft mist under MSAA reads a single-sample depth prepass.
 
 F4 opens the in-game settings panel on every platform. Its options are listed
 in `platform/settings_panel.cpp`, grouped into tabs; `platform/settings_menu.cpp`
-draws the panel into a 640x400 image in the Spleen 8x16 font, which the renderer
-scales by whole pixels in the final pass so it stays sharp at any render
-resolution. `-gpudebug` enables SDL_gpu validation and `-gpumsaa 1` forces
+draws the panel into a 640x400 image in the WAD's own small font (STCFN),
+which the renderer scales by whole pixels in the final pass so it stays sharp
+at any render resolution. `-gpudebug` enables SDL_gpu validation and `-gpumsaa 1` forces
 single-sample rendering. The window title names the active driver.
 
 The panel's Performance tab (both off by default, both need baked static

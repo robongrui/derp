@@ -117,6 +117,7 @@ bool decorationLight(const mobj_t &thing) {
     const state_t &spawn=states[thing.info->spawnstate];
     return (spawn.frame&FF_FULLBRIGHT)&&(thing.frame&FF_FULLBRIGHT);
 }
+// The flicker hashes finish with MurmurHash2's mixing step (Austin Appleby, public domain).
 static float decorationFlicker(const mobj_t &thing) {
     const state_t &spawn=states[thing.info->spawnstate];
     if(spawn.tics<0||spawn.nextstate==thing.info->spawnstate)return 1;

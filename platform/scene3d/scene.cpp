@@ -76,6 +76,7 @@ void applySettings() {
     if(!settings.look) pitch=0;
     R_SetViewSize(10,0);
     I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance);
+    I_SetMusicDevice(settings.musicDevice);
 }
 void sceneInit(SDL_Window *window) {
     gameWindow=window;

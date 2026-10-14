@@ -5,7 +5,7 @@
 #include "i_sound.h"
 #include "m_argv.h"
 #include "w_wad.h"
-#include "i_opl_music.h"
+#include "i_music.h"
 #include <AudioToolbox/AudioToolbox.h>
 
 static MusicSequence sequence;
@@ -106,14 +106,6 @@ static int load_mus(const byte *data, int size)
     return 1;
 }
 
-/* -opl plays the scores through the OPL synthesizer instead. */
-static int use_opl = -1;
-static int opl(void)
-{
-    if (use_opl < 0) use_opl = M_CheckParm("-opl") != 0;
-    return use_opl;
-}
-
 /* The volume goes on the synthesizer itself: the graph's dynamics processor
    forgets its gain each time the player prerolls or restarts. The synthesizer
    takes it only once initialized, so it is set again whenever play starts.
@@ -126,11 +118,9 @@ static void apply_volume(void)
     AudioUnitSetParameter(synth_unit, kMusicDeviceParam_Volume, kAudioUnitScope_Global, 0, gain, 0);
 }
 
-void I_InitMusic(void) { }
-void I_SetMusicVolume(int volume)
+void Mac_SetMusicVolume(int volume)
 {
     music_volume = volume;
-    if (opl()) { I_OPL_SetMusicVolume(volume); return; }
     if (sequence)
     {
         UInt32 count = 0; MusicSequenceGetTrackCount(sequence, &count);
@@ -143,25 +133,15 @@ void I_SetMusicVolume(int volume)
     }
     apply_volume();
 }
-void I_UnRegisterSong(int handle)
+void Mac_UnRegisterSong(void)
 {
-    (void)handle;
-    if (opl()) { I_OPL_ShutdownMusic(); return; }
     if (player) { MusicPlayerStop(player); DisposeMusicPlayer(player); player = NULL; }
     if (sequence) { DisposeMusicSequence(sequence); sequence = NULL; }
     synth_unit = NULL;
 }
-void I_ShutdownMusic(void) { I_UnRegisterSong(0); }
-
-int I_RegisterSong(void *data)
+int Mac_RegisterSong(void *data)
 {
-    if (opl())
-    {
-        int registered = I_OPL_RegisterSong(data);
-        I_OPL_SetMusicVolume(music_volume);
-        return registered;
-    }
-    I_UnRegisterSong(0);
+    Mac_UnRegisterSong();
     if (M_CheckParm("-nosound") || M_CheckParm("-nomusic")) return 0;
     int size = 0;
     for (int i = 0; i < numlumps; ++i)
@@ -175,7 +155,7 @@ int I_RegisterSong(void *data)
     }
     else loaded = load_mus(data, size);
     if (!loaded || NewMusicPlayer(&player) || MusicPlayerSetSequence(player, sequence))
-    { I_UnRegisterSong(0); fprintf(stderr, "Could not load the music score.\n"); return 0; }
+    { Mac_UnRegisterSong(); fprintf(stderr, "Could not load the music score.\n"); return 0; }
     UInt32 count = 0;
     MusicSequenceGetTrackCount(sequence, &count);
     length = 0;
@@ -199,14 +179,13 @@ int I_RegisterSong(void *data)
                 synth_unit = unit;
         }
     }
-    I_SetMusicVolume(music_volume);
+    Mac_SetMusicVolume(music_volume);
     fprintf(stderr, "Mac music synthesizer ready.\n");
     return 1;
 }
-void I_PlaySong(int handle, int looping)
+void Mac_PlaySong(int looping)
 {
-    if (opl()) { if (handle) I_OPL_PlaySong(looping); return; }
-    if (!handle || !player) return;
+    if (!player) return;
     UInt32 count = 0; MusicSequenceGetTrackCount(sequence, &count);
     for (UInt32 i = 0; i < count; ++i)
     {
@@ -221,20 +200,12 @@ void I_PlaySong(int handle, int looping)
     if (!error) error = MusicPlayerStart(player);
     if (error) fprintf(stderr, "Music output unavailable (%d).\n", (int)error);
 }
-void I_StopSong(int handle)
+void Mac_StopSong(void)
 {
-    (void)handle;
-    if (opl()) I_OPL_StopSong();
-    else if (player) MusicPlayerStop(player);
+    if (player) MusicPlayerStop(player);
 }
-void I_PauseSong(int handle)
+void Mac_PauseSong(void) { Mac_StopSong(); }
+void Mac_ResumeSong(void)
 {
-    if (opl()) I_OPL_PauseSong();
-    else I_StopSong(handle);
-}
-void I_ResumeSong(int handle)
-{
-    (void)handle;
-    if (opl()) I_OPL_ResumeSong();
-    else if (player) { MusicPlayerStart(player); apply_volume(); }
+    if (player) { MusicPlayerStart(player); apply_volume(); }
 }

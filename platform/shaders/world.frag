@@ -63,7 +63,6 @@ layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6];
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
 #include "indexed.glsl"
-#include "xbr.glsl"
 #include "lighting.glsl"
 
 // The parts of the shading main() runs, by topic.
@@ -112,8 +111,7 @@ void main() {
         uv=clamp(origin+(lensed*0.5+0.5)*extent,origin+0.5,origin+extent-0.5);
     }
     vec4 color;
-    if(sprite&&c.effects.w==2.0&&footprint<1.0) color=xbrSprite(image,palette,vUV);
-    else if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0||(c.effects.w==2.0&&footprint>=1.0),false);
+    if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0,false);
     else color=surfaceTexture(image,uv,texelPixel,lod);
     // Animated flats and walls crossfade toward their next frame.
     if(blend>0.0) color=mix(color,surfaceTexture(nextImage,uv,texelPixel,lod),blend);

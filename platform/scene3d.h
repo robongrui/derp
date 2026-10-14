@@ -74,7 +74,7 @@ struct Settings {
     int softLight=1; // Light seam blending and edge contact shading.
     int reflections=1; // Mirrored scene on water.
     int retroReflections=1; // Eighth resolution, palette colors, stepped wobble.
-    int spriteFilter=0; // 0: crisp, 1: bilinear, 2: xBR pixel-art reconstruction.
+    int spriteFilter=0; // 0: crisp, 1: bilinear.
     int sun=1; // Sun shadows baked at level load from the sky texture.
     int bakedLights=1; // Static lights baked at level load; nearby dynamic copies add flicker and detail.
     int windowLight=1; // Openings to the sky light the rooms beside them like big soft lamps, in the bake.
@@ -118,6 +118,7 @@ struct Settings {
     int glassReflections=1; // Experiment: the nearest window mirrors the world, drawn again like the liquid reflection.
     int weaponLighting=1; // The weapon's painted sheen and light come out at load; lights around the player relight it.
     // Sound, though graphics.cfg keeps it: the mixer is told in applySettings.
+    int musicDevice=0; // What plays the music: 0 SoundFont, 1 OPL FM, 2 the Mac's own synthesizer.
     int roomAcoustics=1; // Echoes and a reverb tail measured from the room around the player.
     float reverbAmount=1; // How loud the echoes and tail are (0-2).
     int muffleWalls=1; // Sounds out of sight are muffled, more behind closed doors.

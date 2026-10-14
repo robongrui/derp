@@ -369,8 +369,7 @@ textures sharp. World textures can use nearest filtering, plain bilinear, or a
 sharp-bilinear mode that keeps the middle of each texel flat and softens only
 its edge. Palette-aware mipmaps reduce shimmer in the distance.
 
-Sprites can stay nearest-neighbour or go through an optional xBR shader that
-rebuilds diagonal pixel-art edges from the original palette colors.
+Sprites can stay nearest-neighbour or use soft bilinear filtering.
 
 An optional final pass quantizes the whole image back to the current WAD
 palette, including lighting, fog and bloom.
@@ -467,3 +466,16 @@ cmake -S . -B build/play -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON \
 cmake --build build/play --parallel
 ctest --test-dir build/play --output-on-failure
 ```
+
+## License
+
+Copyright © 2026 Robert Heidenreich. Licensed under the GNU General Public
+License version 3 ([`LICENSE.TXT`](LICENSE.TXT)), with one additional term
+under section 7(b): redistributions and derivative works containing the
+original Duct-Tape DOOM contributions must preserve the attribution
+"Duct-Tape DOOM — https://github.com/robongrui/duct-tape-doom". The full
+notice is in [`NOTICE.txt`](NOTICE.txt).
+
+The DOOM source by id Software, which this is built on, is GPL version 2 or
+later. [`THIRD_PARTY.md`](THIRD_PARTY.md) lists it and the libraries and data
+that come from elsewhere, with their licenses.

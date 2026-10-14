@@ -87,6 +87,14 @@ jobs:
             tar czf DuctTapeDOOM-linux.tar.gz DuctTapeDOOM-linux
           fi
 
+      # The complete corresponding source: this commit plus the SDL and Nuked
+      # OPL3 sources the build downloaded and linked in.
+      - name: Package the source
+        if: matrix.platform == 'linux'
+        run: |
+          sh scripts/package-source.sh build/release dist
+          tar czf dist/DuctTapeDOOM-source.tar.gz -C dist DuctTapeDOOM-source
+
       - name: Package, sign and notarize the Mac app
         if: matrix.platform == 'mac'
         env:

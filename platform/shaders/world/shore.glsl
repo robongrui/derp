@@ -18,6 +18,7 @@ bool shoreLiquid(vec2 xy,out uint liquid,out vec3 tint) {
 float shoreHash(vec2 p) {
     uvec2 q=uvec2(ivec2(floor(p)));
     uint h=q.x*1664525u^(q.y*1013904223u+0x9e3779b9u);
+    // Chris Wellons' lowbias32 (hash-prospector, public domain).
     h^=h>>16;h*=0x7feb352du;h^=h>>15;h*=0x846ca68bu;h^=h>>16;
     return float(h)/4294967295.0;
 }
