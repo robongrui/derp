@@ -45,6 +45,16 @@ static inline int doom_emissive_kind(const char *name, int flat)
     if (doom_emissive_match(name,flat?panelFlats:panelWalls)) return DOOM_EMISSIVE_PANEL;
     return DOOM_EMISSIVE_NONE;
 }
+/* Machinery that throws electric sparks when shot, glowing or not: computer
+   panels, tech walls and their light fixtures (shot_lights.cpp). */
+static inline int doom_spark_texture(const char *name, int flat)
+{
+    static const char *const walls[]={"COMP*","AQCOMP*","TEKWALL*","TEKLITE*","TEKGREN*","PLANET*",
+        "SILVER*","SPACEW*","METLITE*","LITE*","TLITE*",0};
+    static const char *const flats[]={"CONS1_*","TLITE*",0};
+    if (strstr(name,"OFF")) return 0;
+    return doom_emissive_match(name,flat?flats:walls);
+}
 /* Keep dark outlines and housing shaded; hue tests avoid lighting pale metal. */
 static inline unsigned char doom_emissive_pixel(int kind, const unsigned char *rgb,
                                                unsigned char coverage)

@@ -167,7 +167,17 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "Hitscan hits leave splats on floors and nearby walls; corpses grow a pool. Colors come from the WAD's blood sprite."),
                 check("blood_shine","Wet blood shine",&s.bloodShine,"Fresh blood on the floor glints in a brighter palette red under dynamic lights, then dries matte.",
                     [](const Settings &d){return d.blood!=0;}),
-                check("soft_effects","Soft effect sprites",&s.softSprites,"Explosions, puffs and teleport fog stop slicing into walls and dissolve on a dither at floors.")}},
+                check("soft_effects","Soft effect sprites",&s.softSprites,"Explosions, puffs and teleport fog stop slicing into walls and dissolve on a dither at floors."),
+                check("shootable_lights","Shootable lights",&s.shootableLights,
+                    "Computer panels and tech walls throw blue sparks when shot. A shot or fireball into the glowing part "
+                    "of a lamp or screen breaks its whole fixture, and rockets and barrels break those around them: they sputter out "
+                    "and go dark, and the room darkens with them a moment later. Render-only: monsters see as before, and the lights "
+                    "are back after a reload.",
+                    [](const Settings &d){return d.emissive!=0;}),
+                check("kill_shots_carry","Kill shots carry on",&s.killShotsCarry,
+                    "A bullet or pellet that kills what it hits carries on past the body, so a fight can shoot out the lamps and "
+                    "screens behind the monsters. Only for sparks and lights, never damage: the game sees the shot stop as always.",
+                    [](const Settings &d){return d.emissive!=0&&d.shootableLights!=0;})}},
             {"Liquids",{
                 check("reflections","Reflections",&s.reflections,
                     "Mirror the scene in nearby water; renders the view a second time at half resolution."),

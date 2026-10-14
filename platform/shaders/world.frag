@@ -103,12 +103,25 @@ void main() {
     // enlarges the picture's middle slightly (edges still meet the rim).
     bool glassy=!sprite&&!blood&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&isGlass(vUV);
     vec3 screenNormal=normal;vec2 screen=vec2(0),uv=vUV;
+    bool dead=(vMode&MODE_DEAD_GLOW)!=0u;
+    float crack=0.0;
     if(glassy) {
         vec2 origin,extent;screen=glassScreen(vUV,origin,extent);
         vec3 tangent,bitangent;textureFrame(normal,dp1,dp2,duv1,duv2,tangent,bitangent);
-        screenNormal=glassDome(screen,extent,normal,tangent,bitangent);
-        vec2 lensed=screen*(0.88+0.12*screen*screen);
-        uv=clamp(origin+(lensed*0.5+0.5)*extent,origin+0.5,origin+extent-0.5);
+        if(dead) {
+            // MODE_DEAD_GLOW: a shot-out screen's glass lies broken, no
+            // longer a lens: cracked into shards that each lean their own
+            // way and so catch light apart.
+            uint shard,seed=vStatic*0x9e3779b9u^(vMode>>MODE_SECTOR_SHIFT);
+            crack=glassCracks(vUV,origin,extent,seed,shard);
+            uint h=tileHash(ivec2(int(shard),1),seed);
+            vec2 lean=(vec2(float(h&255u),float((h>>8)&255u))/127.5-1.0)*0.2;
+            screenNormal=normalize(normal+lean.x*tangent+lean.y*bitangent);
+        } else {
+            screenNormal=glassDome(screen,extent,normal,tangent,bitangent);
+            vec2 lensed=screen*(0.88+0.12*screen*screen);
+            uv=clamp(origin+(lensed*0.5+0.5)*extent,origin+0.5,origin+extent-0.5);
+        }
     }
     vec4 color;
     if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0,false);
@@ -123,6 +136,9 @@ void main() {
     if(blood) color.rgb*=vTint.g;
     // The thick rim of the glass shades the picture's edges, in light steps.
     if(glassy) color.rgb*=round((1.0-0.5*smoothstep(0.7,1.0,max(abs(screen.x),abs(screen.y))))*16.0)/16.0;
+    // A dead screen shows nothing but the dark tube behind the glass, and its
+    // cracks catching the light.
+    if(glassy&&dead) color.rgb=mix(color.rgb*0.08,vec3(0.45),crack);
     // Map surfaces carry sector+1 in mode bits 12+; 0 means no sector.
     bool mapped=(vMode>>MODE_SECTOR_SHIFT)>0u&&!sprite&&c.effects.z==0.0;
     uint sector=(vMode>>MODE_SECTOR_SHIFT)-1u;
@@ -184,6 +200,12 @@ void main() {
         vec2 at=c.effects.x==2.0?sharpen(uv,texelPixel+c.texFilter.x):uv;
         emission=maskAt(image,at,c.effects.x>0.0);
         if(blend>0.0) emission=mix(emission,maskAt(nextImage,at,c.effects.x>0.0),blend);
+        // MODE_DEAD_GLOW: a shot-out lamp or screen. What glowed is a dead,
+        // dark tube or screen; the housing around it keeps its shading.
+        if(dead) {
+            if(!glassy) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114))*0.15),emission);
+            emission=0.0;
+        }
         illumination=max(illumination,vec3(emission));
     }
     // FEATURE_DAMP_SHORES: damp walls and banks above liquids (shoreWet), darker and

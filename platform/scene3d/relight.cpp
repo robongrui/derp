@@ -1,5 +1,5 @@
 /* Background re-bake of lamp light and sun around moving sectors
-   (doors, lifts, lowering walls). */
+   (doors, lifts, lowering walls) and shot-out lights. */
 #include "internal.h"
 
 namespace doom3d {
@@ -23,8 +23,15 @@ struct Relight {
     std::vector<int16_t> sunCells; // Floor sun over sunBounds; -1 unchanged.
     std::vector<size_t> gridList;
     std::vector<StaticCell> gridResults;
+    // Shot-out lights in this re-bake, as they shone, and per sector the
+    // floor light they gave and the floor light left after (every other
+    // cell each way).
+    std::vector<BakeLight> gone;
+    std::vector<double> lost,left;
 } relight;
 static std::vector<int> relightPending;
+static std::vector<SurfaceLightKey> brokenPending;
+void relightBrokenLight(const SurfaceLightKey &cell) {brokenPending.push_back(cell);}
 // The height a sector's floor or ceiling takes in bakeMap.
 static float bakeHeight(int sector,bool ceiling) {
     float now=units(ceiling?sectors[sector].ceilingheight:sectors[sector].floorheight);
@@ -49,6 +56,27 @@ static void markRelight(float x0,float y0,float x1,float y1,uint8_t bit) {
         for(int y=gy0;y<=gy1;++y)for(int x=gx0;x<=gx1;++x)relight.gridCells[(size_t)y*staticWidth+x]=1;
     }
 }
+// How much of each sector's floor light the shot-out lights gave, against
+// what the re-bake left it (every other cell each way, both).
+static void measureLoss(Relight &job) {
+    static const float up[3]={0,0,1};
+    job.lost.assign(numsectors,0);job.left.assign(numsectors,0);
+    const int *b=job.lightBounds;
+    for(int y=b[1];y<=b[3];y+=2)for(int x=b[0];x<=b[2];x+=2) {
+        size_t i=(size_t)y*mapWidth+x;int sector=seamCells[i].own;
+        if(!(job.cells[i]&1)||sector==noSector||job.map.sectors[sector].sky)continue;
+        float px=mapOrigin[0]+(x+0.5f)*mapCell,py=mapOrigin[1]+(y+0.5f)*mapCell,sum[3]={};
+        for(const BakeLight &light:job.gone)addBakedLight(job.map,light,sector,px,py,job.map.sectors[sector].floor+1,up,sum);
+        job.lost[sector]+=luminance(sum);
+    }
+    for(int y=0;y<mapHeight;y+=2)for(int x=0;x<mapWidth;x+=2) {
+        size_t i=(size_t)y*mapWidth+x;int sector=seamCells[i].own;
+        if(sector==noSector||job.lost[sector]<=0)continue;
+        const uint8_t *cell=flatCell(floorLight,i);
+        float rgb[3]={cell[0]/255.0f*2,cell[1]/255.0f*2,cell[2]/255.0f*2};
+        job.left[sector]+=luminance(rgb);
+    }
+}
 static void startRelight() {
     Relight &job=relight;
     job.lights=settings.bakedLights&&lightBakeKey>=0&&lightBakeKey==lightBakeInputs()&&!bakeGrid.empty()&&wallBakeTexture&&flatLightTexture;
@@ -56,10 +84,24 @@ static void startRelight() {
     job.grid=job.lights&&staticSerial==lightBakeSerial&&!staticGrid.empty();
     job.sun=sunBaked&&sunLevel>0&&contactTexture&&wallBakeTexture;
     std::vector<int> pending;pending.swap(relightPending);
+    // Shot-out fixtures (shot_lights.cpp) leave the bake. Their sources go
+    // dark at once, as things read them live, and here, with no re-bake
+    // reading them; the light they baked clears with this re-bake. Bounce,
+    // like the rest the re-bake keeps, stays as the level started.
+    std::vector<SurfaceLightKey> broken;broken.swap(brokenPending);
+    std::vector<int> darkened;
+    job.gone.clear();job.lost.clear();job.left.clear();
+    for(const SurfaceLightKey &cell:broken)
+        for(size_t n=0;n<bakeSourceKeys.size()&&n<bakeSources.size();++n)
+            if(bakeSourceKeys[n]==cell&&bakeSources[n].strength>0) {job.gone.push_back(bakeSources[n]);bakeSources[n].strength=0;darkened.push_back((int)n);}
     if(!job.lights&&!job.sun)return;
     job.cells.assign((size_t)mapWidth*mapHeight,0);job.strips.assign(bakeStrips.size(),0);
     job.gridCells.assign(job.grid?staticGrid.size():0,0);
     for(int *b:{job.lightBounds,job.sunBounds}) {b[0]=b[1]=INT_MAX;b[2]=b[3]=-1;}
+    if(job.lights)for(int n:darkened) {
+        const BakeLight &light=bakeSources[n];
+        markRelight(light.x-light.radius,light.y-light.radius,light.x+light.radius,light.y+light.radius,1);
+    }
     const float elevation=40*doomPi/180;
     for(int sector:pending) {
         const BakeSector &s=bakeMap.sectors[sector];
@@ -123,6 +165,7 @@ static void startRelight() {
             size_t i=job.gridList[n];
             job.gridResults[n]=staticCellAt(job.map,(int)(i%staticWidth),(int)(i/staticWidth));
         },threads);
+        if(job.lights&&!job.gone.empty())measureLoss(job);
         job.done=true;
     });
 }
@@ -138,6 +181,9 @@ void finishRelight(bool apply) {
                          flatLightCells.data(),mapWidth*4);
         if(job.only)gpuUpdateTexture(flatDirectionTexture,GpuFormat::RGBA8,{{lb[0],lb[1],w,h},{lb[0],lb[1]+mapHeight,w,h}},flatDirectionCells.data(),mapWidth*4);
         for(size_t n=0;n<job.gridList.size();++n)staticGrid[job.gridList[n]]=job.gridResults[n];
+        for(size_t s=0;s<job.lost.size();++s)
+            if(job.lost[s]>0)dimShotSector((int)s,(float)(job.lost[s]/(job.lost[s]+job.left[s])));
+        job.lost.clear();job.left.clear();
     }
     if(job.sun&&sb[2]>=0) {
         int w=sb[2]-sb[0]+1,h=sb[3]-sb[1]+1;
@@ -161,16 +207,16 @@ void finishRelight(bool apply) {
 // applies a finished re-bake and starts the next.
 void relightMovingSectors() {
     if(relight.running&&relight.done)finishRelight();
-    if(!settings.movingRelight||bakeMap.sectors.size()!=(size_t)numsectors)return;
-    for(int i=0;i<numsectors;++i) {
+    if(bakeMap.sectors.size()!=(size_t)numsectors)return;
+    if(settings.movingRelight)for(int i=0;i<numsectors;++i) {
         BakeSector &s=bakeMap.sectors[i];
         float floor=bakeHeight(i,false),ceiling=bakeHeight(i,true);
         if(floor==s.floor&&ceiling==s.ceiling)continue;
         s.floor=floor;s.ceiling=ceiling;
         if(std::find(relightPending.begin(),relightPending.end(),i)==relightPending.end())relightPending.push_back(i);
     }
-    if(!relight.running&&!relightPending.empty())startRelight();
+    if(!relight.running&&(!relightPending.empty()||!brokenPending.empty()))startRelight();
 }
 // Waits for any re-bake in flight and drops what it would apply.
-void stopRelight() {finishRelight(false);relightPending.clear();}
+void stopRelight() {finishRelight(false);relightPending.clear();brokenPending.clear();}
 } // namespace doom3d

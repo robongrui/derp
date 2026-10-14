@@ -53,6 +53,7 @@ static void beforeTic() {
         oldThings.emplace(thing,std::array<float,3>{units(thing->x),units(thing->y),units(thing->z)});
     watchSplashes();
     watchGlass();
+    watchShotLights();
 }
 static void acceleratedView(player_t *player) {
     (void)player; worldPending=true; v_overlayactive=true;
@@ -103,14 +104,14 @@ void sceneShutdown() {
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
     imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();exposureShutdown();
     bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
-    impactsShutdown();bloodShutdown();splashesShutdown();glassShutdown();
+    impactsShutdown();bloodShutdown();splashesShutdown();glassShutdown();shotLightsShutdown();
 }
 // A new level, or the first after shutdown: each part forgets the last
 // level, then the map and what is built from it at level load.
 static void startLevel() {
     loadingStage(LoadStage::Map);
     stopRelight();
-    batches.clear();shadowBatches.clear();mirrorBatches.clear();clearSurfaceLights();
+    batches.clear();shadowBatches.clear();mirrorBatches.clear();clearSurfaceLights();shotLightsShutdown();
     bakeAtlasNewLevel();sunNewLevel();lightBakeNewLevel();clearStaticGrid();indirectNewLevel();
     oldThings.clear();oldHeights.clear();tickTime=0;
     buildMap();

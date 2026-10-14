@@ -57,6 +57,7 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
         debris.push_back({x,y,ceiling?z-3:z+1,std::cos(angle)*out,std::sin(angle)*out,ceiling?randomRange(-40,0):randomRange(60,140),now,
             randomRange(0.45f,0.8f),randomRange(1.2f,2.0f),texelColor(image),light});
     }
+    shotFlat(index,ceiling,x,y,z);
     return false;
 }
 void watchSplashes() {

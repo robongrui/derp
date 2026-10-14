@@ -11,6 +11,7 @@ std::vector<float> lampDrop;
 bool bakeOnlyActive=false; // ...and static lights come only from it.
 
 std::vector<BakeLight> bakeSources;
+std::vector<SurfaceLightKey> bakeSourceKeys;
 int firstWindowSource=0; // Window lights (addWindowLights) end bakeSources; they cast no thing shadows.
 // Window light reaching one point eases toward about the outdoor level, so
 // a room with windows on several sides isn't lit past it by their sum. Scales
@@ -369,7 +370,7 @@ void bakeLights() {
     bool only=lightBakeKey&2;
     if(flatLightCells.empty())return;
     uint64_t start=SDL_GetTicksNS();
-    std::vector<BakeLight> &sources=bakeSources;sources.clear();sourceGroups.clear();bakeAreas.clear();
+    std::vector<BakeLight> &sources=bakeSources;sources.clear();sourceGroups.clear();bakeAreas.clear();bakeSourceKeys.clear();
     for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
         if(decorationLight(*thing)) {sources.push_back(decorationSource(*thing));sourceGroups.push_back((uint8_t)flickerGroup(*thing));}
     if(settings.emissive) {
@@ -382,10 +383,12 @@ void bakeLights() {
             sources.push_back({light.x,light.y,light.z,light.radius,light.strength,0.35f,{light.color[0],light.color[1],light.color[2]},
                                std::min(light.extent,light.radius),n[0],n[1]});
             sourceGroups.push_back(0);
+            bakeSourceKeys.resize(sources.size()-1);bakeSourceKeys.push_back(light.key);
         }
     }
     firstWindowSource=(int)sources.size();
     if(settings.windowLight) {addWindowLights(sources);sourceGroups.resize(sources.size(),0);}
+    bakeSourceKeys.resize(sources.size());
     int points=(int)sources.size();
     bakeGridWidth=(int)std::ceil(mapWidth*mapCell/bakeGridCell);bakeGridHeight=(int)std::ceil(mapHeight*mapCell/bakeGridCell);
     auto gridX=[&](float x){return std::clamp((int)std::floor((x-mapOrigin[0])/bakeGridCell),0,bakeGridWidth-1);};
@@ -422,7 +425,7 @@ void bakeLights() {
 }
 void lightBakeNewLevel() {
     lightBakeKey=-1;
-    bakeSources.clear();bakeGrid.clear();bakeAreas.clear();sourceGroups.clear();lampDrop.clear();
+    bakeSources.clear();bakeSourceKeys.clear();bakeGrid.clear();bakeAreas.clear();sourceGroups.clear();lampDrop.clear();
     wallDirectionCells.clear();flatDirectionCells.clear();wallDirectionTexture=nullptr;flatDirectionTexture=nullptr;
 }
 void lightBakeShutdown() {lightBakeNewLevel();bakedLightsActive=false;bakeOnlyActive=false;}

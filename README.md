@@ -55,6 +55,8 @@ graphics panel with **F4**.
   packs, ray tracing and multiplayer.
 - **Window glass:** windows found in the map get glass that reflects the room
   and shatters when something goes through it.
+- **Lights can be shot out:** lamps and screens break when shot or caught in a
+  blast, and the room goes dark with them.
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
   muffled behind walls and dulled by distance.
 - **Music synths of its own:** a SoundFont synth with the bundled GeneralUser
@@ -404,6 +406,33 @@ visible and dim walls stay faint, so the window stays see-through.
 
 See [`platform/scene3d/windows.cpp`](platform/scene3d/windows.cpp) and
 [`platform/shaders/glass.frag`](platform/shaders/glass.frag).
+
+### Lights can be shot out
+
+Every lamp, light strip and screen that lights the room can be shot out. The
+renderer already knows which pixels of a texture glow and which light each of
+them feeds, so a shot that lands on the glowing part breaks the whole fixture.
+It sputters for a moment and goes dark: tubes turn grey and dead, and a screen
+loses its curved glass to cracks over a black tube.
+
+The light goes with it. The fixture is taken out of the baked lighting, and the
+floors, walls, monsters and items it lit are baked again around it on a
+background thread. DOOM also lights a lamp-lit room by its sector light level,
+so the room's level drops by the share of its light that fixture gave. A room
+lit only by its lamps ends up close to pitch black.
+
+Bullets, fireballs and plasma break what they hit; rockets and exploding
+barrels break every lamp their blast can see. Monsters' shots count too, and a
+bullet that kills its target carries on to the wall behind it, so the fight
+itself wears the light down. Tech walls throw blue sparks when hit.
+
+Like the window glass, all of this happens in the renderer only. The game
+doesn't know the lights are gone: monsters see as they always did, and loading
+a save brings the lights back.
+
+There is no screenshot of this on purpose. It's better found in a fight.
+
+See [`platform/scene3d/shot_lights.cpp`](platform/scene3d/shot_lights.cpp).
 
 ### Fog, mist and sunbeams are simple fakes
 

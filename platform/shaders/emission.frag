@@ -17,6 +17,7 @@ void main() {
     // Glowing eyes bloom; a spectre's stay hidden.
     float eyes=(vMode&(MODE_GLOWING_EYES|MODE_FUZZ))==MODE_GLOWING_EYES?eyeGlow(image,vUV)*0.6:0.0;
     float e=sprite?((vMode&MODE_PICKUP)!=0u?0.3:eyes):mix(maskAt(image,vUV,true),blend>0.0?maskAt(nextImage,vUV,true):0.0,blend);
+    if(!sprite&&(vMode&MODE_DEAD_GLOW)!=0u) e=0.0; // A shot-out lamp or screen.
     // White strips glow in every channel at once and wash the view out up
     // close; colored bulbs keep their full bloom.
     float hi=max(color.r,max(color.g,color.b)),lo=min(color.r,min(color.g,color.b));

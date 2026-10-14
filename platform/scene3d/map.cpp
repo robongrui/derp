@@ -273,7 +273,10 @@ float lighting(const sector_t *sector,bool bright) {
     if(bright) return 1;
     float level=sector->lightlevel/255.0f;
     if(bakedLightsActive&&lampDrop.size()==(size_t)numsectors)level-=lampDrop[sector-sectors];
-    return std::clamp(level,0.12f,1.0f);
+    level=std::clamp(level,0.12f,1.0f);
+    size_t index=sector-sectors;
+    if(index<shotDim.size())level*=shotDim[index]; // Rooms whose lamps were shot out (shot_lights.cpp).
+    return level;
 }
 void mapShutdown() {
     floors.clear();floorBounds.clear();sectorFloors.clear();seamCells.clear();contactCells.clear();sectorMist.clear();

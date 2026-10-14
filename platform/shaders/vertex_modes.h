@@ -18,7 +18,8 @@
 #define MODE_STIPPLED        1024u // decal pass only: a hard silhouette's edge breaks into a stipple
 #define MODE_WET_SPRITE      2048u // airborne blood glints like floor blood (needs MODE_RELIT)
 #define MODE_GLOWING_EYES    4096u // a living monster: its eyes glow (eyeGlow in indexed.glsl)
+#define MODE_DEAD_GLOW       8192u // a shot-out lamp or screen: its glowing texels go dark (shot_lights.cpp)
 // Bits from here up carry sector+1 for map-space lighting; 0 means none.
-#define MODE_SECTOR_SHIFT    13
+#define MODE_SECTOR_SHIFT    14
 
 #endif

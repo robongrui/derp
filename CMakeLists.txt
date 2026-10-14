@@ -212,6 +212,7 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/relight.cpp
         platform/scene3d/scene.cpp
         platform/scene3d/shadows.cpp
+        platform/scene3d/shot_lights.cpp
         platform/scene3d/sprite_normals.cpp
         platform/scene3d/surface_lights.cpp
         platform/scene3d/thing_light.cpp

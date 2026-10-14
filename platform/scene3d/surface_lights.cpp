@@ -97,13 +97,19 @@ static void groupSurfaceLights(std::vector<SurfaceLight> &tiles) {
         for(const SurfaceLight *tile:members)surfaceGroups[tile->key]=tile->group;
     }
 }
+SurfaceLightKey surfaceCellOf(const SurfaceLight &tile) {
+    SurfaceLight grouped=tile;
+    auto known=surfaceGroups.find(tile.key);
+    grouped.group=known!=surfaceGroups.end()?known->second:0;
+    return surfaceCell(grouped);
+}
 // Merged emissive lights, kept apart where walls divide their tiles.
 std::vector<SurfaceLight> mergedSurfaceLights(std::vector<SurfaceLight> tiles) {
     groupSurfaceLights(tiles);
     return mergeSurfaceLights(tiles);
 }
 static void surfaceLight(const SurfaceLightKey &key,float x,float y,float z,const Image &image,int facing,float radius=224,float extent=0) {
-    if(!settings.emissive || image.emissionWeight==0) return;
+    if(!settings.emissive || image.emissionWeight==0 || tileDark(key)) return;
     surfaceLights.push_back({key,x,y,z,radius,1.65f*image.emissionWeight,image.emissionColor,facing,extent});
 }
 static const std::vector<FlatLightSample> &flatSamples(int sectorIndex,int lump,const Image &image) {

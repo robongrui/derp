@@ -88,6 +88,7 @@ Image upload(int w,int h,const byte *pixels,int left,int top,const byte *mask,co
             packed[4*i+3]=normals?normals[2*i+1]:glass?glass[i]:DOOM_GLASS_NONE;
         }
     }
+    if(glass)image.screens.assign(glass,glass+(size_t)w*h); // Monitor glass, for shots (shot_lights.cpp).
     if(mask) {
         int lump=W_GetNumForName((char*)"PLAYPAL");
         if(W_LumpLength(lump)<768) I_Error((char*)"Invalid emissive palette");
@@ -99,6 +100,7 @@ Image upload(int w,int h,const byte *pixels,int left,int top,const byte *mask,co
             for(int c=0;c<3;++c) image.emissionColor[c]+=palette[pixels[2*i]*3+c]/255.0f*e;
         }
         if(weight>0) {
+            image.emission.assign(mask,mask+(size_t)w*h); // Where shots break the glow (shot_lights.cpp).
             image.emissionU/=weight;image.emissionV/=weight;
             float peak=*std::max_element(image.emissionColor.begin(),image.emissionColor.end());
             for(float &c:image.emissionColor)c=std::max(0.04f,c/std::max(peak,0.001f));

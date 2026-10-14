@@ -45,6 +45,16 @@ void muzzleFlash(mobj_t *source,int weapon,int projectile) {
     if(flashPulses.size()==8) flashPulses.erase(flashPulses.begin());
     flashPulses.push_back(pulse);
 }
+// A short flash where a shot sparks off machinery or breaks a lamp
+// (shot_lights.cpp); a new one replaces the last.
+void sparkFlash(float x,float y,float z,float radius,float strength,const std::array<float,3> &color) {
+    if(gamestate!=GS_LEVEL) return;
+    if(flashLevelSerial!=r_levelserial) {flashPulses.clear();flashLevelSerial=r_levelserial;}
+    FlashPulse pulse={x,y,z,radius,strength,leveltime,nullptr,color};
+    for(auto &old:flashPulses) if(!old.source) {old=pulse;return;}
+    if(flashPulses.size()==8) flashPulses.erase(flashPulses.begin());
+    flashPulses.push_back(pulse);
+}
 // Directionality: 0 lights every surface alike, 1 is full Lambert facing.
 // Unoccluded lights skip wall blockers, so shading them costs no ray tests.
 // baked: the part of this light already in the bake maps, which world surfaces

@@ -76,7 +76,7 @@ static void checkBloodLevel() {
 // Hitscan blood: splats land on the floor a little past the hit after their
 // fall, and with harder hits the spray reaches a wall close behind.
 void bloodHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,int damage) {
-    (void)target;
+    shotThrough(target,fx,fy,fz,fdx,fdy,damage);
     if(!settings.blood||gamestate!=GS_LEVEL||floors.empty()||bloodPalette().empty())return;
     checkBloodLevel();
     float x=units(fx),y=units(fy),z=units(fz),dx=units(fdx),dy=units(fdy),length=std::hypot(dx,dy);

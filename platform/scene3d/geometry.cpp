@@ -17,6 +17,7 @@ static void addWall(const line_t &line,int side,Point a,Point b,float bottom,flo
                        {b.x,b.y,bottom,u+len,anchor-bottom,light,mode},{a.x,a.y,bottom,u,anchor-bottom,light,mode}};
     // Wall coordinates restart on every line, so each section seeds its own tiles.
     unsigned seed=(unsigned)(&line-lines)*8u+(unsigned)side*4u+(unsigned)span+1u;
+    if(addBrokenWall(out,line,side,span,wallImage(tex),a,b,bottom,top,u,anchor,light,mode,seed))return;
     for(int n=0;n<4;++n) {bakeWallCoordinates(line,side,n==1||n==2?len:0,corners[n],true);corners[n].statics=seed;}
     quad(out,corners[0],corners[1],corners[2],corners[3]);
 }
@@ -182,6 +183,7 @@ static void flatGeometry(const std::vector<float> &skyTop) {
             unsigned mirror=reflectionActive&&!ceiling&&sectorMist[sector-sectors].reflective&&std::abs(z-reflectionPlane)<0.5f?MODE_MIRROR_FLOOR:0;
 
             auto &out=batches[-1-lump];
+            if(addBrokenFlat(out,i,int(sector-sectors),ceiling,lumpImage(lump,true),z,light,mirror|sectorMode(sector)))continue;
             for(size_t n=1;n+1<poly.size();++n) for(Point p:{poly[0],poly[n],poly[n+1]})
                 out.push_back({p.x,p.y,z,p.x,-p.y,light,mirror|sectorMode(sector)});
         }

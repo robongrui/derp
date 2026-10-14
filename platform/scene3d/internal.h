@@ -38,6 +38,7 @@ extern boolean menuactive, automapactive, paused;
 extern int numflats;
 extern float tourpitch;
 extern boolean freeaim;
+extern fixed_t aimslope;
 int P_PicAnimationNext(boolean istexture,int pic,int *next);
 }
 #include <SDL3/SDL.h>
@@ -203,6 +204,9 @@ extern bool bakeOnlyActive;
 // The baked lights, kept for sprites, and a coarse grid listing the lights
 // that can reach each of its cells.
 extern std::vector<BakeLight> bakeSources;
+// Per bakeSources entry: the merge cell of the glowing tiles it stands for
+// (shot_lights.cpp breaks them by it), all zeros for other lights.
+extern std::vector<SurfaceLightKey> bakeSourceKeys;
 extern int firstWindowSource;
 float capWindowLight(float rgb[3]);
 extern std::vector<std::vector<int>> bakeGrid;
@@ -238,6 +242,9 @@ float flowLightAt(float x,float y,const sector_t *sector,float light);
 
 // relight.cpp
 void stopRelight();
+// A shot-out fixture's merged light (a bakeSourceKeys entry) leaves the bake:
+// its source goes dark and the next background re-bake clears its light.
+void relightBrokenLight(const SurfaceLightKey &cell);
 // Waits for the background re-bake around moving sectors (relightMovingSectors)
 // and, with apply, uploads what it baked. Every full bake calls it first.
 void finishRelight(bool apply=true);
@@ -266,6 +273,7 @@ extern std::array<bool,maxLights> fogOnly;
 extern std::array<uint8_t,maxLights> lightKinds;
 extern uint8_t lightKind;
 void muzzleFlash(mobj_t *source,int weapon,int projectile);
+void sparkFlash(float x,float y,float z,float radius,float strength,const std::array<float,3> &color);
 void appendLight(float x,float y,float z,float radius,float strength,const std::array<float,3> &color,const mobj_t *source,float directionality,bool occluded=true,float baked=0,
                  const std::array<float,4> &spot={});
 bool decorationLight(const mobj_t &thing);
@@ -293,6 +301,8 @@ std::vector<SurfaceLight> mergedSurfaceLights(std::vector<SurfaceLight> tiles);
 void collectFlatLights();
 void collectSurfaceLights();
 void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float top,int tex,float anchor,int span);
+// The merge cell (mergeSurfaceLights key) a tile's light joins.
+SurfaceLightKey surfaceCellOf(const SurfaceLight &tile);
 
 // geometry.cpp
 void quad(std::vector<Vertex> &out,Vertex a,Vertex b,Vertex c,Vertex d);
@@ -323,6 +333,27 @@ void barrelBlast(const mobj_t &thing,float x,float y,float z);
 void buildImpacts(const Uniforms &camera);
 bool firstSolidWall(float x,float y,float z,float dx,float dy,float dz,float length,WallHit &hit);
 float valueNoise(float x,float y,float cell,uint32_t seed);
+
+// shot_lights.cpp
+void shotLightsShutdown();
+// Per sector, what its light level keeps after shot-out lamps (1: all).
+extern std::vector<float> shotDim;
+// A sector lost share of its baked floor light to shot-out lamps.
+void dimShotSector(int sector,float share);
+// Whether a glowing tile is out now (sputtering out for a moment after the shot).
+bool tileDark(const SurfaceLightKey &key);
+void shotWall(const line_t &line,int side,int section,float along,float x,float y,float z,int reach=1);
+void shotFlat(int sector,bool ceiling,float x,float y,float z,int reach=1);
+// Rockets and barrels bursting break the lights around them.
+void blastLights(float x,float y,float z,float radius);
+// Each tic: projectiles bursting against lights break them.
+void watchShotLights();
+void shotThrough(const mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,int damage);
+// The world quads of a wall piece or floor leaf with shot-out tiles, split so
+// those tiles carry MODE_DEAD_GLOW; false (nothing added) when none are out.
+bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span,const Image &image,Point a,Point b,
+                   float bottom,float top,float u,float anchor,float light,unsigned mode,unsigned seed);
+bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,const Image &image,float z,float light,unsigned mode);
 
 // blood.cpp
 void bloodShutdown();
