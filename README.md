@@ -61,6 +61,8 @@ graphics panel with **F4**.
   and shatters when something goes through it.
 - **Lights can be shot out:** lamps and screens break when shot or caught in a
   blast, and the room goes dark with them.
+- **Blinking lights:** lamps in flickering sectors blink, strobe and pulse with
+  DOOM's light effects, and the baked light they throw follows them.
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
   finding their way round corners, through doors and windows, and dulled by
   distance.
@@ -118,6 +120,11 @@ light through their own wall. Computer walls that are only dotted with a few
 LEDs keep their glowing pixels but light the room only as much as those
 LEDs would, so a wall of tech panels doesn't turn a room red.
 
+A lamp lights as strongly as its sector's light level says. The level is the
+mapper's stand-in for the lamp's brightness. A strip set only a notch above its
+room was meant as a dim fixture, so it lights little: the strength rises with
+the square of the level, from nothing at 96 to full at 208.
+
 Windows and other gaps open to the sky become broad sky-colored lights. With
 sun lighting on, windows that look out onto sunlit areas give more light than
 windows facing shade. The light from several windows is capped together so a
@@ -156,8 +163,10 @@ light spreads under an opening while it opens.
 The bake keeps more than a color. With bake-only lights (see below), each wall
 texel and floor or ceiling cell also stores the direction most of its light
 comes from, how much comes from that direction, and which flickering lamp
-dominates it. Torches, candles and other animated decorations are sorted into
-15 flicker groups that step like DOOM's flickering sectors. The shaders read
+dominates it. The flicker part is stored in every mode as soon as a map has
+lamps in flickering sectors (see the blinking lights below). Torches, candles
+and other animated decorations are sorted into flicker groups that step like
+DOOM's flickering sectors. The shaders read
 the direction to light bump, gloss and the monsters' rounded shading, and they
 step each texel with its group's flicker. A torch-lit wall keeps flickering
 with its torch, and its seams still catch the light from the right side, even
@@ -464,6 +473,55 @@ a save brings the lights back.
 There is no screenshot of this on purpose. It's better found in a fight.
 
 See [`platform/scene3d/shot_lights.cpp`](platform/scene3d/shot_lights.cpp).
+
+### Blinking and pulsing lights came back
+
+DOOM flickers a light by changing a sector's light level. A thinker makes it
+blink at random, strobe, glow up and down, or flicker like fire. In DOOM the
+lamp in that sector flickers along for free, because every pixel is drawn at
+its sector's brightness. Once lamps became light sources here, that broke.
+Their glowing pixels are drawn at full brightness, and the light they throw is
+baked when the level loads. Every lamp shone steadily, and the flicker shrank to
+a faint pulse of the sector light. A lot of DOOM's mood turned out to live in
+those blinking lights.
+
+Getting them back took several pieces:
+
+- **Reading the swing.** Each flickering sector's light thinker says how far
+  its level swings. Lamps in that sector follow where the level sits within it.
+  Blinking and strobing sectors switch their lamps off in the lower half of the
+  swing. Glowing and fire-flickering sectors fade them up and down.
+- **Keeping the light baked.** One live light per lamp would cost frame time
+  and lose the bake's soft, stepped shadows. A first try with live lights cast
+  razor-sharp ones. Instead, each flickering sector's lamps get a flicker
+  group, the same mechanism that makes torch-lit walls flicker with bake-only
+  lights. Every wall texel and floor cell records which group lights it most
+  and what share of its light that is, and the shader scales that share every
+  frame. There are 15 groups. Sectors at least 1024 units apart can share one,
+  and the one nearest the player decides how it flickers.
+- **Switching each cell before blending.** The light blends the four nearest
+  bake cells, and neighbours can belong to different groups. Blending first
+  and switching after left blocks of lamp light glowing on when the lamp was
+  out. Each cell is now switched by its own group before the blend, and the
+  bounce light switches with it.
+- **The shot-out look.** A switched-off tube is drawn exactly like one that's
+  been shot out: grey and dead. A glowing sector fades its lamp's glowing pixels
+  instead.
+- **DOOM's level with the lamps out.** Rooms whose light comes mostly from
+  their lamps get part of their sector light taken away, so the lamps can put
+  it back with direction. That used to count flickering lamps too, so a room
+  went near black whenever they went out. Now only steady lamps count. A lamp's
+  own sector sits at the bottom of its swing, and the baked lamp light carries
+  the rest. With the lamps out, a room looks as DOOM has it; with them on, it
+  is lit from the lamps.
+
+Shoot out every lamp of a flickering room and it stops flickering: nothing is
+left to carry the swing.
+
+See [`platform/scene3d/surface_lights.cpp`](platform/scene3d/surface_lights.cpp),
+[`platform/scene3d/light_swings.c`](platform/scene3d/light_swings.c),
+[`platform/scene3d/bake_lights.cpp`](platform/scene3d/bake_lights.cpp) and
+[`platform/shaders/world/bake.glsl`](platform/shaders/world/bake.glsl).
 
 ### Fog, mist and sunbeams are simple fakes
 
