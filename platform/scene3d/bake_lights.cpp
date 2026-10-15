@@ -120,7 +120,7 @@ static void buildPoolAreas() {
     }
     bakeAreas.erase(std::remove_if(bakeAreas.begin(),bakeAreas.end(),[](const BakeArea &a){return a.pieces.empty();}),bakeAreas.end());
 }
-// Bake-only direction texel: where the static light comes from in the
+// Direction texel (bake-only lights, or lamps that switch): where the static light comes from in the
 // surface's tangent frame (rg; walls: along the side and up, floors and
 // ceilings: map x and y), how much of it comes from that one direction (b),
 // and the strongest flicker group with its share in 1/15 steps
@@ -169,7 +169,7 @@ static void gatherStatic(const BakeMap &map,int sector,float x,float y,float z,c
     for(int c=0;c<3;++c)out[c]=(uint8_t)std::min(255L,std::lround(std::round(sum[c]*32)/32*0.5f*255));
     if(direction)encodeDirection(normal,towards,total,groups,sheen,direction);
 }
-// Static light for a floor/ceiling map cell (only: with directions).
+// Static light for a floor/ceiling map cell (only: with directions and flicker groups).
 void lightCell(const BakeMap &map,size_t i,bool only) {
     static const float up[3]={0,0,1},down[3]={0,0,-1};
     int sector=seamCells[i].own;
@@ -211,19 +211,27 @@ void lightStrip(const BakeMap &map,const BakeStrip &strip,bool only) {
 // level, or a room nothing visibly lights would keep its full even light and
 // look brighter and flatter than the lit rooms around it (E1M3's sector 98).
 // This needs no dimmer neighbor; only regions mostly open to the sky keep
-// their level.
+// their level. Sectors whose lamps flicker count at their low, and only
+// steady light dims a region: with the lamps out, a room is as Doom has it.
 static void classifyLampSectors() {
     lampDrop.assign(numsectors,0.0f);
     if(flatLightCells.empty()||seamCells.empty())return;
     std::vector<float> least(numsectors,INFINITY),shown(numsectors,0.0f);
     std::vector<int> cells(numsectors,0);
     std::vector<float> level(numsectors);
-    for(int i=0;i<numsectors;++i)level[i]=std::clamp(sectors[i].lightlevel/255.0f,0.12f,1.0f);
+    for(int i=0;i<numsectors;++i)level[i]=std::clamp(lampLightLevel(&sectors[i])/255.0f,0.12f,1.0f);
     for(size_t i=0;i<seamCells.size();++i) {
         int s=seamCells[i].own;if(s==noSector)continue;
         const uint8_t *cell=flatCell(floorLight,i);
-        least[s]=std::min(least[s],std::max({cell[0],cell[1],cell[2]})/255.0f*2);
-        float rgb[3]={cell[0]/255.0f*2,cell[1]/255.0f*2,cell[2]/255.0f*2};
+        // Only steady light counts: flickering lamps' share (their flicker
+        // group, assignLampGroups) leaves when they go out.
+        float steady=1;
+        if(lampGroupCount>0&&!flatDirectionCells.empty()) {
+            unsigned packed=flatDirectionCells[4*i+3],group=packed>>4;
+            if(group>0&&(int)group<=lampGroupCount)steady=1-(packed&15)/15.0f;
+        }
+        least[s]=std::min(least[s],std::max({cell[0],cell[1],cell[2]})/255.0f*2*steady);
+        float rgb[3]={cell[0]/255.0f*2*steady,cell[1]/255.0f*2*steady,cell[2]/255.0f*2*steady};
         shown[s]+=bakeLuminance(rgb);++cells[s];
     }
     bool dim=settings.dimLitRooms;
@@ -391,6 +399,48 @@ void remergeBakeSource(int n) {
         if(at==list.end()||*at!=n)list.insert(at,n);
     });
 }
+// Flicker groups for lamps in flickering sectors (lampOut): each such
+// sector's merged lights take one of groups 1..lampGroupCount, which the
+// bake records like a flickering decoration's (encodeDirection), so their
+// light leaves with its baked shadows and steps when they switch off, in
+// every mode, dimming as they fade (lampShine). Sectors share a group only
+// 1024 units or more apart, where the one nearest the eye sets it
+// (updateLampGroups). Decorations hash into the groups left (flickerGroup).
+int lampGroupCount=0;
+float lampGroupFlicker[flickerGroups];
+struct LampGroupSector { int sector; float x,y; };
+static std::vector<std::vector<LampGroupSector>> lampGroupSectors;
+static std::vector<int> lampGroupOf; // Per sector; 0 for none.
+static void assignLampGroups(const std::vector<SurfaceLight> &merged) {
+    lampGroupCount=0;lampGroupSectors.assign(flickerGroups,{});lampGroupOf.assign(numsectors,0);
+    std::map<int,std::array<float,3>> centers; // Per sector: x and y sums, count.
+    for(const auto &light:merged)if(light.flickerSector>=0&&light.strength>0) {
+        auto &c=centers[light.flickerSector];c[0]+=light.x;c[1]+=light.y;c[2]+=1;
+    }
+    for(const auto &[sector,c]:centers) {
+        float x=c[0]/c[2],y=c[1]/c[2],farthest=-1;int pick=1;
+        for(int g=1;g<flickerGroups;++g) {
+            float nearest=INFINITY;
+            for(const auto &o:lampGroupSectors[g])nearest=std::min(nearest,std::hypot(o.x-x,o.y-y));
+            if(nearest>=1024) {pick=g;break;}
+            if(nearest>farthest) {farthest=nearest;pick=g;}
+        }
+        lampGroupSectors[pick].push_back({sector,x,y});lampGroupOf[sector]=pick;
+        lampGroupCount=std::max(lampGroupCount,pick);
+    }
+}
+void updateLampGroups(const float eye[3]) {
+    for(int g=0;g<flickerGroups;++g)lampGroupFlicker[g]=1;
+    for(int g=1;g<=lampGroupCount&&g<(int)lampGroupSectors.size();++g) {
+        const LampGroupSector *nearest=nullptr;float best=INFINITY;
+        for(const auto &o:lampGroupSectors[g]) {
+            float d=std::hypot(o.x-eye[0],o.y-eye[1]);
+            if(d<best) {best=d;nearest=&o;}
+        }
+        if(nearest)lampGroupFlicker[g]=lampShine(nearest->sector);
+    }
+}
+bool lampGroupSector(int sector) {return sector>=0&&sector<(int)lampGroupOf.size()&&lampGroupOf[sector]>0;}
 // Static lights, baked into the floor/ceiling map and the wall atlas rgb:
 // fullbright decorations and (with emissive textures) merged surface lights,
 // unflickered, with the sector heights in bakeMap. Values step by 1/32, like the
@@ -404,19 +454,24 @@ void bakeLights() {
     if(flatLightCells.empty())return;
     uint64_t start=SDL_GetTicksNS();
     std::vector<BakeLight> &sources=bakeSources;sources.clear();sourceGroups.clear();bakeAreas.clear();bakeSourceKeys.clear();
-    for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
-        if(decorationLight(*thing)) {sources.push_back(decorationSource(*thing));sourceGroups.push_back((uint8_t)flickerGroup(*thing));}
+    std::vector<SurfaceLight> merged;
     if(settings.emissive) {
         if(only)buildPoolAreas();
         std::vector<SurfaceLight> points;
         for(const auto &light:surfaceLights)
             if(bakedPoint(light,only))points.push_back(light);
-        for(const auto &light:mergedSurfaceLights(points)) {
-            sources.push_back(surfaceSource(light));
-            sourceGroups.push_back(0);
-            bakeSourceKeys.resize(sources.size()-1);bakeSourceKeys.push_back(light.key);
-        }
+        merged=mergedSurfaceLights(points);
     }
+    assignLampGroups(merged); // Before decorations take the groups left.
+    for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
+        if(decorationLight(*thing)) {sources.push_back(decorationSource(*thing));sourceGroups.push_back((uint8_t)flickerGroup(*thing));}
+    for(const auto &light:merged) {
+        sources.push_back(surfaceSource(light));
+        sourceGroups.push_back((uint8_t)(light.flickerSector>=0?lampGroupOf[light.flickerSector]:0));
+        bakeSourceKeys.resize(sources.size()-1);bakeSourceKeys.push_back(light.key);
+    }
+    // Directions (and flicker groups) with bake-only lights, or for lamps that switch.
+    bool directed=only||lampGroupCount>0;
     firstWindowSource=(int)sources.size();
     if(settings.windowLight) {addWindowLights(sources);sourceGroups.resize(sources.size(),0);}
     bakeSourceKeys.resize(sources.size());
@@ -434,16 +489,16 @@ void bakeLights() {
         const BakeArea &area=bakeAreas[n];
         list(points+(int)n,area.low[0]-area.radius,area.low[1]-area.radius,area.high[0]+area.radius,area.high[1]+area.radius);
     }
-    if(only) {
+    if(directed) {
         wallDirectionCells.assign((size_t)atlasWidth*atlasHeight*4,0);
         flatDirectionCells.assign((size_t)mapWidth*mapHeight*2*4,0);
     } else {wallDirectionCells.clear();flatDirectionCells.clear();}
-    parallelFor(mapHeight,[&](int y) {for(int x=0;x<mapWidth;++x)lightCell(bakeMap,(size_t)y*mapWidth+x,only);});
-    parallelFor((int)bakeOrder.size(),[&](int n) {lightStrip(bakeMap,bakeStrips[bakeOrder[n]],only);});
+    parallelFor(mapHeight,[&](int y) {for(int x=0;x<mapWidth;++x)lightCell(bakeMap,(size_t)y*mapWidth+x,directed);});
+    parallelFor((int)bakeOrder.size(),[&](int n) {lightStrip(bakeMap,bakeStrips[bakeOrder[n]],directed);});
     uploadFlatLight();
     uploadWallBake();
     wallDirectionTexture=nullptr;flatDirectionTexture=nullptr;
-    if(only) {
+    if(directed) {
         wallDirectionTexture=gpuCreateTexture(GpuFormat::RGBA8,atlasWidth,atlasHeight,wallDirectionCells.data(),atlasWidth*4);
         flatDirectionTexture=gpuCreateTexture(GpuFormat::RGBA8,mapWidth,mapHeight*2,flatDirectionCells.data(),mapWidth*4);
         if(!wallDirectionTexture||!flatDirectionTexture)I_Error((char*)"Could not allocate surface maps");
@@ -455,6 +510,7 @@ void bakeLights() {
 void lightBakeNewLevel() {
     lightBakeKey=-1;
     bakeSources.clear();bakeSourceKeys.clear();bakeGrid.clear();bakeAreas.clear();sourceGroups.clear();lampDrop.clear();
+    lampGroupCount=0;lampGroupSectors.clear();lampGroupOf.clear();
     wallDirectionCells.clear();flatDirectionCells.clear();wallDirectionTexture=nullptr;flatDirectionTexture=nullptr;
 }
 void lightBakeShutdown() {lightBakeNewLevel();bakedLightsActive=false;bakeOnlyActive=false;}

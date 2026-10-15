@@ -1,6 +1,9 @@
 /* Light from glowing wall and floor textures, grouped into tiles that
    see each other. */
 #include "internal.h"
+extern "C" {
+#include "light_swings.h"
+}
 
 namespace doom3d {
 std::vector<SurfaceLight> surfaceLights;
@@ -108,9 +111,73 @@ std::vector<SurfaceLight> mergedSurfaceLights(std::vector<SurfaceLight> tiles) {
     groupSurfaceLights(tiles);
     return mergeSurfaceLights(tiles);
 }
-static void surfaceLight(const SurfaceLightKey &key,float x,float y,float z,const Image &image,int facing,float radius=224,float extent=0) {
+// How strongly a sector's glowing textures light, from its light level: the
+// mapper's stand-in for its lamps. A light strip in a 144 sector beside a 128
+// room (Doom 2 MAP02's computer room) was meant as a dim fixture, not one
+// that floods the room. Strength rises with the square of the level from 96
+// to 208 (144: 18%, 160: 33%, 192: 73%), so dim lamps barely reach past the
+// sector light and lamps from 208 up shine in full. Flickering sectors
+// count at their peak (their light thinker's maxlight), read once per level
+// with the low they drop to, so a save loaded mid-flicker lights like a
+// fresh start.
+struct LampRange { int low,peak; bool flickers,smooth; };
+static std::vector<LampRange> lampRanges;
+static void readLampRanges() {
+    if(lampRanges.size()==(size_t)numsectors)return;
+    lampRanges.resize(numsectors);
+    for(int i=0;i<numsectors;++i)lampRanges[i]={sectors[i].lightlevel,sectors[i].lightlevel,false,false};
+    doom_light_swings([](int sector,int low,int high,int smooth,void*) {
+        if(sector<0||sector>=numsectors)return;
+        LampRange &range=lampRanges[sector];
+        range={low,std::max(range.peak,high),true,smooth!=0};
+    },nullptr);
+}
+static float lampLevel(int sector) {
+    readLampRanges();
+    if(sector<0||sector>=numsectors)return 1;
+    float f=std::clamp((lampRanges[sector].peak-96)/112.0f,0.0f,1.0f);
+    return f*f;
+}
+// Lamps in a flickering sector follow it. Blinking and strobing sectors
+// switch them, as a shot-out lamp sputters: out while the sector stands in
+// the lower half of its swing, their glowing texels dead (addBrokenWall,
+// addBrokenFlat). MAP02's strips strobing between 128 and 144 stay out and
+// flash on for 5 tics in 40. Glowing and fire-flickering sectors fade them
+// with their swing instead, glow and all (lampGlow): E1M2's armor alcove
+// (sector 28) pulses. Their baked light follows by flicker group
+// (assignLampGroups), and the sector itself keeps its low (lampLightLevel).
+bool lampFlickers(int sector) {
+    readLampRanges();
+    return sector>=0&&sector<numsectors&&lampRanges[sector].flickers;
+}
+float lampShine(int sector) {
+    if(!lampFlickers(sector))return 1;
+    const LampRange &range=lampRanges[sector];
+    int now=sectors[sector].lightlevel;
+    if(range.smooth)return std::clamp((now-range.low)/(float)(range.peak-range.low),0.0f,1.0f);
+    return now*2<range.low+range.peak?0.0f:1.0f;
+}
+bool lampOut(int sector) {return lampFlickers(sector)&&!lampRanges[sector].smooth&&lampShine(sector)<=0;}
+int lampLightLevel(const sector_t *sector) {
+    int index=int(sector-sectors);
+    if(!lampGroupSector(index))return sector->lightlevel;
+    return std::min<int>(sector->lightlevel,lampRanges[index].low);
+}
+void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector) {
+    int index=int(sector-sectors);
+    if(!lampFlickers(index)||!lampRanges[index].smooth)return;
+    float shine=lampShine(index);
+    if(shine>=1)return;
+    unsigned alpha=(unsigned)std::lround(shine*255);
+    for(size_t n=first;n<out.size();++n)out[n].lampTint=(out[n].lampTint&0xFFFFFFu)|alpha<<24;
+}
+static void surfaceLight(const SurfaceLightKey &key,int sector,float x,float y,float z,const Image &image,int facing,float radius=224,float extent=0) {
     if(!settings.emissive || image.emissionWeight==0 || tileDark(key)) return;
-    surfaceLights.push_back({key,x,y,z,radius,1.65f*image.emissionWeight,image.emissionColor,facing,extent});
+    // Lamps too dim to light stay listed (strength 0), and so do lamps
+    // switched off: shots still find them.
+    SurfaceLight light={key,x,y,z,radius,1.65f*image.emissionWeight*lampLevel(sector),image.emissionColor,facing,extent};
+    if(lampFlickers(sector)) {light.flickerSector=sector;light.shine=lampShine(sector);}
+    surfaceLights.push_back(light);
 }
 static const std::vector<FlatLightSample> &flatSamples(int sectorIndex,int lump,const Image &image) {
     auto key=std::make_pair(sectorIndex,lump);
@@ -150,7 +217,7 @@ void collectFlatLights() {
         if(image.emissionWeight==0)continue;
         float z=sectorHeight(&sector,ceiling)+(ceiling?-8:8);
         for(const auto &sample:flatSamples(i,lump,image))
-            surfaceLight({0,i,ceiling,sample.u,sample.v},sample.point.x,sample.point.y,z,image,ceiling,256);
+            surfaceLight({0,i,ceiling,sample.u,sample.v},i,sample.point.x,sample.point.y,z,image,ceiling,256);
     }
 }
 void collectSurfaceLights() {
@@ -181,15 +248,19 @@ void collectSurfaceLights() {
     }
     if(!settings.emissive) {surfaceSelection.clear();return;}
     surfaceSelection.capacity=settings.fewerSurfaceLights?8:24;
-    surfaceSelection.update(mergedSurfaceLights(surfaceLights),surfaceEye,seconds);
+    std::vector<SurfaceLight> lit=mergedSurfaceLights(surfaceLights);
+    lit.erase(std::remove_if(lit.begin(),lit.end(),[](const SurfaceLight &l){return l.strength<=0;}),lit.end());
+    surfaceSelection.update(lit,surfaceEye,seconds);
     // Surface lights reach a short way, but walls still stop them: the bake
     // subtracts only their flat share, so their gloss would otherwise show on
     // shiny surfaces through walls. The Performance switch skips the tests.
+    // A flickering lamp's copy dims and goes out with its baked light.
     for(const auto &slot:surfaceSelection.slots) {
         const auto &p=slot.light;
+        if(p.shine<=0)continue;
         auto n=panelNormal(p);
-        appendLight(p.x,p.y,p.z,p.radius,p.strength*slot.gain,p.color,nullptr,0.35f,!settings.unoccludedSurfaceLights,bakedLightsActive?1.0f:0,
-                    {std::min(p.extent,p.radius),n[0],n[1],0});
+        appendLight(p.x,p.y,p.z,p.radius,p.strength*slot.gain*p.shine,p.color,nullptr,0.35f,!settings.unoccludedSurfaceLights,
+                    bakedLightsActive?1.0f:0,{std::min(p.extent,p.radius),n[0],n[1],0});
     }
 }
 void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float top,int tex,float anchor,int span) {
@@ -210,12 +281,12 @@ void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float t
             // Each sample stands for the rows of tiles it skips, within the wall piece.
             float z=anchor-image.emissionV-tileV*image.height;
             float extent=std::max(0.0f,std::min({image.height*stepV*0.5f,top-z,z-bottom}));
-            surfaceLight({1,(int)(&line-lines),side,tileU,tileV,span},
+            surfaceLight({1,(int)(&line-lines),side,tileU,tileV,span},int(sides[line.sidenum[side]].sector-sectors),
                 a.x+(b.x-a.x)*t+nx*DOOM_PANEL_OFFSET,a.y+(b.y-a.y)*t+ny*DOOM_PANEL_OFFSET,z,image,facing,224,extent);
         }
     }
 }
 void clearSurfaceLights() {
-    surfaceLights.clear();surfaceSelection.clear();flatLightSamples.clear();surfaceGroups.clear();surfaceLightTime=0;
+    surfaceLights.clear();surfaceSelection.clear();flatLightSamples.clear();surfaceGroups.clear();lampRanges.clear();surfaceLightTime=0;
 }
 } // namespace doom3d

@@ -236,8 +236,15 @@ FrameView prepareFrame(int w,int h) {
         camera.fx2[2]=sunYaw;camera.fx2[3]=sun&&settings.sunDisc?sunGlow:0;
         bakedLightsActive=settings.bakedLights&&lightBakeKey==lightBakeInputs();
         bakeOnlyActive=bakedLightsActive&&(lightBakeKey&2);
-        camera.bake[0]=bakedLightsActive;camera.bake[2]=bakeOnlyActive&&wallDirectionTexture&&flatDirectionTexture;
-        for(int g=0;g<flickerGroups;++g)camera.flicker[g/4][g%4]=bakeOnlyActive?groupFlicker(g):1;
+        // bake.z: 1 bake-only lights (directions and flicker groups), -1
+        // flicker groups only, for lamps that switch with their sector.
+        bool directions=wallDirectionTexture&&flatDirectionTexture;
+        camera.bake[0]=bakedLightsActive;camera.bake[2]=directions?(bakeOnlyActive?1.0f:lampGroupCount>0?-1.0f:0.0f):0.0f;
+        if(const mobj_t *viewer=players[displayplayer].mo) {
+            float at[3]={units(viewer->x),units(viewer->y),0};
+            updateLampGroups(at);
+        }
+        for(int g=0;g<flickerGroups;++g)camera.flicker[g/4][g%4]=groupFlicker(g);
         player_t *player=&players[displayplayer];mobj_t *mo=player->mo;
         camera.eye[0]=units(mo->x);camera.eye[1]=units(mo->y);camera.eye[2]=units(player->viewz);
         float yaw=(float)(mo->angle*(2.0*doomPi/4294967296.0));

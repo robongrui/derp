@@ -13,13 +13,16 @@ static void addWall(const line_t &line,int side,Point a,Point b,float bottom,flo
     tex=texturetranslation[tex]; wallImage(tex);
     float u=units(sides[line.sidenum[side]].textureoffset),len=std::hypot(b.x-a.x,b.y-a.y);
     auto &out=batches[tex];unsigned mode=sectorMode(sides[line.sidenum[side]].sector);
+    size_t first=out.size();
     Vertex corners[4]={{a.x,a.y,top,u,anchor-top,light,mode},{b.x,b.y,top,u+len,anchor-top,light,mode},
                        {b.x,b.y,bottom,u+len,anchor-bottom,light,mode},{a.x,a.y,bottom,u,anchor-bottom,light,mode}};
     // Wall coordinates restart on every line, so each section seeds its own tiles.
     unsigned seed=(unsigned)(&line-lines)*8u+(unsigned)side*4u+(unsigned)span+1u;
-    if(addBrokenWall(out,line,side,span,wallImage(tex),a,b,bottom,top,u,anchor,light,mode,seed))return;
-    for(int n=0;n<4;++n) {bakeWallCoordinates(line,side,n==1||n==2?len:0,corners[n],true);corners[n].statics=seed;}
-    quad(out,corners[0],corners[1],corners[2],corners[3]);
+    if(!addBrokenWall(out,line,side,span,wallImage(tex),a,b,bottom,top,u,anchor,light,mode,seed)) {
+        for(int n=0;n<4;++n) {bakeWallCoordinates(line,side,n==1||n==2?len:0,corners[n],true);corners[n].statics=seed;}
+        quad(out,corners[0],corners[1],corners[2],corners[3]);
+    }
+    lampGlow(out,first,sides[line.sidenum[side]].sector);
 }
 // The mirrored pass draws the world a second time, so it runs only while a
 // reflective floor can be on screen. Doom's own visibility answers that: the
@@ -182,10 +185,11 @@ static void flatGeometry(const std::vector<float> &skyTop) {
             // MODE_MIRROR_FLOOR: this floor samples the mirrored pass.
             unsigned mirror=reflectionActive&&!ceiling&&sectorMist[sector-sectors].reflective&&std::abs(z-reflectionPlane)<0.5f?MODE_MIRROR_FLOOR:0;
 
-            auto &out=batches[-1-lump];
-            if(addBrokenFlat(out,i,int(sector-sectors),ceiling,lumpImage(lump,true),z,light,mirror|sectorMode(sector)))continue;
-            for(size_t n=1;n+1<poly.size();++n) for(Point p:{poly[0],poly[n],poly[n+1]})
-                out.push_back({p.x,p.y,z,p.x,-p.y,light,mirror|sectorMode(sector)});
+            auto &out=batches[-1-lump];size_t first=out.size();
+            if(!addBrokenFlat(out,i,int(sector-sectors),ceiling,lumpImage(lump,true),z,light,mirror|sectorMode(sector)))
+                for(size_t n=1;n+1<poly.size();++n) for(Point p:{poly[0],poly[n],poly[n+1]})
+                    out.push_back({p.x,p.y,z,p.x,-p.y,light,mirror|sectorMode(sector)});
+            lampGlow(out,first,sector);
         }
     }
 }

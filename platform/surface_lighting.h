@@ -16,27 +16,33 @@ struct SurfaceLight {
     int facing=0; // Merge group: 0 floor, 1 ceiling, 2+ wall normal octant.
     float extent=0; // Wall panels: half-height of the glowing span around z.
     int group=0; // Tiles of one merge cell that see each other (surfaceCell).
+    int flickerSector=-1; // The flickering sector it switches with (lampOut), merged apart from others.
+    float shine=1; // How far its flickering sector has it on this tic (lampShine); 0 out.
 };
 // The merge cell of a tile: 256-unit cell, surface direction, hue and
 // visibility group. Emissive tiles repeat every 64 units, so one pool or
 // panel run yields dozens of overlapping same-colored lights; each cell folds
 // into one wider light. Cells are world-fixed, so merged identities stay
 // stable as the view moves. The group keeps tiles in rooms that cannot see
-// each other (two sides of a wall) from merging into a light inside it.
+// each other (two sides of a wall) from merging into a light inside it, and
+// lamps of a flickering sector merge only among themselves, as they switch
+// on and off together.
 inline SurfaceLightKey surfaceCell(const SurfaceLight &light,float cell=256) {
     int hue=0;
     for(float c:light.color) hue=hue*4+std::clamp((int)std::lround(c*3),0,3);
-    return {2,(int)std::floor(light.x/cell),(int)std::floor(light.y/cell),(int)std::floor(light.z/cell),light.facing,hue*256+light.group};
+    return {light.flickerSector>=0?4+light.flickerSector:2,(int)std::floor(light.x/cell),(int)std::floor(light.y/cell),
+            (int)std::floor(light.z/cell),light.facing,hue*256+light.group};
 }
 // Fold each merge cell (surfaceCell) into one wider light.
 inline std::vector<SurfaceLight> mergeSurfaceLights(const std::vector<SurfaceLight> &sources,float cell=256) {
     struct Sum {float x=0,y=0,z=0,weight=0,strength=0,radius=0;std::array<float,3> color={};
-                std::array<float,3> low={1e9f,1e9f,1e9f},high={-1e9f,-1e9f,-1e9f};float bottom=1e9f,top=-1e9f;int count=0;};
+                std::array<float,3> low={1e9f,1e9f,1e9f},high={-1e9f,-1e9f,-1e9f};float bottom=1e9f,top=-1e9f;int count=0,flickerSector=-1;float shine=0;};
     std::map<SurfaceLightKey,Sum> cells;
     for(const auto &light:sources) {
         Sum &sum=cells[surfaceCell(light,cell)];
         float w=std::max(light.strength,0.001f),p[3]={light.x,light.y,light.z};
         sum.x+=light.x*w;sum.y+=light.y*w;sum.z+=light.z*w;sum.weight+=w;
+        sum.flickerSector=light.flickerSector;sum.shine+=light.shine*w;
         for(int c=0;c<3;++c) {
             sum.color[c]+=light.color[c]*w;
             sum.low[c]=std::min(sum.low[c],p[c]);sum.high[c]=std::max(sum.high[c],p[c]);
@@ -56,6 +62,7 @@ inline std::vector<SurfaceLight> mergeSurfaceLights(const std::vector<SurfaceLig
                           sum.strength*std::clamp(std::sqrt((float)sum.count)*0.5f,1.0f,1.5f),
                           {sum.color[0]/sum.weight,sum.color[1]/sum.weight,sum.color[2]/sum.weight},entry.first[4],
                           entry.first[4]>=2?std::max(sum.top-z,z-sum.bottom):0.0f});
+        merged.back().flickerSector=sum.flickerSector;merged.back().shine=sum.shine/sum.weight;
     }
     return merged;
 }

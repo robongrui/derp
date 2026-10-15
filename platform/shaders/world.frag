@@ -203,6 +203,8 @@ void main() {
         vec2 at=c.effects.x==2.0?sharpen(uv,texelPixel+c.texFilter.x):uv;
         emission=maskAt(image,at,c.effects.x>0.0);
         if(blend>0.0) emission=mix(emission,maskAt(nextImage,at,c.effects.x>0.0),blend);
+        // A glowing or fire-flickering sector's lamps fade with it (vLampTint alpha, lampGlow).
+        emission*=unpackUnorm4x8(vLampTint).a;
         // MODE_DEAD_GLOW: a shot-out lamp or screen. What glowed is a dead,
         // dark tube or screen; the housing around it keeps its shading.
         if(dead) {

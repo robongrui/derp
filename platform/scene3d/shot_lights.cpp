@@ -453,11 +453,14 @@ void watchShotLights() {
 // The wall piece's tiles as wallLights samples them; a dark one covers the
 // texture repeats its sample stands for, and the outer ones reach the
 // piece's ends. Split along those edges, the piece's quads inside them get
-// MODE_DEAD_GLOW.
+// MODE_DEAD_GLOW. A flickering sector's lamps go dark whole while they are
+// out (lampOut).
 bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span,const Image &image,Point a,Point b,
                    float bottom,float top,float u,float anchor,float light,unsigned mode,unsigned seed) {
     int index=(int)(&line-lines);
-    if(brokenPieces.empty()||image.emissionWeight<=0||!brokenPieces.count({0,index*2+side,span}))return false;
+    if(image.emissionWeight<=0)return false;
+    bool off=lampOut(int(sides[line.sidenum[side]].sector-sectors)); // A flickering sector's lamps, switched off.
+    if(!off&&(brokenPieces.empty()||!brokenPieces.count({0,index*2+side,span})))return false;
     float len=std::hypot(b.x-a.x,b.y-a.y),w=(float)image.width,h=(float)image.height;
     if(len<=0)return false;
     auto vertex=[&](float along,float z,unsigned m) {
@@ -466,7 +469,7 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
         bakeWallCoordinates(line,side,along,v,true);v.statics=seed;
         return v;
     };
-    if(tileDark(wholePiece(index,side,span))) {
+    if(off||tileDark(wholePiece(index,side,span))) {
         unsigned m=mode|MODE_DEAD_GLOW;
         quad(out,vertex(0,top,m),vertex(len,top,m),vertex(len,bottom,m),vertex(0,bottom,m));
         return true;
@@ -500,8 +503,10 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
 // no tile of their own. A plane with no tiles at all (darkenLampless) goes
 // dark whole.
 bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,const Image &image,float z,float light,unsigned mode) {
-    if(brokenPieces.empty()||image.emissionWeight<=0||!brokenPieces.count({1,sector,(int)ceiling}))return false;
-    if(tileDark(wholePlane(sector,ceiling))) {
+    if(image.emissionWeight<=0)return false;
+    bool off=lampOut(sector);
+    if(!off&&(brokenPieces.empty()||!brokenPieces.count({1,sector,(int)ceiling})))return false;
+    if(off||tileDark(wholePlane(sector,ceiling))) {
         const auto &poly=floors[leaf];
         for(size_t n=1;n+1<poly.size();++n)for(Point p:{poly[0],poly[n],poly[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,mode|MODE_DEAD_GLOW});
         return true;

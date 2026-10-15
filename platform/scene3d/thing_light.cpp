@@ -117,7 +117,7 @@ static StaticSample gridStatic(float x,float y,float z) {
     return result;
 }
 // Baked light at a thing's center or the eye: the static lights (from the
-// grid when it is on), flickered with bake-only lights, plus the bounce
+// grid when it is on), flickered by group (groupFlicker), plus the bounce
 // between the floor and ceiling below and above it. sample receives the
 // static light's details.
 std::array<float,3> bakedLightAt(float x,float y,float z,const sector_t *sector,StaticSample *sample) {
@@ -125,7 +125,7 @@ std::array<float,3> bakedLightAt(float x,float y,float z,const sector_t *sector,
     if(bakedLightsActive)statics=gridLightActive()?gridStatic(x,y,z):traceStatic(x,y,z,(int)(sector-sectors));
     std::array<float,3> result=statics.color;
     fillHeadroom(result.data(),lighting(sector));
-    if(bakeOnlyActive&&statics.group) {
+    if(statics.group) {
         float flicker=1-statics.groupShare*(1-groupFlicker(statics.group));
         for(float &c:result)c*=flicker;
     }
@@ -155,7 +155,7 @@ bool staticShadow(const StaticSample &sample,float z,ShadowLight &light) {
     if(!(bakeOnlyActive||gridLightActive())||sample.shadow<0)return false;
     const BakeLight &source=bakeSources[sample.shadow];
     if(source.z<=z+8)return false;
-    float amount=sample.shadowAmount*(bakeOnlyActive?groupFlicker(sourceGroups[sample.shadow]):1);
+    float amount=sample.shadowAmount*groupFlicker(sourceGroups[sample.shadow]);
     light={source.x,source.y,source.z,amount};
     return true;
 }

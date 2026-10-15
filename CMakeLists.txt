@@ -215,6 +215,7 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/geometry.cpp
         platform/scene3d/images.cpp
         platform/scene3d/impacts.cpp
+        platform/scene3d/light_swings.c
         platform/scene3d/lights.cpp
         platform/scene3d/liquids.cpp
         platform/scene3d/loading.cpp

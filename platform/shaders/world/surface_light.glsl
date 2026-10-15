@@ -46,9 +46,10 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     bool wet=blood&&vTint.r>0.0;
     vec3 wetColor=wet?texelFetch(paletteLUT,ivec3(round(saturate(color.rgb*1.8+0.04)*31.0)),0).rgb:vec3(0);
     // Static lights come from the bake; their dynamic copies only add
-    // what it lacks: flicker, bump detail and gloss. With bake-only
-    // lights the bake supplies those itself: flicker by group (alpha:
-    // group*16+share), and shading from where the light comes from.
+    // what it lacks: flicker, bump detail and gloss. The bake's flicker
+    // groups (bakeFlicker) are already applied to it. With bake-only lights
+    // the bake supplies the rest itself: shading from where the light comes
+    // from.
     // A pool's own surface (alpha without a group: its share) is lit
     // by the glow hugging it, not from above: it takes no overhead
     // highlight but a sheen where its ripples mirror the horizon,
@@ -56,7 +57,6 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     if(useBake&&c.bake.z>0.0) {
         uint packed=uint(round(direction.a*255.0)),group=packed>>4u;
         float sheenShare=group==0u?float(packed&15u)/15.0:0.0;
-        if(group>0u) staticLight*=1.0-float(packed&15u)/15.0*(1.0-c.flicker[group>>2u][group&3u]);
         if(staticShare>0.0) {
             vec2 frame=direction.rg*2.0-1.0;
             vec3 t=abs(normal.z)>0.5?vec3(1,0,0):vec3(-normal.y,normal.x,0);

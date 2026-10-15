@@ -136,15 +136,21 @@ static float decorationFlicker(const mobj_t &thing) {
     return 1-0.12f*(hash&3);
 }
 // Bake-only lights flicker by group: each animated decoration falls in one
-// of 15 groups that step like decorationFlicker; group 0 stays steady.
+// of the groups switching lamps leave (up to 15) that step like
+// decorationFlicker; group 0 stays steady. Lamp groups switch in every mode,
+// decoration groups only with bake-only lights (their dynamic copies flicker
+// them otherwise).
 int flickerGroup(const mobj_t &thing) {
     const state_t &spawn=states[thing.info->spawnstate];
-    if(spawn.tics<0||spawn.nextstate==thing.info->spawnstate)return 0;
+    int free=flickerGroups-1-lampGroupCount;
+    if(spawn.tics<0||spawn.nextstate==thing.info->spawnstate||free<=0)return 0;
     uint32_t hash=(uint32_t)(uintptr_t)&thing*2654435761u;
-    return 1+(int)((hash>>16)%(flickerGroups-1));
+    return 1+lampGroupCount+(int)((hash>>16)%free);
 }
 float groupFlicker(int group) {
-    if(group<=0)return 1;
+    if(group<=0||group>=flickerGroups)return 1;
+    if(group<=lampGroupCount)return lampGroupFlicker[group];
+    if(!bakeOnlyActive)return 1;
     uint32_t hash=(uint32_t)group*2654435761u^(uint32_t)(leveltime/4)*40503u;
     hash^=hash>>13;hash*=0x5bd1e995u;hash^=hash>>15;
     return 1-0.12f*(hash&3);

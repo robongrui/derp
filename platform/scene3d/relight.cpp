@@ -85,7 +85,7 @@ static void measureLoss(Relight &job) {
 static void startRelight() {
     Relight &job=relight;
     job.lights=settings.bakedLights&&lightBakeKey>=0&&lightBakeKey==lightBakeInputs()&&!bakeGrid.empty()&&wallBakeTexture&&flatLightTexture;
-    job.only=job.lights&&(lightBakeKey&2)&&wallDirectionTexture&&flatDirectionTexture;
+    job.only=job.lights&&wallDirectionTexture&&flatDirectionTexture; // Directions, as bakeLights made them.
     job.grid=job.lights&&staticSerial==lightBakeSerial&&!staticGrid.empty();
     job.sun=sunBaked&&sunLevel>0&&contactTexture&&wallBakeTexture;
     std::vector<int> pending;pending.swap(relightPending);

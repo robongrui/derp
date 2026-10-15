@@ -285,6 +285,10 @@ void appendLight(float x,float y,float z,float radius,float strength,const std::
 bool decorationLight(const mobj_t &thing);
 int flickerGroup(const mobj_t &thing);
 float groupFlicker(int group);
+// Flicker groups 1..lampGroupCount belong to switching lamps (bake_lights.cpp).
+extern int lampGroupCount;
+extern float lampGroupFlicker[flickerGroups];
+void updateLampGroups(const float eye[3]);
 BakeLight decorationSource(const mobj_t &thing);
 extern std::vector<StaticFog> staticFog;
 void collectFlashes(float fraction,const Uniforms &camera);
@@ -309,6 +313,18 @@ void collectSurfaceLights();
 void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float top,int tex,float anchor,int span);
 // The merge cell (mergeSurfaceLights key) a tile's light joins.
 SurfaceLightKey surfaceCellOf(const SurfaceLight &tile);
+// Lamps of a sector whose light flickers follow it: how far on this tic
+// (0-1), and whether switched off (blinking and strobing sectors only).
+bool lampFlickers(int sector);
+float lampShine(int sector);
+bool lampOut(int sector);
+// A sector's light level as drawn: one whose lamps flicker by group keeps
+// its low, the lamps' light carrying the swing.
+int lampLightLevel(const sector_t *sector);
+bool lampGroupSector(int sector); // Its lamps hold a bake flicker group.
+// Vertices from first on carry a fading sector's lamp glow for their
+// glowing texels (Vertex::lampTint alpha on walls and flats).
+void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector);
 
 // geometry.cpp
 void quad(std::vector<Vertex> &out,Vertex a,Vertex b,Vertex c,Vertex d);
