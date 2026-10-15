@@ -19,7 +19,7 @@ static const float gains[AMBIENT_KINDS] = {
    heard. Standing water's drips play up, or they go unheard. Outside the
    wind is the bed the nukage bubbles in, not the other way round. */
 static const float levels[AMBIENT_KINDS] = {
-    0.35f, 1, 0.14f, 1, 0.8f, 1, 1, 1.8f, 1, 1, 1, 1.2f, 0.25f,
+    0.35f, 1, 0.14f, 1, 0.8f, 1, 1, 1.8f, 1, 1, 1, 1.0f, 0.25f,
 };
 
 float Ambient_Level(int kind) { return kind >= 0 && kind < AMBIENT_KINDS ? levels[kind] : 0; }

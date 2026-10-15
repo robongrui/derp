@@ -80,13 +80,14 @@ static void magma(float *out, int frames, int rate, rng_t *r)
 }
 
 /* Gusts lull down to calm, the band of air wanders low..high, and whistle
-   is how much it sings through a gap. */
+   is how much it sings through a gap. It sings only now and then, and
+   softly: a tone that keeps coming back grates. */
 static void wind(float *out, int frames, int rate, rng_t *r, float calm, float low, float high, float whistling)
 {
     svf_t air = svf_make(500, 1.2f, rate), whistle = svf_make(800, 15, rate);
     drift_t gust = drift_make(r, calm, 1.0f, 2.0f, 6.0f, rate);
     drift_t pitch = drift_make(r, low, high, 1.5f, 4.0f, rate);
-    drift_t sing = drift_make(r, -0.6f, 1.0f, 3.0f, 8.0f, rate);
+    drift_t sing = drift_make(r, -1.6f, 1.0f, 4.0f, 10.0f, rate);
     for (int n = 0; n < frames; ++n)
     {
         float g = drift_next(&gust, r), p = drift_next(&pitch, r), s = fmaxf(drift_next(&sing, r), 0);
@@ -119,7 +120,7 @@ void Fire_Render(int kind, unsigned seed, int rate, float *out, int frames)
     case AMBIENT_LAVA: lava(out, frames, rate, &r); break;
     case AMBIENT_FIRE: fire(out, frames, rate, &r); break;
     case AMBIENT_MAGMA: magma(out, frames, rate, &r); break;
-    case AMBIENT_WIND: wind(out, frames, rate, &r, 0.15f, 300, 900, 0.5f); break;
+    case AMBIENT_WIND: wind(out, frames, rate, &r, 0.15f, 300, 900, 0.2f); break;
     case AMBIENT_ROOM: room(out, frames, rate, &r); break;
     }
 }

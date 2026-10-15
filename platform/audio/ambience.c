@@ -29,7 +29,7 @@
 #define FAR_HZ 1500.0f     /* how dull it has grown at the edge of its reach */
 #define THROUGH_WALL 0.25f /* what gets through solid wall when no way round is louder */
 #define THROUGH_WALL_WIND 0.1f
-#define OPEN_AIR 1.0f      /* the wind's own strength around a listener out under the sky */
+#define OPEN_AIR 0.8f      /* the wind's own strength around a listener out under the sky */
 #define PI_F 3.14159265f
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }

@@ -23,9 +23,13 @@ static made_sample_t keep(float *buffer, int length)
     return sample;
 }
 
+/* The wind's gusts take seconds each; in a short loop the same pattern would
+   come round again and again, which grates. */
+static int loop_seconds(int kind) { return kind == AMBIENT_WIND ? 32 : MADE_LOOP_SECONDS; }
+
 static made_sample_t loop(int kind, int layer)
 {
-    int length = MADE_LOOP_SECONDS * MADE_RATE, fade = (int)(LOOP_FADE_SECONDS * MADE_RATE);
+    int length = loop_seconds(kind) * MADE_RATE, fade = (int)(LOOP_FADE_SECONDS * MADE_RATE);
     float *buffer = calloc((size_t)(length + fade), sizeof(float));
     if (!buffer) return (made_sample_t){ 0 };
     Ambient_Render(kind, 0x51ed270bu + 977u * (unsigned)kind + 7919u * (unsigned)layer, MADE_RATE, buffer, length + fade, NULL, 0);

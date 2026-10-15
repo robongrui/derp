@@ -6,7 +6,7 @@
 
 #define MADE_RATE 11025
 #define MADE_VARIANTS 6
-#define MADE_LOOP_SECONDS 8
+#define MADE_LOOP_SECONDS 8   /* the wind's are longer */
 
 typedef struct { const unsigned char *data; int length, rate; } made_sample_t;
 
