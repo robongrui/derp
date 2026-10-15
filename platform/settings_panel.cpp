@@ -95,7 +95,8 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "and it catches sharp highlights from lamps, shots and the flashlight."),
                 check("glowing_eyes","Glowing eyes",&s.glowingEyes,
                     "The eyes painted into monster artwork glow in the dark: the zombies' and imp's red, the demon's yellow, "
-                    "the cacodemon's and mancubus's green, the arachnotron's blue. Found in the sprites at load; bloom needs emissive textures.")}}}},
+                    "the cacodemon's and mancubus's green, the arachnotron's blue. Picked by hand for the stock monsters, searched for in other artwork; "
+                    "bloom needs emissive textures.")}}}},
         {"Lighting",{
             {"Baked at level load",{
                 check("baked_lights","Baked static lights",&s.bakedLights,
@@ -264,8 +265,8 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     {"25%","50%","75%","100%","125%","150%","175%","200%"})}},
             {"Hearing",{
                 check("muffle_walls","Muffled behind walls",&s.muffleWalls,
-                    "Sounds you can't see come through muffled: a little round a corner or through an open door, "
-                    "a lot behind closed doors and solid walls. Their loudness stays as in vanilla DOOM."),
+                    "Sounds you can't see come through muffled, the more the longer their way round through the map's openings, "
+                    "more through closed doors and window glass, most through solid walls. Their loudness stays as in vanilla DOOM."),
                 check("muffle_distance","Duller with distance",&s.muffleDistance,
                     "Far sounds lose their treble, the way they do through air.")}}}},
         {"Performance",{

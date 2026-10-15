@@ -82,13 +82,13 @@ surroundings. Aiming into sky produces no tint.
 Launch with `-flashlight` to start with the light on. `-flashlighttint 0` disables
 the tint, `-flashlighttint 1` selects the default, and `-flashlighttint 2` makes it stronger.
 
-Press **F4** for the graphics panel. It opens inside the game as a text-mode
+Press **F4** for the settings panel. It opens inside the game as a text-mode
 style panel over the paused, dimmed view. Its options are sorted into tabs, the
 description of the highlighted option is shown at the bottom, and options that
 only refine another one are greyed out while that one is off.
 
 Use **Up/Down** (or the mouse wheel) to choose an option, **Left/Right** or
-**Return** to change it, **Tab** (or **1**–**5**) to switch tabs, **R** to
+**Return** to change it, **Tab** (or **1**–**6**) to switch tabs, **R** to
 restore the defaults, and **Esc** or **F4** to close the panel and apply the
 changes. The mouse works too: click an option to change it (right-click goes
 backwards), click a slider to set it, and click a tab to open it. **F7** still
@@ -110,6 +110,7 @@ takes a screenshot.
 - **Sprites:** crisp pixels (default) or soft bilinear filtering.
 - **Bump detail and metal gloss:** derived from the WAD artwork, plus rounded sprite lighting with rim light on backlit enemies; affects dynamic lights only. Optional **varied highlights** make them tight on smooth artwork and broad on busy artwork.
 - **Emissive textures:** glowing lamp strips, computer displays, lava and nukage, with soft bloom and colored light on nearby surfaces. The room's own light takes their color where they light it, monsters and the weapon included, and wall panels light only what they face.
+- **Glowing eyes:** monsters' eyes glow in the dark, with a little bloom when emissive textures are on. The stock monsters' glowing pixels are picked by hand per frame; other artwork is searched for eyes painted in a color the body never uses.
 - **Glossy monitor screens:** screens in computer textures get curved CRT glass that bends the picture and catches highlights.
 - **Window glass:** windows found in the map's geometry get a pane of glass with grime, painted shine streaks and highlights from lamps, shots and the flashlight. The first shot, projectile or blast through a window, yours or a monster's, shatters it into shards; shots and sight still pass exactly as in vanilla. **Glass reflections** mirror the room in the window you look at, monsters and yourself included, at the liquid reflections' resolution, and show a snapshot of the surroundings in every other window; it costs a few milliseconds only while you look at a window.
 
@@ -134,7 +135,19 @@ takes a screenshot.
 - **Heat haze:** rows of Doom pixels shimmer sideways at the tic rate above lava, red-hot damaging floors and flames.
 - **Blood splats and pools:** hitscan hits leave splats on the floor and on walls close behind the target, and corpses grow a pool in steps. **Wet blood shine** makes fresh blood glint under dynamic lights before it dries matte.
 - **Soft effect sprites:** explosions, puffs and teleport fog no longer slice into walls, and dissolve on an ordered dither where they meet floors and ceilings.
+- **Shootable lights:** a shot, fireball or blast into a lamp, light strip or screen breaks it. It sputters out, and a moment later the room loses the light it gave, down to near black in rooms lit only by their lamps. Lamps count near misses; screens need a hit on the glass. Render-only: monsters see as before, and a reload brings the lights back. Needs emissive textures.
+- **Kill shots carry on:** a bullet that kills what it hits glances on past the body, so a fight can shoot out the lights behind the monsters. Sparks and lights only; the game still sees the shot stop.
 - **Liquids:** reflections of the scene in nearby water (rendered a second time at half resolution), optionally in **retro PS1 style** at one-eighth resolution with palette colors; nukage, slime, blood and lava do not mirror the room; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; and splashes with ripple rings where things land or wade.
+
+**Sound**
+
+- **Music:** SoundFont (default), OPL FM, or on the Mac the system synthesizer; see below.
+- **Sample playback:** Original holds each 11 kHz sample, raw and gritty, as vanilla does; Smooth and Clean read between the samples and take out the metallic sizzle. With either, **Made-up treble** puts back treble the samples never had.
+- **Sparks, dying lights and glass:** sounds DOOM never had, synthesized at startup as 8-bit samples: tech walls crackle where they are shot, lamps sputter out, screens die in static and windows break. **Breaking glass** picks Shatter (a crack and a rush of splinters) or Fracture (a crack front branching through the pane).
+- **Footsteps and splashes:** your steps sound by the floor (stone, metal, wood, grass and carpet); liquids splash or gloop, and monsters wading through them splash too. Monsters on dry floors stay silent, as in vanilla.
+- **Ambience:** lamps and computers hum, nukage and blood bubble, lava rumbles, fire crackles, water drips and wind blows under the sky, wherever the map's textures show them. Window glass dulls the wind until it is shot, shot-out fixtures go quiet, and loud effects push it all down for a moment. **Ambience volume** sets how loud it is next to the effects.
+- **Room acoustics:** echoes and a reverb tail measured from the room around you; **Echo and reverb** sets how loud.
+- **Muffled behind walls** and **Duller with distance:** sounds you can't see find their way through the map's openings and come through duller the longer the way round, and more so through closed doors and glass. Far sounds lose their treble. Loudness stays as in vanilla.
 
 **Performance** (off by default; the first two need baked static lights)
 
