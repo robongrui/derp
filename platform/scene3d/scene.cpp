@@ -78,6 +78,8 @@ void applySettings() {
     R_SetViewSize(10,0);
     I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance);
     I_SetSfxPlayback(settings.sfxResampling,settings.sfxTreble);
+    I_SetMadeSounds(settings.madeImpacts,settings.glassSound,settings.ambience,settings.ambienceAmount,settings.footsteps);
+    I_AmbienceShowGlass(settings.accelerated&&settings.windowGlass);
     I_SetMusicDevice(settings.musicDevice);
 }
 void sceneInit(SDL_Window *window) {

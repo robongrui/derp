@@ -2,13 +2,18 @@
    lamps and screens shot out. Render-only, like the window glass: monsters
    see as before, and a new level or a loaded game brings the lights back. */
 #include "internal.h"
+extern "C" {
+#include "../audio/impact_synth.h"
+#include "../audio/sound_options.h"
+}
 
 namespace doom3d {
-// A fixture breaks as one: every glowing tile of the merged light the hit
-// tile joins (surfaceCellOf), so the bake loses a whole light, never part of
-// one. Tiles are SurfaceLight keys; each remembers when it broke (game
-// seconds) and where it stood. Pieces too small to hold a tile (wholePiece,
-// wholePlane) break as a whole.
+// A fixture breaks as one: every glowing tile of the surface hit (its
+// joined planes, or its wall piece), and nothing else; the merged lights of
+// the bake that it shared with other fixtures keep the tiles still lit
+// (remergeBakeSource). Tiles are SurfaceLight keys; each remembers when it
+// broke (game seconds) and where it stood. Pieces too small to hold a tile
+// (wholePiece, wholePlane) break as a whole.
 struct BrokenTile { float born,x,y,z; };
 static std::map<SurfaceLightKey,BrokenTile> brokenTiles;
 // Pieces holding broken tiles: {0, line*2+side, span} walls, {1, sector, ceiling} flats.
@@ -34,6 +39,7 @@ bool tileDark(const SurfaceLightKey &key) {
     uint32_t seed=(uint32_t)std::lround(found->second.born*TICRATE);
     return hashUnit(tic/2,0,seed)>=0.6f*(1-age/sputterSeconds);
 }
+bool tileShotOut(const SurfaceLightKey &key) {return brokenTiles.count(key)>0;}
 // The texture row offset a wall section is drawn from, as wallGeometry sets it.
 static float wallAnchor(const line_t &line,int side,int section) {
     const side_t &s=sides[line.sidenum[side]];
@@ -105,24 +111,57 @@ static void darkenLampless(const std::set<std::pair<int,int>> &planes,float now,
         brokenPieces.insert({1,joined,ceiling});
     }
 }
+// The tiles of the fixture a tile belongs to: the glowing tiles of its
+// surface (its joined planes, or its wall piece), as a strip of lamps is
+// often several sectors (E1M1's sector 59 between 20 and 60). A surface wider
+// than a fixture (a long lit ceiling or wall, E1M1's hanging computer boxes)
+// breaks by the 256-unit merge cell the tile lies in.
+static std::vector<const SurfaceLight*> fixtureTiles(const SurfaceLight &hit) {
+    constexpr float widest=448;
+    std::vector<int> planes=hit.key[0]==0?joinedPlanes(hit.key[1],hit.key[2]):std::vector<int>{};
+    auto same=[&](const SurfaceLightKey &k) {
+        if(hit.key[0]==0)return k[0]==0&&k[2]==hit.key[2]&&k[5]==0&&std::find(planes.begin(),planes.end(),k[1])!=planes.end();
+        return hit.key[0]==1&&k[0]==1&&k[1]==hit.key[1]&&k[2]==hit.key[2]&&k[5]==hit.key[5];
+    };
+    std::vector<const SurfaceLight*> tiles;
+    float low[3]={hit.x,hit.y,hit.z},high[3]={hit.x,hit.y,hit.z};
+    for(const auto &tile:surfaceLights) {
+        if(!same(tile.key))continue;
+        tiles.push_back(&tile);
+        const float p[3]={tile.x,tile.y,tile.z};
+        for(int c=0;c<3;++c) {low[c]=std::min(low[c],p[c]);high[c]=std::max(high[c],p[c]);}
+    }
+    if(high[0]-low[0]>widest||high[1]-low[1]>widest||high[2]-low[2]>widest) {
+        SurfaceLightKey cell=surfaceCellOf(hit);
+        tiles.erase(std::remove_if(tiles.begin(),tiles.end(),[&](const SurfaceLight *tile){return surfaceCellOf(*tile)!=cell;}),tiles.end());
+    }
+    if(tiles.empty())tiles.push_back(&hit);
+    return tiles;
+}
+// Breaks the fixture a tile belongs to, with the lampless planes joined to
+// its floors and ceilings; the merged lights it was part of re-bake from
+// the tiles left.
+static void breakFixture(const SurfaceLight &hit) {
+    float now=gameSeconds();
+    std::set<std::pair<int,int>> planes;
+    std::set<SurfaceLightKey> cells;
+    for(const SurfaceLight *tile:fixtureTiles(hit)) {
+        brokenTiles[tile->key]={now,tile->x,tile->y,tile->z};
+        brokenPieces.insert(pieceOf(tile->key));
+        if(tile->key[0]==0)planes.insert({tile->key[1],tile->key[2]});
+        cells.insert(surfaceCellOf(*tile));
+    }
+    darkenLampless(planes,now,hit.x,hit.y,hit.z);
+    for(const SurfaceLightKey &cell:cells)relightBrokenLight(cell);
+    I_AmbienceSilence(hit.x,hit.y,hit.z,96); // Its hum or chatter stops with it.
+}
+// The sound of a fixture dying: a lamp's buzz sputtering out, a screen's static.
+static void dyingSound(int kind,float x,float y,float z) {
+    I_MadeSound(kind==DOOM_EMISSIVE_PANEL?IMPACT_SCREEN_DIES:IMPACT_LAMP_DIES,x,y,z);
+}
 // Breaks the fixture of the glowing tile nearest (x, y, z) among those
 // matches takes; false when there is none, or the nearest is already out.
 // light receives the fixture's color.
-// Breaks the whole fixture (merged light) a tile joins, with the lampless
-// planes joined to its floors and ceilings.
-static void breakFixture(const SurfaceLight &hit) {
-    SurfaceLightKey cell=surfaceCellOf(hit);
-    float now=gameSeconds();
-    std::set<std::pair<int,int>> planes;
-    for(const auto &tile:surfaceLights) {
-        if(surfaceCellOf(tile)!=cell)continue;
-        brokenTiles[tile.key]={now,tile.x,tile.y,tile.z};
-        brokenPieces.insert(pieceOf(tile.key));
-        if(tile.key[0]==0)planes.insert({tile.key[1],tile.key[2]});
-    }
-    darkenLampless(planes,now,hit.x,hit.y,hit.z);
-    relightBrokenLight(cell);
-}
 static bool breakNearest(const std::function<bool(const SurfaceLightKey&)> &matches,float x,float y,float z,std::array<float,3> &light) {
     auto distance=[&](float px,float py,float pz){return (px-x)*(px-x)+(py-y)*(py-y)+(pz-z)*(pz-z);};
     const SurfaceLight *hit=nullptr;float nearest=INFINITY;
@@ -134,8 +173,43 @@ static bool breakNearest(const std::function<bool(const SurfaceLightKey&)> &matc
     breakFixture(*hit);
     return true;
 }
+// The emissive kind of the texture a tile lies on.
+static int tileKind(const SurfaceLightKey &key) {
+    char name[9];
+    if(key[0]==0) {
+        int pic=key[2]?sectors[key[1]].ceilingpic:sectors[key[1]].floorpic;
+        if(pic==skyflatnum)return DOOM_EMISSIVE_NONE;
+        memcpy(name,lumpinfo[firstflat+flattranslation[pic]].name,8);name[8]=0;
+        return doom_emissive_kind(name,1);
+    }
+    const line_t &line=lines[key[1]];
+    if(line.sidenum[key[2]]<0)return DOOM_EMISSIVE_NONE;
+    const side_t &s=sides[line.sidenum[key[2]]];
+    int texture=key[5]==1?s.toptexture:key[5]==2?s.bottomtexture:s.midtexture;
+    if(texture<=0)return DOOM_EMISSIVE_NONE;
+    R_TextureName(texturetranslation[texture],name);
+    return doom_emissive_kind(name,0);
+}
+// A near miss: the unbroken lamp whose light point (the middle of its
+// glow) lies within 16 units of the hit, on whatever surface the hit is. A
+// lamp's point sits on its bulbs, so this forgives shots into the dark
+// middle of a ring light or the ceiling beside a strip, while a wall with a
+// small lamp painted in (BRICKLIT) still needs the shot near the lamp.
+// Screens keep needing the glass. Flat tiles stand 8 units off their plane;
+// distance is taken from the plane.
+static const SurfaceLight *nearLamp(float x,float y,float z) {
+    constexpr float reach=16;
+    const SurfaceLight *best=nullptr;float nearest=reach*reach;
+    for(const auto &tile:surfaceLights) {
+        float tz=tile.key[0]==0?tile.z+(tile.key[2]?8.0f:-8.0f):tile.z;
+        float d=(tile.x-x)*(tile.x-x)+(tile.y-y)*(tile.y-y)+(tz-z)*(tz-z);
+        if(d>=nearest||brokenTiles.count(tile.key)||tileKind(tile.key)!=DOOM_EMISSIVE_LAMP)continue;
+        nearest=d;best=&tile;
+    }
+    return best;
+}
 // After the shot: sparks, a flash, and the fixture broken if the shot
-// found its glow. matches picks the tiles the shot may break; where the
+// found its glow or came near a lamp. matches picks the tiles the shot may break; where the
 // piece has none at all, lampless breaks it (or what it joins) whole.
 static void shotSurface(const char *name,bool flat,const Image &image,float u,float v,const std::function<bool(const SurfaceLightKey&)> &matches,
                         const std::function<bool()> &lampless,float x,float y,float z,const float normal[3],int reach) {
@@ -147,12 +221,24 @@ static void shotSurface(const char *name,bool flat,const Image &image,float u,fl
                std::any_of(brokenTiles.begin(),brokenTiles.end(),[&](const auto &entry){return matches(entry.first);});
     };
     if(fixture&&(breakNearest(matches,x,y,z,color)||(!anyTile()&&lampless()))) {
+        dyingSound(kind,x,y,z);
         sparks(x,y,z,normal,16,kind==DOOM_EMISSIVE_LAMP);
         for(float &channel:color)channel=0.5f+0.5f*channel;
         sparkFlash(x+normal[0]*8,y+normal[1]*8,z+normal[2]*8,256,2.0f,color);
         return;
     }
+    if(settings.emissive)if(const SurfaceLight *lamp=nearLamp(x,y,z)) {
+        color=lamp->color;
+        breakFixture(*lamp);
+        dyingSound(DOOM_EMISSIVE_LAMP,x,y,z);
+        sparks(x,y,z,normal,16,true);
+        for(float &channel:color)channel=0.5f+0.5f*channel;
+        sparkFlash(x+normal[0]*8,y+normal[1]*8,z+normal[2]*8,256,2.0f,color);
+        return;
+    }
     if(!doom_spark_texture(name,flat))return;
+    float pick=randomRange(0,1);
+    I_MadeSound(pick<0.5f?IMPACT_SPARK_CRACKLE:pick<0.8f?IMPACT_SPARK_FIZZ:IMPACT_SPARK_ZAP,x,y,z);
     sparks(x,y,z,normal,6,false);
     sparkFlash(x+normal[0]*8,y+normal[1]*8,z+normal[2]*8,128,0.9f,{0.45f,0.65f,1.0f});
 }
@@ -249,40 +335,47 @@ static void carryShot(float x,float y,float z,float dx,float dy,float slope,floa
 // called before the damage) carries on past the body in the render only
 // (settings.killShotsCarry): a kill, not every hit, so lights go out from
 // the fight rather than from every stray pellet. The game sees it stop.
+// Deflected off bone, it leaves anywhere within 20 degrees to either side
+// and 8 down to 16 up of its line, evenly spread so it mostly leaves the
+// line, and leaning up as rounds sent down only meet the floor.
 void shotThrough(const mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,int damage) {
     if(!settings.shootableLights||!settings.killShotsCarry||gamestate!=GS_LEVEL||!target||target->player||
        !(target->flags&MF_SHOOTABLE)||target->health<=0||damage<target->health)return;
     float dx=units(fdx),dy=units(fdy),length=std::hypot(dx,dy);
     if(length<1)return;
-    carryShot(units(fx),units(fy),units(fz),dx/length,dy/length,aimslope/(float)FRACUNIT,length);
+    const float degree=(float)doomPi/180;
+    float yaw=std::atan2(dy,dx)+randomRange(-20,20)*degree;
+    float pitch=std::atan(aimslope/(float)FRACUNIT)+randomRange(-8,16)*degree;
+    carryShot(units(fx),units(fy),units(fz),std::cos(yaw),std::sin(yaw),std::tan(std::clamp(pitch,-1.3f,1.3f)),length);
 }
-// A blast (a rocket, BFG ball or barrel bursting) breaks every fixture with
-// a tile within radius that it can see, and lampless wall pieces of lamps
-// and screens it faces within radius.
+// A blast (a rocket, BFG ball or barrel bursting) breaks every lamp or
+// screen with a tile within radius that it can see, and lampless wall pieces
+// of lamps and screens it faces within radius. Liquids glow on.
 void blastLights(float x,float y,float z,float radius) {
     if(!settings.shootableLights||!settings.emissive||gamestate!=GS_LEVEL)return;
     int sector=int(R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector-sectors);
     bool rays=bakeMap.sectors.size()==(size_t)numsectors;
-    std::map<SurfaceLightKey,const SurfaceLight*> nearest; // Per fixture, its tile nearest the blast.
-    std::map<SurfaceLightKey,float> distances;
+    std::vector<std::pair<float,SurfaceLight>> reached; // Nearest first.
     for(const auto &tile:surfaceLights) {
         if(brokenTiles.count(tile.key))continue;
         float d[3]={tile.x-x,tile.y-y,tile.z-z},length=std::sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
         if(length>=radius)continue;
+        int kind=tileKind(tile.key);
+        if(kind!=DOOM_EMISSIVE_LAMP&&kind!=DOOM_EMISSIVE_PANEL)continue;
         if(rays&&length>4) {
             for(float &c:d)c/=length;
             if(!traceRay(bakeMap,sector,x,y,z,d,length-4,SkyCeiling::open))continue;
         }
-        SurfaceLightKey cell=surfaceCellOf(tile);
-        auto known=distances.find(cell);
-        if(known==distances.end()||length<known->second) {distances[cell]=length;nearest[cell]=&tile;}
+        reached.push_back({length,tile});
     }
-    std::vector<SurfaceLight> hit;
-    for(const auto &entry:nearest)hit.push_back(*entry.second);
-    for(const SurfaceLight &tile:hit) {
+    std::sort(reached.begin(),reached.end(),[](const auto &a,const auto &b){return a.first<b.first;});
+    int sounding=0; // The nearest two fixtures a blast kills are heard dying; more would only blur.
+    for(const auto &[length,tile]:reached) {
+        if(brokenTiles.count(tile.key))continue; // Gone with a nearer tile of its fixture.
         breakFixture(tile);
-        float n[3]={x-tile.x,y-tile.y,z-tile.z},length=std::max(1.0f,std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]));
-        for(float &c:n)c/=length;
+        if(sounding++<2)dyingSound(tileKind(tile.key),tile.x,tile.y,tile.z);
+        float n[3]={x-tile.x,y-tile.y,z-tile.z},span=std::max(1.0f,length);
+        for(float &c:n)c/=span;
         float hi=std::max({tile.color[0],tile.color[1],tile.color[2]}),lo=std::min({tile.color[0],tile.color[1],tile.color[2]});
         sparks(tile.x,tile.y,tile.z,n,10,hi-lo<0.3f);
     }

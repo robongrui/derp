@@ -1,11 +1,15 @@
-/* Muffling. A sound in plain sight only loses treble with distance. One out
- * of sight is muffled: a little when sound has an open way round to the
- * listener (a corner, an open door, a window ledge), a lot when only closed
- * doors and solid walls lie between. The volume stays vanilla's, so hearing
- * still tells as much as ever about where monsters are. */
+/* Muffling. A sound in plain sight only loses treble with distance. One in
+ * the listener's own sector is checked straight: over a ledge or round a
+ * pillar it is muffled a little. One elsewhere is heard the way the map's
+ * openings let it through (acoustic_graph.h), the same ways the ambience
+ * takes: dull through a shut door, a slit or a window's glass, and the
+ * further round the corners its way goes against straight, the duller. The
+ * volume stays vanilla's, so hearing still tells as much as ever about where
+ * monsters are. */
 #include <math.h>
 #include <stdlib.h>
 #include "p_local.h"
+#include "acoustic_graph.h"
 #include "map.h"
 #include "occlusion.h"
 
@@ -14,8 +18,10 @@
 #define FAR 1200.0f       /* vanilla's clipping distance */
 #define FAR_HZ 3500.0f
 #define LAST_HZ 2500.0f   /* E?M8 sounds carry farther still */
-#define AROUND_HZ 1800.0f /* out of sight, with an open way round or over a ledge */
-#define SEALED_HZ 500.0f  /* behind closed doors and walls only */
+#define AROUND_HZ 1800.0f /* over a ledge, or a way round half again as long as straight */
+#define SEALED_HZ 500.0f  /* no way found at all: solid wall */
+#define DETOUR_FREE 1.05f /* ways this much longer than straight are as good as straight */
+#define DETOUR_FULL 1.5f  /* this much longer, as dull as AROUND_HZ */
 #define MAX_CROSSINGS 128
 
 static float distance_cutoff(float distance)
@@ -52,72 +58,6 @@ static int in_sight(float x, float y, float ear, const sector_t *there, float sx
     return seen;
 }
 
-/* Whether sound can walk from one sector to the other through openings
-   (no closed doors) within budget units, passing line midpoints. */
-typedef struct { float cost, x, y; sector_t *sector; } step_t;
-static step_t *heap; static int heap_size, heap_capacity;
-static int *settled; static int settled_size, settled_stamp;
-static void push(step_t step)
-{
-    if (heap_size == heap_capacity)
-    {
-        heap_capacity = heap_capacity ? heap_capacity * 2 : 256;
-        heap = realloc(heap, sizeof(*heap) * heap_capacity);
-    }
-    int i = heap_size++;
-    for (; i > 0 && heap[(i - 1) / 2].cost > step.cost; i = (i - 1) / 2) heap[i] = heap[(i - 1) / 2];
-    heap[i] = step;
-}
-static step_t pop(void)
-{
-    step_t top = heap[0], last = heap[--heap_size];
-    int i = 0;
-    for (;;)
-    {
-        int child = 2 * i + 1;
-        if (child >= heap_size) break;
-        if (child + 1 < heap_size && heap[child + 1].cost < heap[child].cost) ++child;
-        if (heap[child].cost >= last.cost) break;
-        heap[i] = heap[child]; i = child;
-    }
-    if (heap_size) heap[i] = last;
-    return top;
-}
-static int way_round(sector_t *from, float x, float y, sector_t *to, float sx, float sy, float budget)
-{
-    if (settled_size != numsectors)
-    {
-        free(settled); settled = calloc(numsectors > 0 ? numsectors : 1, sizeof(*settled));
-        settled_size = numsectors; settled_stamp = 0;
-    }
-    ++settled_stamp;
-    heap_size = 0;
-    push((step_t){0, x, y, from});
-    while (heap_size)
-    {
-        step_t step = pop();
-        int index = (int)(step.sector - sectors);
-        if (settled[index] == settled_stamp) continue;
-        settled[index] = settled_stamp;
-        if (step.sector == to) return step.cost + hypotf(sx - step.x, sy - step.y) <= budget;
-        for (int i = 0; i < step.sector->linecount; ++i)
-        {
-            line_t *line = step.sector->lines[i];
-            if (!(line->flags & ML_TWOSIDED) || !line->frontsector || !line->backsector) continue;
-            sector_t *next = line->frontsector == step.sector ? line->backsector : line->frontsector;
-            if (settled[next - sectors] == settled_stamp) continue;
-            float mx = (line->v1->x + line->v2->x) / (2.0f * FRACUNIT), my = (line->v1->y + line->v2->y) / (2.0f * FRACUNIT);
-            float cost = step.cost + hypotf(mx - step.x, my - step.y);
-            if (next == to && shut(to) && cost + hypotf(sx - mx, sy - my) <= budget) return 1;
-            float bottom, top;
-            Map_Gap(step.sector, next, &bottom, &top);
-            if (!open_gap(bottom, top)) continue;
-            if (cost <= budget) push((step_t){cost, mx, my, next});
-        }
-    }
-    return 0;
-}
-
 float Occlusion_Cutoff(fixed_t x, fixed_t y, fixed_t z, int walls, int distance)
 {
     mobj_t *listener = players[consoleplayer].mo;
@@ -131,13 +71,24 @@ float Occlusion_Cutoff(fixed_t x, fixed_t y, fixed_t z, int walls, int distance)
     /* Things sound from about their middle; sector sounds (doors, lifts) from
        the middle of their sector's height. */
     sector_t *here = listener->subsector->sector, *there = R_PointInSubsector(x, y)->sector;
-    float floor = Map_Floor(there), ceiling = Map_Ceiling(there);
-    float sz = z / (float)FRACUNIT + 32;
-    if (sz < floor + 8 || sz > ceiling - 8) sz = 0.5f * (floor + ceiling);
-    float ear = listener->z / (float)FRACUNIT + EAR;
-    Map_Gather(lx, ly);
-    int sight = in_sight(lx, ly, ear, there, sx, sy, sz, apart);
-    if (sight == SIGHT) return cutoff;
-    float muffled = sight == LEDGE || way_round(here, lx, ly, there, sx, sy, 1.6f * apart + 384) ? AROUND_HZ : SEALED_HZ;
+    if (here == there)
+    {
+        float floor = Map_Floor(there), ceiling = Map_Ceiling(there);
+        float sz = z / (float)FRACUNIT + 32;
+        if (sz < floor + 8 || sz > ceiling - 8) sz = 0.5f * (floor + ceiling);
+        float ear = listener->z / (float)FRACUNIT + EAR;
+        Map_Gather(lx, ly);
+        if (in_sight(lx, ly, ear, there, sx, sy, sz, apart) == SIGHT) return cutoff;
+        return AROUND_HZ < cutoff ? AROUND_HZ : cutoff;
+    }
+    Acoustic_Follow();
+    acoustic_way_t way;
+    if (!Acoustic_Way(sx, sy, (int)(there - sectors), &way)) return SEALED_HZ < cutoff ? SEALED_HZ : cutoff;
+    /* The longer the way round against straight, the duller. */
+    float detour = (way.length / apart - DETOUR_FREE) / (DETOUR_FULL - DETOUR_FREE);
+    detour = detour < 0 ? 0 : detour > 1 ? 1 : detour;
+    float muffled = way.cutoff;
+    float around = OCCLUSION_OPEN_HZ * powf(AROUND_HZ / OCCLUSION_OPEN_HZ, detour);
+    if (around < muffled) muffled = around;
     return muffled < cutoff ? muffled : cutoff;
 }

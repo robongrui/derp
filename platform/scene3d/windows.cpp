@@ -4,6 +4,10 @@
    the glass, shots and sight pass as in vanilla, and every level starts
    with whole panes. */
 #include "internal.h"
+extern "C" {
+#include "../audio/impact_synth.h"
+#include "../audio/sound_options.h"
+}
 
 namespace doom3d {
 std::vector<Vertex> glassVertices;
@@ -157,7 +161,7 @@ static void paneHeights(const GlassPane &p,float &bottom,float &top) {
 // fast along the shot near where it went through, slower further away, a few
 // back toward the shooter; they fall, bounce once and lie glinting a while.
 static void shatter(int frame,float hx,float hy,float hz,float dx,float dy) {
-    float length=std::hypot(dx,dy);
+    float length=std::hypot(dx,dy),area=0;
     if(length>1e-4f) {dx/=length;dy/=length;}
     for(GlassPane &p:panes) {
         if(p.frame!=frame||p.broken)continue;
@@ -165,6 +169,8 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy) {
         float bottom,top;paneHeights(p,bottom,top);
         float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
         if(len<1||top<=bottom)continue;
+        area+=len*(top-bottom);
+        I_AmbienceGlaze(p.line,0); // Sound gets through: the wind blows in.
         ex/=len;ey/=len;
         // A blast in the glass's own plane pushes straight through it.
         if(length<=1e-4f) {dx=ey;dy=-ex;}
@@ -183,6 +189,8 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy) {
             shards.push_back(s);
         }
     }
+    // One sound for the window: the big one past about 96 by 64 units of glass.
+    if(area>0)I_MadeSound(area>6144?IMPACT_GLASS_BIG:IMPACT_GLASS_BREAK,hx,hy,hz);
 }
 static bool glassReady() {return settings.windowGlass&&glassLevelSerial==r_levelserial&&gamestate==GS_LEVEL;}
 void glassShot(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy) {
@@ -247,6 +255,8 @@ void watchGlass() {
     if(glassLevelSerial!=r_levelserial) {
         glassLevelSerial=r_levelserial;shards.clear();missileWatch.clear();
         findWindows();
+        // Through the glass ambience comes muffled until it breaks.
+        for(const GlassPane &p:panes)I_AmbienceGlaze(p.line,1);
     }
     stepShards();
     if(panes.empty())return;

@@ -80,6 +80,9 @@ vec3 beamLight=vec3(0);
 // What dynamic lights add to walls and flats on top of the static light, for
 // the saturation lift and highlight rolloff.
 vec3 addedLight=vec3(0);
+// What the baked lamps and their bounce add to walls and flats, for the
+// saturation lift alone.
+vec3 lampLight=vec3(0);
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
@@ -217,20 +220,28 @@ void main() {
     }
     vec3 albedo=color.rgb;
     color.rgb=color.rgb*illumination;
-    // Map surfaces only: sprites keep their painted color and the shading
-    // of their silhouette normals (billboardLight) under the beam.
+    // Light also spills toward its own color by how saturated the texel is,
+    // as the palette's ramps brighten toward white: by multiplying alone pure
+    // dark blue carpet, a few percent luminance, swallowed it. Map surfaces
+    // only: sprites keep their painted color and the shading of their
+    // silhouette normals (billboardLight).
+    float chroma=max(albedo.r,max(albedo.g,albedo.b))-dot(albedo,vec3(0.299,0.587,0.114));
+    // The baked lamps and their bounce spill too, so lamp pools show on
+    // saturated surfaces as on the grey floors beside them; a warm lamp
+    // otherwise leaves blue carpet only its weakened blue. Only into the
+    // channels the texel lacks: light it already reflects (a blue lamp on
+    // blue carpet) the multiply has counted.
+    vec3 lacking=1.0-albedo/max(max(albedo.r,max(albedo.g,albedo.b)),0.001);
+    vec3 lampSpill=c.effects.z==0.0&&!sprite?lampLight*lacking*chroma*0.6*(1.0-emission):vec3(0);
+    color.rgb+=lampSpill;
     if(c.effects.z==0.0&&!sprite&&any(greaterThan(addedLight,vec3(0)))) {
-        // Dynamic light (the flashlight, shots, fireballs) also spills toward
-        // its own color by how saturated the texel is, as the palette's ramps
-        // brighten toward white: by multiplying alone pure dark blue carpet,
-        // a few percent luminance, swallowed the beam.
-        float chroma=max(albedo.r,max(albedo.g,albedo.b))-dot(albedo,vec3(0.299,0.587,0.114));
+        // Dynamic light: the flashlight, shots, fireballs.
         color.rgb+=addedLight*chroma*0.6*(1.0-emission);
         // What it adds rolls off on bright texels, as an eye or camera keeps
         // a hotspot from blowing out: a bright wall in the beam no longer
         // jumps far ahead of the dark floor beside it. Dark texels and the
         // light without it keep their values.
-        vec3 unlit=albedo*max(illumination-addedLight,vec3(emission));
+        vec3 unlit=albedo*max(illumination-addedLight,vec3(emission))+lampSpill;
         float lit=dot(color.rgb,vec3(0.299,0.587,0.114)),base=dot(unlit,vec3(0.299,0.587,0.114));
         const float knee=0.45;
         if(lit>knee&&lit>base+0.001) {

@@ -9,7 +9,12 @@
 #include "m_argv.h"
 #include "w_wad.h"
 #include "z_zone.h"
+#include "audio/ambience.h"
+#include "audio/ambience_voices.h"
+#include "audio/impact_synth.h"
+#include "audio/made_bank.h"
 #include "audio/occlusion.h"
+#include "audio/steps.h"
 #include "audio/resample.h"
 #include "audio/treble.h"
 #include "audio/reverb.h"
@@ -27,6 +32,10 @@
 #define LIMIT_RELEASE_SECONDS 0.15f
 /* How fast a sound's muffling follows it moving behind or out from a wall. */
 #define MUFFLE_GLIDE_SECONDS 0.08f
+/* Ambience at full F4 amount and full effects volume, next to a point-blank shot. */
+#define AMBIENCE_LEVEL 0.35f
+/* Ambience ducks under loud effects at once and comes back over this long. */
+#define DUCK_RELEASE_SECONDS 1.2f
 typedef struct { const byte *data; int length, rate; } sample_t;
 typedef struct {
     sample_t sample;
@@ -47,6 +56,8 @@ static float treble_amount = 1;
 static float next_cutoff = OCCLUSION_OPEN_HZ;
 static float reverb_amount = 1;
 static float limiter_gain = 1;
+static int made_impacts = 1, glass_fracture, ambience = 1, footsteps = 1;
+static float ambience_amount = 1, duck = 1;
 
 static unsigned little16(const byte *p) { return p[0] | (unsigned)p[1] << 8; }
 static uint32_t little32(const byte *p)
@@ -57,9 +68,9 @@ static uint32_t little32(const byte *p)
    Panning follows DMX: full level on both sides at the center (separation
    128), fading on the far side only. The reverb send falls off slower than
    the dry sound, so far sounds come out wetter. */
-static void gains(channel_t *channel, int volume, int separation, int pitch)
+static void gains(channel_t *channel, float volume, int separation, int pitch)
 {
-    float level = SDL_clamp(volume, 0, 15) / 15.0f;
+    float level = SDL_clamp(volume, 0.0f, 15.0f) / 15.0f;
     separation = SDL_clamp(separation, 1, 254);
     channel->left = SFX_GAIN * level * SDL_min(1.0f, (254 - separation) / 127.0f);
     channel->right = SFX_GAIN * level * SDL_min(1.0f, separation / 127.0f);
@@ -101,6 +112,12 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
                 channel->position += channel->step;
             }
         }
+        /* Ambience ducks under what the effects play, then fades back. */
+        float peak = 0;
+        for (int i = 0; i < 2 * count; ++i) peak = SDL_max(peak, fabsf(buffer[i]));
+        float target = 1 / (1 + 1.5f * peak);
+        duck += (target - duck) * (target < duck ? 0.5f : 1 - expf(-count / (DUCK_RELEASE_SECONDS * OUTPUT_RATE)));
+        AmbienceVoices_Mix(buffer, send, count, OUTPUT_RATE, resampling, SFX_GAIN, duck);
         if (acoustics) Reverb_Process(send, buffer, count, reverb_amount);
         MixerMusic_Render(buffer, count);
         /* A peak limiter: drops at once to keep the mix under LIMIT, recovers
@@ -144,6 +161,7 @@ void I_InitSound(void)
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
     { fprintf(stderr, "Audio unavailable: %s\n", SDL_GetError()); return; }
     SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, OUTPUT_RATE };
+    MadeBank_Build();
     Reverb_Init(OUTPUT_RATE);
     Resample_Init();
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio, NULL);
@@ -156,12 +174,31 @@ void I_ShutdownSound(void)
     SDL_DestroyAudioStream(stream); stream = NULL;
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
-/* Measures the room every other tic and hands it to the reverb. */
+static void play_at(const made_sample_t *sample, float x, float y, float z, float level);
+static void play_kind(int kind, float x, float y, float z, float level);
+
+/* Every tic the ambience voices follow the listener; every other the room is
+   measured for the reverb. */
 void I_UpdateSound(void)
 {
-    static int measured = -1;
-    if (!stream || !acoustics) return;
-    if (gametic >= measured && gametic - measured < 2) return;
+    static int measured = -1, ambient = -1;
+    if (!stream) return;
+    if (gametic != ambient)
+    {
+        ambient = gametic;
+        ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS];
+        ambience_strike_t strike;
+        float level = ambience ? ambience_amount * AMBIENCE_LEVEL * SDL_clamp(snd_SfxVolume, 0, 15) / 15.0f : 0;
+        Ambience_Update(voices, level, muffle_walls, muffle_distance, &strike);
+        SDL_LockAudioStream(stream);
+        AmbienceVoices_Set(voices);
+        SDL_UnlockAudioStream(stream);
+        if (strike.due) play_at(MadeBank_Strike(gametic), strike.x, strike.y, strike.z, strike.level);
+        step_event_t steps[4];
+        int count = footsteps ? Steps_Tic(steps, 4) : 0;
+        for (int i = 0; i < count; ++i) play_kind(steps[i].kind, steps[i].x, steps[i].y, steps[i].z, steps[i].level);
+    }
+    if (!acoustics || (gametic >= measured && gametic - measured < 2)) return;
     measured = gametic;
     room_t room;
     Room_Measure(&room);
@@ -211,12 +248,9 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
 }
 void I_SubmitSound(void) { }
 void I_SetChannels(void) { }
-int I_StartSound(int id, int volume, int separation, int pitch, int priority)
+/* Takes the free channel, or the oldest. */
+static int start_sample(sample_t sample, float volume, int separation, int pitch, float cutoff)
 {
-    (void)priority;
-    float cutoff = next_cutoff;
-    next_cutoff = OCCLUSION_OPEN_HZ;
-    if (!stream || id < 1 || id >= NUMSFX || !samples[id].data) return 0;
     SDL_LockAudioStream(stream);
     int slot = 0;
     for (int i = 0; i < MIX_CHANNELS; ++i)
@@ -225,7 +259,7 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
         if (channels[i].handle < channels[slot].handle) slot = i;
     }
     channel_t *channel = &channels[slot];
-    channel->sample = samples[id];
+    channel->sample = sample;
     channel->position = 0;
     channel->cutoff = channel->target = cutoff;
     channel->low[0] = channel->low[1] = 0;
@@ -237,6 +271,66 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
     int handle = channel->handle;
     SDL_UnlockAudioStream(stream);
     return handle;
+}
+int I_StartSound(int id, int volume, int separation, int pitch, int priority)
+{
+    (void)priority;
+    float cutoff = next_cutoff;
+    next_cutoff = OCCLUSION_OPEN_HZ;
+    if (!stream || id < 1 || id >= NUMSFX || !samples[id].data) return 0;
+    return start_sample(samples[id], (float)volume, separation, pitch, cutoff);
+}
+
+/* A made-up sound at a map point, loud and panned as DOOM does it for a
+   thing there (S_AdjustSoundParams), muffled like any effect. level scales
+   the effects volume. */
+static void play_at(const made_sample_t *sample, float x, float y, float z, float level)
+{
+    const mobj_t *listener = players[consoleplayer].mo;
+    if (!stream || !sample || !listener || gamestate != GS_LEVEL || level <= 0) return;
+    float dx = x - listener->x / (float)FRACUNIT, dy = y - listener->y / (float)FRACUNIT;
+    float adx = fabsf(dx), ady = fabsf(dy), distance = adx + ady - SDL_min(adx, ady) / 2;
+    if (distance > 1200) return;
+    float volume = snd_SfxVolume * level * (distance < 160 ? 1 : (1200 - distance) / 1040);
+    float angle = atan2f(dy, dx) - listener->angle * (2 * SDL_PI_F / 4294967296.0f);
+    int separation = 128 - (int)(96 * sinf(angle));
+    float cutoff = Occlusion_Cutoff((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), (fixed_t)(z * FRACUNIT),
+                                    muffle_walls, muffle_distance);
+    start_sample((sample_t){ sample->data, sample->length, sample->rate }, volume, separation, 128, cutoff);
+}
+
+/* A variation of the kind, never the same as the last of it. */
+static void play_kind(int kind, float x, float y, float z, float level)
+{
+    static unsigned last[IMPACT_KINDS], turn = 0x1234567u;
+    if (kind < 0 || kind >= IMPACT_KINDS) return;
+    turn = turn * 1103515245u + 12345u;
+    unsigned variant = (last[kind] + 1 + (turn >> 16) % (MADE_VARIANTS - 1)) % MADE_VARIANTS;
+    last[kind] = variant;
+    play_at(MadeBank_Impact(kind, (int)variant), x, y, z, level);
+}
+void I_MadeSound(int kind, float x, float y, float z)
+{
+    if (!made_impacts || kind < 0 || kind >= IMPACT_KINDS) return;
+    if (glass_fracture && kind == IMPACT_GLASS_BREAK) kind = IMPACT_GLASS_FRACTURE;
+    if (glass_fracture && kind == IMPACT_GLASS_BIG) kind = IMPACT_GLASS_FRACTURE_BIG;
+    float level = kind <= IMPACT_SPARK_ZAP ? 0.6f : kind <= IMPACT_SCREEN_DIES ? 0.7f
+                : kind == IMPACT_GLASS_TINKLE ? 0.6f : 1.0f;
+    play_kind(kind, x, y, z, level);
+}
+void I_AmbienceSilence(float x, float y, float z, float radius) { Ambience_Silence(x, y, z, radius); }
+void I_AmbienceGlaze(int line, int whole) { Ambience_Glaze(line, whole); }
+void I_AmbienceShowGlass(int shown) { Ambience_ShowGlass(shown); }
+void I_SetMadeSounds(int impacts, int glass, int ambient, float amount, int steps)
+{
+    if (stream) SDL_LockAudioStream(stream);
+    made_impacts = impacts != 0;
+    footsteps = steps != 0;
+    glass_fracture = glass == 1;
+    if (!ambient && ambience) AmbienceVoices_Clear();
+    ambience = ambient != 0;
+    ambience_amount = SDL_clamp(amount, 0.0f, 2.0f);
+    if (stream) SDL_UnlockAudioStream(stream);
 }
 void I_StopSound(int handle)
 {
@@ -261,7 +355,7 @@ void I_UpdateSoundParams(int handle, int volume, int separation, int pitch)
     if (!stream) return;
     SDL_LockAudioStream(stream);
     for (int i = 0; i < MIX_CHANNELS; ++i)
-        if (channels[i].handle == handle) gains(&channels[i], volume, separation, pitch);
+        if (channels[i].handle == handle) gains(&channels[i], (float)volume, separation, pitch);
     SDL_UnlockAudioStream(stream);
 }
 

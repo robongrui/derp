@@ -1,5 +1,7 @@
-// Data-free checks for glowing-eye detection (platform/sprite_eyes.h).
+// Data-free checks for glowing eyes: detection (platform/sprite_eyes.h)
+// and the authored stock table (platform/sprite_eyes_stock.h).
 #include "../platform/sprite_eyes.h"
+#include "../platform/sprite_eyes_stock.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -30,5 +32,10 @@ int main()
     for (int k = 0; k < 8; ++k) paint(6 + k, 4 + k, 3);
     eyes = doom_sprite_eyes(W, H, pixels, palette);
     for (unsigned char e : eyes) check(e == 0, "A thin cable is not an eye");
+    // The stock table holds only for the original artwork: a sprite of the
+    // same name and size with other pixels falls back to detection.
+    std::vector<unsigned char> zombie((size_t)41 * 55 * 2, 0), authored;
+    check(!doom_stock_eyes("POSSA1", 41, 55, zombie.data(), authored), "Replaced artwork must not use the stock eyes");
+    check(!doom_stock_eyes("NOTASPRT", W, H, pixels, authored), "Unknown sprites have no stock eyes");
     return 0;
 }

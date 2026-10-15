@@ -23,10 +23,11 @@ struct Relight {
     std::vector<int16_t> sunCells; // Floor sun over sunBounds; -1 unchanged.
     std::vector<size_t> gridList;
     std::vector<StaticCell> gridResults;
-    // Shot-out lights in this re-bake, as they shone, and per sector the
-    // floor light they gave and the floor light left after (every other
+    // Merged lights that lost shot-out tiles in this re-bake, as they shone
+    // and as they shine now (strength 0 when all went), and per sector the
+    // floor light they lost and the floor light left after (every other
     // cell each way).
-    std::vector<BakeLight> gone;
+    std::vector<BakeLight> gone,kept;
     std::vector<double> lost,left;
 } relight;
 static std::vector<int> relightPending;
@@ -56,8 +57,9 @@ static void markRelight(float x0,float y0,float x1,float y1,uint8_t bit) {
         for(int y=gy0;y<=gy1;++y)for(int x=gx0;x<=gx1;++x)relight.gridCells[(size_t)y*staticWidth+x]=1;
     }
 }
-// How much of each sector's floor light the shot-out lights gave, against
-// what the re-bake left it (every other cell each way, both).
+// How much of each sector's floor light the shot-out tiles gave (their
+// merged lights before, less what is left of them), against what the
+// re-bake left it (every other cell each way, both).
 static void measureLoss(Relight &job) {
     static const float up[3]={0,0,1};
     job.lost.assign(numsectors,0);job.left.assign(numsectors,0);
@@ -65,10 +67,13 @@ static void measureLoss(Relight &job) {
     for(int y=b[1];y<=b[3];y+=2)for(int x=b[0];x<=b[2];x+=2) {
         size_t i=(size_t)y*mapWidth+x;int sector=seamCells[i].own;
         if(!(job.cells[i]&1)||sector==noSector||job.map.sectors[sector].sky)continue;
-        float px=mapOrigin[0]+(x+0.5f)*mapCell,py=mapOrigin[1]+(y+0.5f)*mapCell,sum[3]={};
-        for(const BakeLight &light:job.gone)addBakedLight(job.map,light,sector,px,py,job.map.sectors[sector].floor+1,up,sum);
-        job.lost[sector]+=luminance(sum);
+        float px=mapOrigin[0]+(x+0.5f)*mapCell,py=mapOrigin[1]+(y+0.5f)*mapCell,before[3]={},after[3]={};
+        for(const BakeLight &light:job.gone)addBakedLight(job.map,light,sector,px,py,job.map.sectors[sector].floor+1,up,before);
+        for(const BakeLight &light:job.kept)
+            if(light.strength>0)addBakedLight(job.map,light,sector,px,py,job.map.sectors[sector].floor+1,up,after);
+        job.lost[sector]+=luminance(before)-luminance(after);
     }
+    for(double &lost:job.lost)lost=std::max(lost,0.0);
     for(int y=0;y<mapHeight;y+=2)for(int x=0;x<mapWidth;x+=2) {
         size_t i=(size_t)y*mapWidth+x;int sector=seamCells[i].own;
         if(sector==noSector||job.lost[sector]<=0)continue;
@@ -84,24 +89,26 @@ static void startRelight() {
     job.grid=job.lights&&staticSerial==lightBakeSerial&&!staticGrid.empty();
     job.sun=sunBaked&&sunLevel>0&&contactTexture&&wallBakeTexture;
     std::vector<int> pending;pending.swap(relightPending);
-    // Shot-out fixtures (shot_lights.cpp) leave the bake. Their sources go
-    // dark at once, as things read them live, and here, with no re-bake
-    // reading them; the light they baked clears with this re-bake. Bounce,
-    // like the rest the re-bake keeps, stays as the level started.
-    std::vector<SurfaceLightKey> broken;broken.swap(brokenPending);
-    std::vector<int> darkened;
-    job.gone.clear();job.lost.clear();job.left.clear();
-    for(const SurfaceLightKey &cell:broken)
-        for(size_t n=0;n<bakeSourceKeys.size()&&n<bakeSources.size();++n)
-            if(bakeSourceKeys[n]==cell&&bakeSources[n].strength>0) {job.gone.push_back(bakeSources[n]);bakeSources[n].strength=0;darkened.push_back((int)n);}
+    // Shot-out fixtures (shot_lights.cpp) leave the bake. The merged lights
+    // they were part of take the tiles left of them (remergeBakeSource), or
+    // go dark, at once, as things read them live, and here, with no re-bake
+    // reading them; the light they baked changes with this re-bake, where
+    // they reached before and where they reach now. Bounce, like the rest
+    // the re-bake keeps, stays as the level started.
+    std::set<SurfaceLightKey> broken(brokenPending.begin(),brokenPending.end());brokenPending.clear();
+    job.gone.clear();job.kept.clear();job.lost.clear();job.left.clear();
+    for(size_t n=0;n<bakeSourceKeys.size()&&n<bakeSources.size();++n) {
+        if(!broken.count(bakeSourceKeys[n])||bakeSources[n].strength<=0)continue;
+        job.gone.push_back(bakeSources[n]);
+        remergeBakeSource((int)n);
+        job.kept.push_back(bakeSources[n]);
+    }
     if(!job.lights&&!job.sun)return;
     job.cells.assign((size_t)mapWidth*mapHeight,0);job.strips.assign(bakeStrips.size(),0);
     job.gridCells.assign(job.grid?staticGrid.size():0,0);
     for(int *b:{job.lightBounds,job.sunBounds}) {b[0]=b[1]=INT_MAX;b[2]=b[3]=-1;}
-    if(job.lights)for(int n:darkened) {
-        const BakeLight &light=bakeSources[n];
-        markRelight(light.x-light.radius,light.y-light.radius,light.x+light.radius,light.y+light.radius,1);
-    }
+    if(job.lights)for(const auto *changed:{&job.gone,&job.kept})for(const BakeLight &light:*changed)
+        if(light.strength>0)markRelight(light.x-light.radius,light.y-light.radius,light.x+light.radius,light.y+light.radius,1);
     const float elevation=40*doomPi/180;
     for(int sector:pending) {
         const BakeSector &s=bakeMap.sectors[sector];

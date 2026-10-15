@@ -11,4 +11,8 @@ enum { RESAMPLE_ORIGINAL, RESAMPLE_SMOOTH, RESAMPLE_CLEAN };
 void Resample_Init(void);
 /* The unsigned 8-bit sample at a fractional position, as -1..1. */
 float Resample_At(const unsigned char *data, int length, double position, int mode);
+/* The same over floats. */
+float Resample_AtFloat(const float *data, int length, double position, int mode);
+/* How far either side of a position the readings look, in samples. */
+#define RESAMPLE_REACH 16
 #endif

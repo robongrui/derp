@@ -41,6 +41,35 @@ void Resample_Init(void)
     }
 }
 
+/* The same three readings over floats, for a mix made at a sample's rate. */
+float Resample_AtFloat(const float *data, int length, double position, int mode)
+{
+    int i = (int)position;
+    float f = (float)(position - i);
+#define AT(n) ((n) >= 0 && (n) < length ? data[n] : 0.0f)
+    if (mode == RESAMPLE_SMOOTH)
+    {
+        float a = AT(i - 1), b = AT(i), c = AT(i + 1), d = AT(i + 2);
+        return b + 0.5f * f * (c - a + f * (2 * a - 5 * b + 4 * c - d + f * (3 * (b - c) + d - a)));
+    }
+    if (mode == RESAMPLE_CLEAN)
+    {
+        const float *taps = kernel[(int)(f * PHASES + 0.5f)];
+        int first = i - (TAPS / 2 - 1);
+        float sum = 0;
+        if (first >= 0 && first + TAPS <= length)
+        {
+            const float *s = data + first;
+            for (int t = 0; t < TAPS; ++t) sum += s[t] * taps[t];
+            return sum;
+        }
+        for (int t = 0; t < TAPS; ++t) sum += AT(first + t) * taps[t];
+        return sum;
+    }
+    return AT(i);
+#undef AT
+}
+
 float Resample_At(const unsigned char *data, int length, double position, int mode)
 {
     int i = (int)position;

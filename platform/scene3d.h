@@ -129,6 +129,11 @@ struct Settings {
     float reverbAmount=1; // How loud the echoes and tail are (0-2).
     int muffleWalls=1; // Sounds out of sight are muffled, more behind closed doors.
     int muffleDistance=1; // Far sounds lose their treble.
+    int madeImpacts=1; // Made-up sounds for sparks, lamps and screens dying, and glass breaking (audio/made_bank.h).
+    int glassSound=0; // Which breaking glass: 0 the shatter, 1 the fracture (a branching crack front).
+    int ambience=1; // Lamps, machines, liquids, fire and wind sound where the map's textures show them.
+    float ambienceAmount=1; // How loud the ambience is next to the effects (0-2).
+    int footsteps=1; // The player's footsteps by floor, splashes in liquids, monsters splashing as they wade.
     // Performance: cheaper stand-ins for per-frame light work.
     int bakeOnlyLights=0; // Static lights only in the bake, with its light direction and flicker groups; pools as area lights.
     int gridSpriteLight=0; // Things take static light and their shadow light from a grid baked at level load.

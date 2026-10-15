@@ -233,6 +233,27 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "At 100% about as bright as Original.",
                     [](const Settings &d){return d.sfxResampling!=0;},
                     {"Off","25%","50%","75%","100%","125%","150%","175%","200%"})}},
+            {"Made-up sounds",{
+                check("made_impacts","Sparks, dying lights and glass",&s.madeImpacts,
+                    "Sounds DOOM never had, made at startup in its own 8-bit style: machinery crackles where it is shot, "
+                    "a lamp sputters out or a screen dies in static, and windows break."),
+                choice("glass_sound","Breaking glass",&s.glassSound,{"Shatter","Fracture"},{0,1},
+                    "Shatter: a hard crack, pieces rattling as the pane comes apart, a rush of splinters and the shards falling. "
+                    "Fracture: a crack front branching through the pane, hundreds of tiny cracks ringing the pieces they leave.",
+                    [](const Settings &d){return d.madeImpacts!=0;}),
+                check("footsteps","Footsteps and splashes",&s.footsteps,
+                    "Your steps sound by what the floor is: stone, metal, wood, grass and carpet. In water you splash, "
+                    "in nukage, slime, blood and lava it gloops, and monsters wading through liquids splash too. "
+                    "Monsters on dry floors stay as silent as ever."),
+                check("ambience","Ambience",&s.ambience,
+                    "Lamps, door lights and computers hum, nukage and blood bubble, lava rumbles, fire crackles, water drips and wind blows "
+                    "under the sky, heard dull through window glass until it is shot, where the map shows them. Only near ones are heard; "
+                    "steady lamps barely, flickering ones buzz with their light, and shot-out fixtures go quiet. "
+                    "Loud effects push it down for a moment."),
+                slider("ambience_amount","Ambience volume",&s.ambienceAmount,0.25,2,0.25,
+                    "How loud the ambience is next to the effects.",
+                    [](const Settings &d){return d.ambience!=0;},
+                    {"25%","50%","75%","100%","125%","150%","175%","200%"})}},
             {"Rooms",{
                 check("room_acoustics","Room acoustics",&s.roomAcoustics,
                     "Sounds echo off the walls around you and ring on in a tail measured from the room: corridors slap back, "

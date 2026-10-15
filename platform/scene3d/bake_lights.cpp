@@ -358,6 +358,39 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
                                {tint[0],tint[1],tint[2]},w.height*0.5f,w.nx,w.ny});
     }
 }
+// A merged surface light as the bake keeps it.
+static BakeLight surfaceSource(const SurfaceLight &light) {
+    auto n=panelNormal(light);
+    return {light.x,light.y,light.z,light.radius,light.strength,0.35f,{light.color[0],light.color[1],light.color[2]},
+            std::min(light.extent,light.radius),n[0],n[1]};
+}
+// Whether the bake takes a glowing tile into a point light; with bake-only
+// lights, pools light as areas instead.
+static bool bakedPoint(const SurfaceLight &tile,bool only) {
+    return !only||tile.key[0]!=0||!poolSurface(tile.key[1],tile.key[2]);
+}
+// Calls visit with each bake grid cell's list over x0..x1, y0..y1.
+template<class Visit> static void forGridCells(float x0,float y0,float x1,float y1,Visit visit) {
+    auto gridX=[&](float x){return std::clamp((int)std::floor((x-mapOrigin[0])/bakeGridCell),0,bakeGridWidth-1);};
+    auto gridY=[&](float y){return std::clamp((int)std::floor((y-mapOrigin[1])/bakeGridCell),0,bakeGridHeight-1);};
+    for(int y=gridY(y0);y<=gridY(y1);++y)for(int x=gridX(x0);x<=gridX(x1);++x)visit(bakeGrid[(size_t)y*bakeGridWidth+x]);
+}
+void remergeBakeSource(int n) {
+    BakeLight &source=bakeSources[n];
+    const SurfaceLightKey &cell=bakeSourceKeys[n];
+    bool only=lightBakeKey&2;
+    std::vector<SurfaceLight> left;
+    for(const auto &tile:surfaceLights)
+        if(!tileShotOut(tile.key)&&bakedPoint(tile,only)&&surfaceCellOf(tile)==cell)left.push_back(tile);
+    std::vector<SurfaceLight> merged=mergedSurfaceLights(left);
+    if(merged.size()!=1) {source.strength=0;return;}
+    source=surfaceSource(merged[0]);
+    // Listed in order, as bakeLights lists them.
+    forGridCells(source.x-source.radius,source.y-source.radius,source.x+source.radius,source.y+source.radius,[&](std::vector<int> &list) {
+        auto at=std::lower_bound(list.begin(),list.end(),n);
+        if(at==list.end()||*at!=n)list.insert(at,n);
+    });
+}
 // Static lights, baked into the floor/ceiling map and the wall atlas rgb:
 // fullbright decorations and (with emissive textures) merged surface lights,
 // unflickered, with the sector heights in bakeMap. Values step by 1/32, like the
@@ -377,11 +410,9 @@ void bakeLights() {
         if(only)buildPoolAreas();
         std::vector<SurfaceLight> points;
         for(const auto &light:surfaceLights)
-            if(!only||light.key[0]!=0||!poolSurface(light.key[1],light.key[2]))points.push_back(light);
+            if(bakedPoint(light,only))points.push_back(light);
         for(const auto &light:mergedSurfaceLights(points)) {
-            auto n=panelNormal(light);
-            sources.push_back({light.x,light.y,light.z,light.radius,light.strength,0.35f,{light.color[0],light.color[1],light.color[2]},
-                               std::min(light.extent,light.radius),n[0],n[1]});
+            sources.push_back(surfaceSource(light));
             sourceGroups.push_back(0);
             bakeSourceKeys.resize(sources.size()-1);bakeSourceKeys.push_back(light.key);
         }
@@ -391,11 +422,9 @@ void bakeLights() {
     bakeSourceKeys.resize(sources.size());
     int points=(int)sources.size();
     bakeGridWidth=(int)std::ceil(mapWidth*mapCell/bakeGridCell);bakeGridHeight=(int)std::ceil(mapHeight*mapCell/bakeGridCell);
-    auto gridX=[&](float x){return std::clamp((int)std::floor((x-mapOrigin[0])/bakeGridCell),0,bakeGridWidth-1);};
-    auto gridY=[&](float y){return std::clamp((int)std::floor((y-mapOrigin[1])/bakeGridCell),0,bakeGridHeight-1);};
     bakeGrid.assign((size_t)bakeGridWidth*bakeGridHeight,{});
     auto list=[&](int n,float x0,float y0,float x1,float y1) {
-        for(int y=gridY(y0);y<=gridY(y1);++y)for(int x=gridX(x0);x<=gridX(x1);++x)bakeGrid[(size_t)y*bakeGridWidth+x].push_back(n);
+        forGridCells(x0,y0,x1,y1,[&](std::vector<int> &cell){cell.push_back(n);});
     };
     for(int n=0;n<points;++n) {
         const BakeLight &light=sources[n];

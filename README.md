@@ -58,7 +58,11 @@ graphics panel with **F4**.
 - **Lights can be shot out:** lamps and screens break when shot or caught in a
   blast, and the room goes dark with them.
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
-  muffled behind walls and dulled by distance.
+  finding their way round corners, through doors and windows, and dulled by
+  distance.
+- **Sounds DOOM never had:** sparks, dying lamps, breaking glass, footsteps,
+  and the hum, bubble and wind of the map around you, all synthesized at
+  startup in DOOM's own 8-bit style.
 - **Music synths of its own:** a SoundFont synth with the bundled GeneralUser
   GS bank, an OPL FM synth written from the chip's manual, or the Mac's system
   synth, plus an offline renderer for comparing them.
@@ -101,7 +105,9 @@ those hints into actual light sources.
 Lamp strips, computer panels, lava and other glowing artwork are recognised by
 texture name and palette color. Their bright pixels become glow masks and
 approximate light sources. Wall panels shine mostly forward, so they don't
-light through their own wall.
+light through their own wall. Computer walls that are only dotted with a few
+LEDs keep their glowing pixels but light the room only as much as those
+LEDs would, so a wall of tech panels doesn't turn a room red.
 
 Windows and other gaps open to the sky become broad sky-colored lights. With
 sun lighting on, windows that look out onto sunlit areas give more light than
@@ -206,13 +212,17 @@ that shape, and the painted shading stays visible on top.
 <img src="screens/monsters-red-light.jpg" width="49%" alt="Zombies lit red by the lamps of a big room" />
 </p>
 
-Eyes the artists painted in a color the body around them never uses glow in
-the dark: the zombies' and imp's red, the demon's yellow, the cacodemon's and
-mancubus's green, the arachnotron's blue. They are found in each sprite frame
-when it loads and get a little bloom.
+Monsters' eyes glow in the dark and get a little bloom: the zombies' and
+imp's red, the demon's yellow, the cacodemon's and mancubus's green, the
+arachnotron's blue. For the stock DOOM and DOOM II monsters the glowing pixels
+are picked by hand, frame by frame, so a monster turned away or squeezing its
+eyes shut in pain shows none. Each entry only holds for the original artwork:
+a replaced sprite with other pixels falls back to a search for eyes painted in
+a color the body around them never uses.
 
-See [`platform/scene3d/sprite_normals.cpp`](platform/scene3d/sprite_normals.cpp)
-and [`platform/sprite_eyes.h`](platform/sprite_eyes.h).
+See [`platform/scene3d/sprite_normals.cpp`](platform/scene3d/sprite_normals.cpp),
+[`platform/sprite_eyes_stock.h`](platform/sprite_eyes_stock.h) and
+[`platform/sprite_eyes.h`](platform/sprite_eyes.h).
 
 ### Per-frame light work can move into the bake
 
@@ -263,9 +273,10 @@ With the classic option off, the beam bounces a soft light in the color of
 whatever it hits, so a lit wall spills onto the dark floor in front of it.
 
 Dynamic light also pushes saturated colors toward its own hue, the way the
-palette ramps brighten, so dark blue carpet shows the beam. What it adds rolls
-off on bright texels, so a lit wall doesn't get far ahead of the dark floor
-next to it.
+palette ramps brighten, so dark blue carpet shows the beam. The baked light of
+lamps does the same, so a lamp's pool shows on a saturated floor as clearly as
+on the grey one next to it. What dynamic light adds rolls off on bright
+texels, so a lit wall doesn't get far ahead of the dark floor next to it.
 
 See [`platform/scene3d/lights.cpp`](platform/scene3d/lights.cpp) and
 [`platform/scene3d/exposure.cpp`](platform/scene3d/exposure.cpp).
@@ -378,7 +389,8 @@ window. A render-only hook reports hitscan shots crossing a line, and
 projectiles and explosions are checked every tic. The first thing through
 shatters the window into palette-colored shards that fall, bounce and lie on
 the floor for a while, leaving a jagged rim in the frame. Monster shots count
-too, so a fight across a window breaks it.
+too, so a fight across a window breaks it. Once it is broken, the wind and
+other sounds from outside come through it clearly (see the sound section).
 
 <p>
 <img src="screens/window-intact.jpg" width="49%" alt="An intact window with painted shine streaks" />
@@ -411,20 +423,30 @@ See [`platform/scene3d/windows.cpp`](platform/scene3d/windows.cpp) and
 
 Every lamp, light strip and screen that lights the room can be shot out. The
 renderer already knows which pixels of a texture glow and which light each of
-them feeds, so a shot that lands on the glowing part breaks the whole fixture.
-It sputters for a moment and goes dark: tubes turn grey and dead, and a screen
-loses its curved glass to cracks over a black tube.
+them feeds, so a shot that lands on the glowing part breaks the fixture. A
+fixture is the glowing surface that was hit: a lamp strip spread over a few
+small sectors breaks as one, while a long lit ceiling or a row of computer
+boxes breaks a piece at a time. Lamps forgive a near miss, so a shot into the
+dark middle of a ring light still counts; screens need a hit on the glass.
+
+A broken fixture sputters for a moment and goes dark: tubes turn grey and
+dead, and a screen loses its curved glass to cracks over a black tube. A lamp
+sputters out with a pop, a screen dies in a burst of static.
 
 The light goes with it. The fixture is taken out of the baked lighting, and the
 floors, walls, monsters and items it lit are baked again around it on a
-background thread. DOOM also lights a lamp-lit room by its sector light level,
-so the room's level drops by the share of its light that fixture gave. A room
-lit only by its lamps ends up close to pitch black.
+background thread. Where the bake had merged it with neighbouring fixtures into
+one light, that light is rebuilt from the ones still burning. DOOM also lights
+a lamp-lit room by its sector light level, so the room's level drops by the
+share of its light that fixture gave. A room lit only by its lamps ends up
+close to pitch black.
 
 Bullets, fireballs and plasma break what they hit; rockets and exploding
-barrels break every lamp their blast can see. Monsters' shots count too, and a
-bullet that kills its target carries on to the wall behind it, so the fight
-itself wears the light down. Tech walls throw blue sparks when hit.
+barrels break every lamp and screen their blast can see, while lava and nukage
+glow on. Monsters' shots count too, and a bullet that kills its target glances
+off and carries on to the wall behind it, a little off its line, so the fight
+itself wears the light down. Tech walls crackle and throw blue sparks when
+hit.
 
 Like the window glass, all of this happens in the renderer only. The game
 doesn't know the lights are gone: monsters see as they always did, and loading
@@ -484,11 +506,47 @@ and the camera are interpolated between DOOM's 35 Hz game tics.
 
 ## How the sound cheats
 
-Sound gets the same treatment as the graphics. Everything is worked out from
-the map while you play, and by default the original effects are still mixed
-as crunchy 8-bit samples. The target is a late-90s A3D or EAX sound card, with a fairly
-short and lo-fi reverb. Music stays dry. The settings are in the **Sound** tab
-of the F4 panel.
+Sound gets the same treatment as the graphics. The WAD's own effects still
+play as crunchy 8-bit samples, and everything around them is worked out from
+the map while you play. What the WAD has no sound for at all, such as sparks,
+breaking glass, footsteps or a humming lamp, is synthesized when the game
+starts, in the same 8-bit, 11 kHz form as DOOM's own effects, so it sits in
+the mix as if it had always been there. The target is a late-90s A3D or EAX
+sound card, with a fairly short and lo-fi reverb. Music stays dry. The
+settings are in the **Sound** tab of the F4 panel.
+
+### Sound finds its way through the map
+
+When a level loads, every two-sided line becomes an opening between two
+sectors. Sound travels from opening to opening, and one search outward from
+the player finds, for each opening in reach, how far the way there is and what
+it lost on the way. The search runs again whenever the player moves or a few
+tics pass, and openings are read live, so a door that opens, a lift that rises
+or a window that breaks changes what gets through as it happens.
+
+Distance and loss are kept apart. A closed door, a narrow slit or a window's
+glass makes a sound quieter and duller, but not farther away. Sectors are only
+topology here, so a staircase of twenty sectors counts as one way, not twenty
+rooms.
+
+### Walls muffle, distance dulls
+
+Each positioned sound has its own two-stage lowpass filter. The cutoff is set
+when the sound starts and updated every other tic while the sound or the player
+moves.
+
+- **In sight:** only distance removes treble, from about 200 units out to
+  DOOM's clipping distance.
+- **In the same room, out of sight:** over a ledge or behind a pillar, it is
+  muffled a little.
+- **Elsewhere:** it is heard the way the openings let it through. The longer
+  the way round compared to the straight line, the duller: a way half again as
+  long as straight is as dull as a corner gets. A shut door, a slit or a pane
+  of glass on the way dulls it further.
+- **Sealed off:** with no way through at all, it is muffled heavily.
+
+Muffling only changes the tone. Volume is the same as in vanilla DOOM, so you
+can locate monsters by ear as well as before.
 
 ### Rooms are measured with rays
 
@@ -522,22 +580,63 @@ over a third of a second, so walking through a door doesn't click.
 Far sounds send more to the reverb relative to the dry mix, so they sound
 further away as well as quieter.
 
-### Walls muffle, distance dulls
+### The map hums
 
-Each positioned sound has its own two-stage lowpass filter. The cutoff is set
-when the sound starts and updated every other tic while the sound or the player
-moves.
+When a level starts, its textures and things are read for what should make a
+sound:
 
-- **In sight:** only distance removes treble, from about 200 units out to
-  DOOM's clipping distance.
-- **Around a corner:** if the sound has an open path to the player, through an
-  open door, over a ledge or through a window, it is muffled a little. The
-  search follows short routes through connected sectors.
-- **Sealed off:** with only closed doors and solid walls in between, it is
-  muffled heavily.
+- **Lamps** buzz like a ballast. A steady lamp is barely heard, but one in a
+  flickering sector buzzes with its light, cuts out when it drops and ticks
+  and crackles as the tube strikes again.
+- **Screens** hum under faint static, and **computer walls** chatter in little
+  bleeping tunes.
+- **Nukage and slime** bubble thick and low, with a big blorp now and then.
+  **Blood** bubbles slower and deeper, **slime falls** pour, and DOOM's
+  **water**, which mostly stands still, drips now and then.
+- **Lava** rumbles and heaves up heavy bubbles, **fire walls**, torches and
+  burning barrels roar and crackle, and cracked **magma** rock only ticks over
+  a faint rumble. **Teleporter pads** throb.
+- **Wind** blows wherever the sky is open, and comes indoors through the
+  windows and doorways that open onto it.
 
-Muffling only changes the tone. Volume is the same as in vanilla DOOM, so you
-can locate monsters by ear as well as before.
+Sources of a kind close together join into one spot, and each spot is heard
+through the same openings as any other sound: round corners it is farther,
+through a shut door duller, and it comes from the direction of the opening it
+arrives by. Window glass holds the wind back to a dull rush until the glass is
+shot. Each kind plays in up to three layers with different takes of its loop,
+so a room full of computers sounds fuller rather than just louder. A faint room
+tone runs under it all.
+
+Only nearby sources are heard, loud effects push the ambience down for a
+moment, and a fixture that is shot out goes quiet for the rest of the level.
+**Ambience volume** sets how loud it is next to the effects.
+
+### Sounds DOOM never had
+
+The rest of the made-up sounds are effects that answer what happens in the
+fight. Each comes in six variations, and the same one never plays twice in a
+row.
+
+- **Sparks:** tech walls crackle, fizz or zap after the gunshot that hit them.
+- **Dying lights:** a lamp's hum sputters into a pop and a few bits of tube; a
+  screen bursts into static and thumps off.
+- **Breaking glass:** each shard falls from its place in the pane under DOOM's
+  gravity and ticks where it lands, with a longer break for big windows.
+  **Breaking glass** picks how the break itself sounds: **Shatter**, a hard
+  crack and a rush of splinters, or **Fracture**, a crack front branching
+  through the pane as hundreds of tiny clicks, with no noise in it at all.
+- **Footsteps:** the player's steps sound by what the floor is, stone, metal,
+  wood or something soft like grass and carpet, about twice a second walking
+  and three times running. Water splashes, nukage, slime, blood and lava gloop,
+  and monsters wading through liquids splash too. Monsters on dry floors stay
+  as silent as ever, so hearing tells no more about where they are than before.
+
+`doom-sfx-render` writes all of them to WAV files, dry and in rooms, for
+listening outside the game:
+
+```sh
+build/play/doom-sfx-render freedoom1.wad -kind ambient -room room
+```
 
 ### Samples get treble they never had
 
@@ -546,7 +645,7 @@ DOOM's effects are mostly 11 kHz samples, so they hold nothing above about
 gap fills with mirror images of the sound. That sizzle is most of the crack in
 the pistol, but it rings metallic because it turns the sound's spectrum upside
 down. **Sample playback** in the Sound tab offers three ways to read between
-the samples:
+the samples, for the WAD's effects and the made-up ones alike:
 
 - **Original** (the default) holds each sample: raw, gritty and sizzling.
 - **Smooth** draws a cubic curve through the samples and keeps a little of the
@@ -594,9 +693,16 @@ game, so synths and banks can be compared by ear:
 build/play/doom-music-render freedoom1.wad -synth sf2 -song D_E1M1
 ```
 
-See [`platform/audio/room.c`](platform/audio/room.c),
-[`platform/audio/reverb.c`](platform/audio/reverb.c),
+See
+[`platform/audio/acoustic_graph.c`](platform/audio/acoustic_graph.c),
 [`platform/audio/occlusion.c`](platform/audio/occlusion.c),
+[`platform/audio/room.c`](platform/audio/room.c),
+[`platform/audio/reverb.c`](platform/audio/reverb.c),
+[`platform/audio/ambience_map.c`](platform/audio/ambience_map.c),
+[`platform/audio/ambience.c`](platform/audio/ambience.c),
+[`platform/audio/made_bank.c`](platform/audio/made_bank.c),
+[`platform/audio/steps.c`](platform/audio/steps.c),
+the synths in [`platform/audio/`](platform/audio/) (`*_synth.c`),
 [`platform/audio/resample.c`](platform/audio/resample.c),
 [`platform/audio/treble.c`](platform/audio/treble.c),
 [`platform/i_sdl_sound.c`](platform/i_sdl_sound.c),

@@ -51,6 +51,7 @@ int P_PicAnimationNext(boolean istexture,int pic,int *next);
 #include "../baked_lighting.h"
 #include "../weapon_lighting.h"
 #include "../sprite_eyes.h"
+#include "../sprite_eyes_stock.h"
 
 
 namespace doom3d {
@@ -207,6 +208,10 @@ extern std::vector<BakeLight> bakeSources;
 // Per bakeSources entry: the merge cell of the glowing tiles it stands for
 // (shot_lights.cpp breaks them by it), all zeros for other lights.
 extern std::vector<SurfaceLightKey> bakeSourceKeys;
+// Re-merges bakeSources[n], a merged surface light, from the tiles of its
+// merge cell not shot out, as bakeLights merged it (strength 0 with none
+// left), and lists it in bakeGrid wherever it now reaches.
+void remergeBakeSource(int n);
 extern int firstWindowSource;
 float capWindowLight(float rgb[3]);
 extern std::vector<std::vector<int>> bakeGrid;
@@ -242,8 +247,9 @@ float flowLightAt(float x,float y,const sector_t *sector,float light);
 
 // relight.cpp
 void stopRelight();
-// A shot-out fixture's merged light (a bakeSourceKeys entry) leaves the bake:
-// its source goes dark and the next background re-bake clears its light.
+// A merged light (a bakeSourceKeys entry) lost shot-out tiles: its source
+// keeps the tiles left (remergeBakeSource) or goes dark, and the next
+// background re-bake follows.
 void relightBrokenLight(const SurfaceLightKey &cell);
 // Waits for the background re-bake around moving sectors (relightMovingSectors)
 // and, with apply, uploads what it baked. Every full bake calls it first.
@@ -342,6 +348,8 @@ extern std::vector<float> shotDim;
 void dimShotSector(int sector,float share);
 // Whether a glowing tile is out now (sputtering out for a moment after the shot).
 bool tileDark(const SurfaceLightKey &key);
+// Whether a glowing tile has been shot out, sputtering or not.
+bool tileShotOut(const SurfaceLightKey &key);
 void shotWall(const line_t &line,int side,int section,float along,float x,float y,float z,int reach=1);
 void shotFlat(int sector,bool ceiling,float x,float y,float z,int reach=1);
 // Rockets and barrels bursting break the lights around them.

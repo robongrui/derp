@@ -85,8 +85,8 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
             staticLight=shaded;
         }
     }
-    pulse+=staticLight;
-    if(mapped) pulse+=bounce*c.bake.y*occlusion;
+    pulse+=staticLight;lampLight+=max(staticLight,vec3(0));
+    if(mapped) {pulse+=bounce*c.bake.y*occlusion;lampLight+=bounce*c.bake.y*occlusion;}
     float stipple=flashStipple(vWorld,normal);
     while(any(notEqual(mask,uvec2(0)))) {
         uint word=mask.x!=0u?0u:1u;

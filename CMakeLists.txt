@@ -191,6 +191,16 @@ if(DOOM_BUILD_SDL)
     # doom-music-render <wad> [-song D_E1M1|all] [-synth opl|sf2] [-sf2 bank.sf2] ...
     add_executable(doom-music-render tests/music_render.c)
     target_link_libraries(doom-music-render PRIVATE doom_music)
+    # Renders the made-up effects (sparks, dying lamps, glass) after a pistol shot, and the ambient
+    # sounds of lamps, screens, liquids and fire, dry and in rooms:
+    # doom-sfx-render <wad> [-kind name|ambient|all] [-room dry|room|hall|all] [-rate 11025] [-level 0.6] [-gun on|off] [-out dir]
+    add_executable(doom-sfx-render tests/sfx_render.c platform/audio/impact_synth.c platform/audio/spark_synth.c
+        platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
+        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/resample.c platform/audio/reverb.c)
+    target_include_directories(doom-sfx-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/platform")
+    if(NOT WIN32)
+        target_link_libraries(doom-sfx-render PRIVATE m)
+    endif()
     # The 3D scene, one file per subsystem; scene3d/internal.h holds what they share.
     set(DOOM_SCENE3D_SOURCES
         platform/scene3d/atmosphere.cpp
@@ -242,9 +252,12 @@ if(DOOM_BUILD_SDL)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
         target_compile_definitions(${target} PRIVATE DOOM_RENDER3D)
     endfunction()
-    # Sound in the map for the SDL mixer: room reverb, muffling, the map reads they share, and sample playback.
+    # Sound in the map for the SDL mixer: room reverb, muffling, the map reads they share, sample playback,
+    # and the made-up sounds: impacts and the ambience read from the map's textures.
     set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c
-        platform/audio/treble.c)
+        platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/acoustic_graph.c platform/audio/steps.c
+        platform/audio/impact_synth.c platform/audio/spark_synth.c platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
+        platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
