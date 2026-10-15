@@ -3,7 +3,8 @@
 An idea of how DOOM could have looked if id had kept iterating on this engine,
 and if we still played on CRTs. It tries to look newer without looking modern:
 light comes from lamps and windows, monsters are lit as rounded bodies, water
-reflects the room and sound echoes off the walls, while the light still steps
+reflects the room, and the map hums, bubbles and echoes around you, while the
+light still steps
 like DOOM's light levels, shadow edges break into dither and the pixels stay
 DOOM-sized.
 
@@ -14,7 +15,10 @@ loaded WAD while the game runs.
 
 Everything the renderer adds is worked out from the original artwork, maps and
 game state. It needs no replacement textures, models, authored lighting or
-edited maps. DOOM should feel more physically coherent while staying the same
+edited maps. The sound works the same way: not a single recorded sample is
+added. Every sound DOOM didn't have, from a lamp's buzz to a window breaking,
+is synthesized by code when the game starts, and where it plays is read from
+the map. DOOM should feel more physically coherent while staying the same
 game.
 
 ## Why this exists
@@ -48,7 +52,7 @@ graphics panel with **F4**.
 - **Classic renderer:** the original 320×200 software view is one keypress
   away.
 - **No asset pack:** the WAD's own textures, flats, sprites and palettes are
-  the source material.
+  the source material, and there are no added sound files either.
 - **Compatibility:** vanilla and limit-removing maps, including DEHACKED
   patches.
 - **Not supported:** Boom, MBF21 and GZDoom maps, slopes, 3D floors, model
@@ -60,9 +64,10 @@ graphics panel with **F4**.
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
   finding their way round corners, through doors and windows, and dulled by
   distance.
-- **Sounds DOOM never had:** sparks, dying lamps, breaking glass, footsteps,
-  and the hum, bubble and wind of the map around you, all synthesized at
-  startup in DOOM's own 8-bit style.
+- **Sounds DOOM never had, synthesized:** sparks, dying lamps, breaking
+  glass, footsteps, and the hum, bubble and wind of the map around you. None
+  of them is a recording; small synths written for each sound generate them
+  at startup in DOOM's own 8-bit style.
 - **Music synths of its own:** a SoundFont synth with the bundled GeneralUser
   GS bank, an OPL FM synth written from the chip's manual, or the Mac's system
   synth, plus an offline renderer for comparing them.
@@ -83,7 +88,11 @@ includes Freedoom, so it plays straight away.
 On Windows and Linux, put your own `.wad` files in the `wads` folder next to
 the game. On the Mac, choose your WAD folder when the app starts.
 
-[PLAY.md](PLAY.md) has the controls and a description of the graphics options.
+[PLAY.md](PLAY.md) has the controls and a description of the graphics and
+sound options.
+
+The ambience is quiet by design and the music covers it. For the soundscape,
+turn the music down or off in **Options → Sound Volume**.
 
 ## Screenshots
 
@@ -506,14 +515,34 @@ and the camera are interpolated between DOOM's 35 Hz game tics.
 
 ## How the sound cheats
 
-Sound gets the same treatment as the graphics. The WAD's own effects still
-play as crunchy 8-bit samples, and everything around them is worked out from
-the map while you play. What the WAD has no sound for at all, such as sparks,
-breaking glass, footsteps or a humming lamp, is synthesized when the game
-starts, in the same 8-bit, 11 kHz form as DOOM's own effects, so it sits in
-the mix as if it had always been there. The target is a late-90s A3D or EAX
-sound card, with a fairly short and lo-fi reverb. Music stays dry. The
-settings are in the **Sound** tab of the F4 panel.
+Sound gets the same treatment as the graphics, and it is as big a part of the
+project. The WAD's own effects still play as crunchy 8-bit samples, and
+everything around them is worked out from the map while you play: where sound
+can travel, how big and how hard the room is, and what in it should be making
+a noise.
+
+No sound files are dropped in. The WAD has nothing for sparks, breaking glass,
+footsteps, a humming lamp or bubbling nukage, and instead of adding recordings
+the game generates them. Each one is a small synth that models how the thing
+makes its sound: a ballast buzzing at twice the mains frequency, bubbles
+rising in pitch as they near the surface, a crack front branching through a
+pane, shards falling under DOOM's own gravity and ticking where they land.
+At startup, in a fraction of a second, they are all rendered in the same
+8-bit, 11 kHz form as DOOM's own effects, so they sit in the mix as if they had
+always been there. They are the same in every WAD, and which of them plays
+where is read from the map's textures.
+
+The target is a late-90s A3D or EAX sound card, with a fairly short and lo-fi
+reverb. The settings are in the **Sound** tab of the F4 panel.
+
+### Quiet by design, so turn the music down
+
+The soundscape is quiet on purpose. A lamp's buzz, distant bubbling and wind
+coming through a broken window are meant to be heard under the gunfire, and
+DOOM's music, mixed loud and played dry, covers them. With the music at its
+usual level, most of this section goes unheard. To hear it, turn the music
+down or off in **Options → Sound Volume → Music Volume**. The music synths
+below are kept for playing the way DOOM is usually played.
 
 ### Sound finds its way through the map
 
