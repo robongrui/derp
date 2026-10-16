@@ -1,5 +1,11 @@
 # Duct-Tape DOOM
 
+A few thoughts:
+
+This has grown into more than I initially had in mind. The basic idea is described further down and still holds, but during development I realised how much I enjoy thinking about what these environments were supposed to look and feel like, and what the technical constraints of the time kept them from doing.
+
+My work on Doom, Doom II and now Heretic is certainly opinionated, but I try not to add anything that wasn't already suggested by the original maps, artwork or game logic. The goal is to take those hints seriously and give them room to become what they seem to have been pointing toward.
+
 An idea of how DOOM could have looked if id had kept iterating on this engine,
 and if we still played on CRTs. It tries to look newer without looking modern:
 light comes from lamps and windows, monsters are lit as rounded bodies, water
@@ -8,7 +14,7 @@ light still steps
 like DOOM's light levels, shadow edges break into dither and the pixels stay
 DOOM-sized.
 
-Under the hood it is a for-fun experimental port of id Software's 1997 DOOM
+Under the hood it is an experimental port of id Software's 1997 DOOM
 source release to macOS, Linux and Windows. It keeps the original game
 simulation and adds an optional GPU renderer that builds a 3D scene from the
 loaded WAD while the game runs.
