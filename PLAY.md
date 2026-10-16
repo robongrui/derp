@@ -133,11 +133,12 @@ takes a screenshot.
 - **Atmospheric fog:** height fog with soft cloud layers over pits, liquids and damaging floors. Toggle it off for a clearer view or a lighter GPU workload.
 - **Sunbeams** (with sun shadows, optionally **scattering** brighter toward the sun), **sun in the sky** and **dust motes** that glint in sunbeams and the flashlight beam.
 - **Heat haze:** rows of Doom pixels shimmer sideways at the tic rate above lava, red-hot damaging floors and flames.
+- **Embers:** a few sparks rise from torches and fires and cool as they climb; Heretic's wind carries them off.
 - **Blood splats and pools:** hitscan hits leave splats on the floor and on walls close behind the target, and corpses grow a pool in steps. **Wet blood shine** makes fresh blood glint under dynamic lights before it dries matte.
 - **Soft effect sprites:** explosions, puffs and teleport fog no longer slice into walls, and dissolve on an ordered dither where they meet floors and ceilings.
 - **Shootable lights:** a shot, fireball or blast into a lamp, light strip or screen breaks it. It sputters out, and a moment later the room loses the light it gave, down to near black in rooms lit only by their lamps. Lamps count near misses; screens need a hit on the glass. Render-only: monsters see as before, and a reload brings the lights back. Needs emissive textures.
 - **Kill shots carry on:** a bullet that kills what it hits glances on past the body, so a fight can shoot out the lights behind the monsters. Sparks and lights only; the game still sees the shot stop.
-- **Liquids:** reflections of the scene in nearby water (rendered a second time at half resolution), optionally in **retro PS1 style** at one-eighth resolution with palette colors; nukage, slime, blood and lava do not mirror the room; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; and splashes with ripple rings where things land or wade.
+- **Liquids:** reflections of the scene in nearby water (rendered a second time at half resolution), optionally in **retro PS1 style** at one-eighth resolution with palette colors; nukage, slime, blood and lava do not mirror the room; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; **glowing liquid edges**, the strip the game paints on its edge textures carried onto every wall meeting nukage, slime or lava; **shore ripples** running out from the walls; and splashes with ripple rings where things land or wade.
 
 **Sound**
 

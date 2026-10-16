@@ -1,8 +1,8 @@
-/* DTD: DOOM's i_sound.h, the sound and music device interface that
+/* DERP: DOOM's i_sound.h, the sound and music device interface that
    platform/i_sdl_sound.c and platform/i_music.c implement. Heretic's own
    s_sound.c drives it. */
-#ifndef DTD_HERETIC_I_SOUND_H
-#define DTD_HERETIC_I_SOUND_H
+#ifndef DERP_HERETIC_I_SOUND_H
+#define DERP_HERETIC_I_SOUND_H
 #include "doomdef.h"
 #include "sounds.h"
 

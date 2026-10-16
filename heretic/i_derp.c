@@ -1,5 +1,5 @@
 /* Heretic's side of the platform layer: the parts of Raven's DOS I_IBM.C
-   that DTD's shared SDL code (platform/) does not already provide under
+   that DERP's shared SDL code (platform/) does not already provide under
    DOOM's names. */
 #include "doomdef.h"
 #include "i_video.h"

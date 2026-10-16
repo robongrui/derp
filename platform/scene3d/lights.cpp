@@ -314,15 +314,33 @@ void collectFlashes(float fraction,const Uniforms &camera) {
     }
     std::sort(projectiles.begin(),projectiles.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
     lightKind=I_RENDER3D_LIGHT_PROJECTILE;
-    for(size_t n=0;n<std::min(size_t(8),projectiles.size());++n) {
-        const mobj_t &thing=*projectiles[n].thing;
-        float x,y,z;interpolatedPosition(thing,fraction,x,y,z);
+    // Swarms (Heretic's teleport glitter, claw rippers, crossbow volleys,
+    // flame trails) would stack a full light per spark and wash surfaces
+    // out: shots within 96 units of a nearer one join its light, which
+    // grows by a fifth per member up to half again as strong. Sparks
+    // smaller than DOOM's plasma ball (13 pixels) shine by their area.
+    struct Cluster {const mobj_t *thing;float x,y,z,radius,strength;int members;};
+    std::vector<Cluster> clusters;
+    for(const Candidate &candidate:projectiles) {
+        const mobj_t &thing=*candidate.thing;
+        float x,y,z;interpolatedPosition(thing,fraction,x,y,z);z+=units(thing.height)*0.5f;
         float radius=256,strength=1.7f;
         game_thing_role role=Game_ThingRole(thing.type);
         if(role==GAME_THING_BIG_SHOT) {radius=448;strength=2.4f;}
         else if(role==GAME_THING_ROCKET) {radius=288;strength=1.5f;}
-        appendLight(x,y,z+units(thing.height)*0.5f,radius,strength,frameGlow(thing.sprite,thing.frame),&thing,0.75f);
+        const spritedef_t &sprite=sprites[thing.sprite];
+        if((thing.frame&FF_FRAMEMASK)<sprite.numframes) {
+            const Image &image=lumpImage(firstspritelump+sprite.spriteframes[thing.frame&FF_FRAMEMASK].lump[0],false);
+            strength*=std::clamp(image.width*image.height/169.0f,0.25f,1.0f);
+        }
+        auto joined=std::find_if(clusters.begin(),clusters.end(),[&](const Cluster &c) {
+            return std::fabs(c.x-x)<96&&std::fabs(c.y-y)<96&&std::fabs(c.z-z)<96;});
+        if(joined!=clusters.end()) {
+            joined->radius=std::max(joined->radius,radius);joined->strength=std::max(joined->strength,strength);++joined->members;
+        } else if(clusters.size()<8) clusters.push_back({&thing,x,y,z,radius,strength,1});
     }
+    for(const Cluster &c:clusters)
+        appendLight(c.x,c.y,c.z,c.radius,c.strength*std::min(1.5f,1+0.2f*(c.members-1)),frameGlow(c.thing->sprite,c.thing->frame),c.thing,0.75f);
     // Teleport flashes share the projectiles' light kind; the nearest four.
     std::sort(teleports.begin(),teleports.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
     for(size_t n=0;n<std::min(size_t(4),teleports.size());++n) {

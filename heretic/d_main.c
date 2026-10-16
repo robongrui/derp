@@ -51,7 +51,7 @@ boolean F_Responder(event_t *ev);
 //
 //---------------------------------------------------------------------------
 
-// DTD: FixedDiv is linuxdoom-1.10/m_fixed.c's, shared with DOOM.
+// DERP: FixedDiv is linuxdoom-1.10/m_fixed.c's, shared with DOOM.
 
 /*
 ===============================================================================
@@ -219,7 +219,7 @@ void D_DoomLoop(void)
 		debugfile = fopen(filename,"w");
 	}
 	I_InitGraphics();
-	// DTD: Raven's DOS I_InitGraphics loaded the palette; Heretic only sets
+	// DERP: Raven's DOS I_InitGraphics loaded the palette; Heretic only sets
 	// it again for damage and pickup flashes.
 	I_SetPalette(W_CacheLumpName("PLAYPAL", PU_CACHE));
 	while(1)
@@ -454,7 +454,7 @@ char *wadfiles[MAXWADFILES] =
 
 #define SHAREWAREWADNAME "heretic1.wad"
 
-// DTD: Raven's development lumps (texture1.lmp ...) are left out.
+// DERP: Raven's development lumps (texture1.lmp ...) are left out.
 char *wadfiles[MAXWADFILES] =
 {
 	"heretic.wad"
@@ -543,7 +543,7 @@ char smsg[80];      // status bar line
 
 byte *hscreen;
 
-// DTD: the DOS text-mode startup screen has no equivalent; output is dropped.
+// DERP: the DOS text-mode startup screen has no equivalent; output is dropped.
 void hgotoxy(int x,int y)
 {
 	hscreen = NULL;
@@ -785,7 +785,7 @@ void D_DoomMain(void)
 	startmap = 1;
 	autostart = false;
 
-	// DTD: -iwad names the main WAD, as in DOOM (the launcher passes it).
+	// DERP: -iwad names the main WAD, as in DOOM (the launcher passes it).
 	p = M_CheckParm("-iwad");
 	if(p && p < myargc-1)
 	{
@@ -957,7 +957,7 @@ void D_DoomMain(void)
 
 	tprintf("I_Init: Setting up machine state.\n",1);
 	I_Init();
-	// DTD: Raven's DOS I_Init also started the sound module; the shared
+	// DERP: Raven's DOS I_Init also started the sound module; the shared
 	// I_Init (platform/i_portable_system.c) only opens the sound device.
 	S_Init();
 	S_Start();

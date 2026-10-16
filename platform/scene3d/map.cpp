@@ -1,6 +1,7 @@
 /* Level geometry built at load: BSP floor polygons, sector classification
    (liquids, pits, outdoor) and the map-space seam and contact maps. */
 #include "internal.h"
+#include "../audio/ambience_spots.h"
 
 namespace doom3d {
 std::vector<std::vector<Point>> floors;
@@ -114,6 +115,37 @@ static game_liquid liquidFlat(int pic) {
     char name[9];memcpy(name,lumpinfo[firstflat+pic].name,8);name[8]=0;int next;
     game_liquid kind=Game_LiquidFlat(name);
     return kind!=GAME_LIQUID_NONE&&P_PicAnimationNext(false,pic,&next)>0?kind:GAME_LIQUID_NONE;
+}
+// How a liquid flat meets the walls around it (LIQUID_LOOK_*).
+int liquidLook(int pic) {
+    static std::vector<signed char> looks;
+    if(pic<0||pic>=numflats)return LIQUID_LOOK_NONE;
+    if((int)looks.size()!=numflats)looks.assign(numflats,-1);
+    if(looks[pic]<0) {
+        char name[9];memcpy(name,lumpinfo[firstflat+pic].name,8);name[8]=0;
+        game_liquid kind=liquidFlat(pic);
+        looks[pic]=kind==GAME_LIQUID_NONE?LIQUID_LOOK_NONE:Game_HotFlat(name)?LIQUID_LOOK_HOT:
+                   kind==GAME_LIQUID_WATER?LIQUID_LOOK_WATER:Game_AmbientFlat(name,0)==AMBIENT_BLOOD?LIQUID_LOOK_BLOOD:LIQUID_LOOK_THICK;
+    }
+    return looks[pic];
+}
+bool iceFlat(int pic) {
+    static std::vector<signed char> ice;
+    if(pic<0||pic>=numflats)return false;
+    if((int)ice.size()!=numflats)ice.assign(numflats,-1);
+    if(ice[pic]<0) {char name[9];memcpy(name,lumpinfo[firstflat+pic].name,8);name[8]=0;ice[pic]=Game_IceFlat(name)?1:0;}
+    return ice[pic]!=0;
+}
+// Big pools fade their flat toward its average with distance, keeping this
+// much of its contrast: water most freely, thick liquids less, lava least so
+// its glowing cracks still read.
+float liquidDetailFloor(int pic) {
+    switch(liquidLook(pic)) {
+    case LIQUID_LOOK_WATER: return 0.2f;
+    case LIQUID_LOOK_THICK: case LIQUID_LOOK_BLOOD: return 0.35f;
+    case LIQUID_LOOK_HOT: return 0.5f;
+    default: return 0;
+    }
 }
 static void classifySectorMist() {
     sectorMist.assign(numsectors,{});

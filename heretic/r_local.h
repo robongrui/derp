@@ -6,7 +6,7 @@
 #define __R_LOCAL__
 #include "doomdef.h"
 
-// DTD: extras the shared platform code reads (r_data.c, r_main.c).
+// DERP: extras the shared platform code reads (r_data.c, r_main.c).
 extern unsigned r_levelserial;
 int R_CheckFlatNumForName (char *name);
 void R_TextureDimensions(int texture, int *width, int *height);
@@ -474,7 +474,7 @@ void 	R_DrawSpanLow (void);
 void 	R_InitBuffer (int width, int height);
 void	R_InitTranslationTables (void);
 
-// DTD: The accelerated renderer's hooks, as in DOOM's r_state.h; null when the
+// DERP: The accelerated renderer's hooks, as in DOOM's r_state.h; null when the
 // classic renderer draws. R_AcceleratedView replaces R_RenderPlayerView's
 // drawing; the others report shots and impacts for lights and decals.
 extern void (*R_AcceleratedView)(player_t *player);

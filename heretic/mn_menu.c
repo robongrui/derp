@@ -40,7 +40,7 @@ typedef enum
 	MENU_FILES,
 	MENU_LOAD,
 	MENU_SAVE,
-	MENU_CHEATS, // DTD
+	MENU_CHEATS, // DERP
 	MENU_NONE
 } MenuType_t;
 
@@ -280,7 +280,7 @@ static Menu_t Options2Menu =
 	MENU_OPTIONS
 };
 
-// DTD: the level-checking cheats on F5, as in the DOOM program. The
+// DERP: the level-checking cheats on F5, as in the DOOM program. The
 // items have no text of their own: DrawCheatsMenu writes them in the small
 // font, CHEAT_ITEM_HEIGHT apart.
 #define CHEAT_ITEM_HEIGHT 11
@@ -575,7 +575,7 @@ void MN_Drawer(void)
 		}
 		y = CurrentMenu->y+(CurrentItPos*ItemHeight(CurrentMenu))+SELECTOR_YOFFSET;
 		if(CurrentMenu == &CheatsMenu)
-		{ // DTD: centred on the small font
+		{ // DERP: centred on the small font
 			y -= 4;
 		}
 		selName = MenuTime&16 ? "M_SLCTR1" : "M_SLCTR2";
@@ -1194,7 +1194,7 @@ boolean MN_Responder(event_t *event)
 
 		if(gamestate == GS_LEVEL && P_Flying()
 			&& (key == key_invleft || key == key_invright))
-		{ // DTD: while flying, the inventory keys change the map
+		{ // DERP: while flying, the inventory keys change the map
 			int episode = gameepisode;
 			int map = gamemap;
 
@@ -1276,7 +1276,7 @@ boolean MN_Responder(event_t *event)
 				S_StartSound(NULL, sfx_dorcls);
 				slottextloaded = false; //reload the slot text, when needed
 				return true;
-			case KEY_F5: // DTD: the cheat menu (Heretic had no F5)
+			case KEY_F5: // DERP: the cheat menu (Heretic had no F5)
 				if(gamestate == GS_LEVEL && P_DebugAllowed())
 				{
 					MenuActive = true;
@@ -1642,7 +1642,7 @@ void MN_DrawInfo(void)
 
 //---------------------------------------------------------------------------
 //
-// DTD: the cheat menu
+// DERP: the cheat menu
 //
 //---------------------------------------------------------------------------
 

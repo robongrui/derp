@@ -9,7 +9,7 @@
 #include "soundst.h"
 
 void P_PlayerNextArtifact(player_t *player);
-static void P_FlyMove(player_t *player); // DTD
+static void P_FlyMove(player_t *player); // DERP
 extern boolean gamekeydown[];
 extern int key_speed;
 extern boolean demorecording;
@@ -181,7 +181,7 @@ void P_MovePlayer(player_t *player)
 		|| (player->mo->flags2&MF2_ONMOBJ));
 
 	if(P_Flying())
-	{ // DTD: the F5 menu's flight; the look keys below still work
+	{ // DERP: the F5 menu's flight; the look keys below still work
 		onground = false;
 		P_FlyMove(player);
 	}
@@ -528,7 +528,7 @@ boolean P_UndoPlayerChicken(player_t *player)
 //
 //----------------------------------------------------------------------------
 
-// DTD: see p_local.h.
+// DERP: see p_local.h.
 float tourpitch;
 boolean freeaim;
 boolean debugfly, debugnoclip, debuggod, debugnomonsters, debugnotarget;
@@ -636,7 +636,7 @@ void P_PlayerThink(player_t *player)
 	extern boolean ultimatemsg;
 
 	if(P_DebugAllowed())
-	{ // DTD: the F5 menu's cheats
+	{ // DERP: the F5 menu's cheats
 		if(debugnoclip)
 		{
 			player->cheats |= CF_NOCLIP;

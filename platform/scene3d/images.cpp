@@ -150,7 +150,9 @@ static Image &withGlassFrame(Image &image,const std::vector<byte> &frame) {
 // 16 bits with the anchor offset in alpha (noPaintedTile: none), the other
 // channels as at 8 bits.
 using Tiler=std::vector<uint16_t>(*)(const std::vector<float> &,int,int);
-static Image &withRelief(Image &image,Tiler tiles=nullptr) {
+// depth scales the broad bands (seams, streaks); smooth leaves no grain
+// (glassy highlights) and halves the per-texel tilt.
+static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smooth=false) {
     int w=image.width,h=image.height;size_t count=(size_t)w*h;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<float> height(count),across(count),down(count),broad(count),grain(count),rough(count),scratch(count);
@@ -198,12 +200,13 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr) {
         float fy=(at(height,x-1,y+1)+2*at(height,x,y+1)+at(height,x+1,y+1)-at(height,x-1,y-1)-2*at(height,x,y-1)-at(height,x+1,y-1))*0.25f;
         float t=std::clamp((bands[(size_t)y*w+x]-2*typical)/(2*typical+1e-6f),0.0f,1.0f);
         float deepen=1+(gain-1)*t*t*(3-2*t);
-        float sx=0.25f*fx+1.5f*deepen*(at(across,x+1,y)-at(across,x-1,y));
-        float sy=0.25f*fy+1.5f*deepen*(at(down,x,y+1)-at(down,x,y-1));
+        float fine=smooth?0.125f:0.25f;
+        float sx=fine*fx+1.5f*deepen*depth*(at(across,x+1,y)-at(across,x-1,y));
+        float sy=fine*fy+1.5f*deepen*depth*(at(down,x,y+1)-at(down,x,y-1));
         float soften=1/(1+std::sqrt(sx*sx+sy*sy)); // Steep edges ease toward 45 degrees.
         byte *cell=&cells[((size_t)y*w+x)*4];
         cell[0]=(byte)std::lround(128+127*sx*soften);cell[1]=(byte)std::lround(128+127*sy*soften);
-        cell[2]=(byte)std::lround(std::clamp(rough[(size_t)y*w+x]/0.25f,0.0f,1.0f)*255);cell[3]=255;
+        cell[2]=smooth?0:(byte)std::lround(std::clamp(rough[(size_t)y*w+x]/0.25f,0.0f,1.0f)*255);cell[3]=255;
     }
     std::vector<uint16_t> anchors=tiles?tiles(height,w,h):std::vector<uint16_t>();
     if(std::any_of(anchors.begin(),anchors.end(),[](uint16_t a){return a!=noPaintedTile;})) {
@@ -357,6 +360,10 @@ Image &lumpImage(int lump,bool flat) {
         std::vector<byte> frame;auto glass=screenGlass(name,true,64,64,pixels.data(),frame);
         // Animated flats (liquids, lights) change their tiles every frame.
         int next;bool animated=P_PicAnimationNext(false,lump-firstflat,&next)>0;
+        // Ice: its painted streaks cut grooves twice as deep, in a smooth,
+        // glassy surface; no crooked tiles.
+        if(Game_IceFlat(name))
+            return withRelief(images.emplace(key,upload(64,64,pixels.data(),0,0,nullptr,nullptr,nullptr,true)).first->second,nullptr,2.0f,true);
         return withRelief(withGlassFrame(speckledPanel(images.emplace(key,upload(64,64,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
             glass.empty()?nullptr:glass.data(),true)).first->second,name,true),frame),animated?nullptr:flatTiles);
     }

@@ -101,11 +101,11 @@ void P_UpdateBeak(player_t *player, pspdef_t *psp);
 // ***** P_USER *****
 
 void P_PlayerThink(player_t *player);
-// DTD: view pitch in radians, written by the 3D renderer's mouselook, and
+// DERP: view pitch in radians, written by the 3D renderer's mouselook, and
 // whether mouselook is on. Heretic's own look keys still use lookdir.
 extern float tourpitch;
 extern boolean freeaim;
-// DTD: level-checking cheats (F5 menu), as in the DOOM program. Flying
+// DERP: level-checking cheats (F5 menu), as in the DOOM program. Flying
 // follows the look direction (E/Q rise and sink); god mode and flight also
 // ignore special sectors. They outlive map changes, unlike player->cheats.
 extern boolean debugfly, debugnoclip, debuggod, debugnomonsters, debugnotarget;

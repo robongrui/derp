@@ -7,7 +7,7 @@
 #define __DOOMDEF__
 #include <stdio.h>
 #include <string.h>
-// DTD: the portable file APIs, types, byte order, zone and WAD code are
+// DERP: the portable file APIs, types, byte order, zone and WAD code are
 // shared with the DOOM program (linuxdoom-1.10/).
 #include <stdlib.h>
 #ifdef _WIN32
@@ -247,7 +247,7 @@ typedef struct mobj_s
 	int				damage;			// For missiles
 	int				flags;
 	int				flags2;			// Heretic flags
-	intptr_t		special1;		// Special info (DTD: also holds mobj pointers)
+	intptr_t		special1;		// Special info (DERP: also holds mobj pointers)
 	intptr_t		special2;		// Special info
 	int				health;
 	int				movedir;		// 0-7
@@ -689,7 +689,7 @@ extern int rndindex;
 extern int gametic, maketic;
 extern	int        	nettics[MAXNETNODES];
 
-// DTD: 64-bit mobjs are larger than DOS ones; 4 MB, checked in SV_Write.
+// DERP: 64-bit mobjs are larger than DOS ones; 4 MB, checked in SV_Write.
 #define SAVEGAMESIZE 0x400000
 #define SAVESTRINGSIZE 24
 extern byte *savebuffer;
@@ -733,7 +733,7 @@ fixed_t	FixedMul (fixed_t a, fixed_t b);
 fixed_t	FixedDiv (fixed_t a, fixed_t b);
 fixed_t	FixedDiv2 (fixed_t a, fixed_t b);
 
-#if 0 // DTD: Watcom inline assembly; linuxdoom-1.10/m_fixed.c has the C versions.
+#if 0 // DERP: Watcom inline assembly; linuxdoom-1.10/m_fixed.c has the C versions.
 #pragma aux FixedMul =	\
 	"imul ebx",			\
 	"shrd eax,edx,16"	\
@@ -899,7 +899,7 @@ void G_DeathMatchSpawnPlayer (int playernum);
 void G_InitNew (skill_t skill, int episode, int map);
 
 void G_DeferedInitNew (skill_t skill, int episode, int map);
-boolean G_StepMap (int step, int *episode, int *map); // DTD
+boolean G_StepMap (int step, int *episode, int *map); // DERP
 // can be called by the startup code or M_Responder
 // a normal game starts at map 1, but a warp test can start elsewhere
 

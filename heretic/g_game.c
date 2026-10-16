@@ -1531,7 +1531,7 @@ void G_DeferedInitNew (skill_t skill, int episode, int map)
 	gameaction = ga_newgame;
 }
 
-// DTD: the next or previous map that exists (the F5 menu's map picker and
+// DERP: the next or previous map that exists (the F5 menu's map picker and
 // its in-game keys), wrapping around the episodes.
 boolean G_StepMap (int step, int *episode, int *map)
 {
@@ -1903,7 +1903,7 @@ void G_DoSaveGame(void)
 
 void SV_Open(char *fileName)
 {
-	// DTD: the zone grows as needed, so the buffer is always allocated.
+	// DERP: the zone grows as needed, so the buffer is always allocated.
 	save_p = savebuffer = Z_Malloc(SAVEGAMESIZE, PU_STATIC, NULL);
 	if(savebuffer == NULL)
 	{ // Not enough memory - use file save method

@@ -104,12 +104,15 @@ int Game_Sprite(game_sprite_role role)
 }
 
 /* No glass in the windows, nothing to shoot out (torches and gems aren't
-   bulbs), and no flashlight: the Torch item is Heretic's light. */
+   bulbs), and no flashlight: the Torch item is Heretic's light. No made-up
+   wind either: Heretic places its own wind sounds (MT_SOUNDWIND), and what
+   the game has itself wins. */
 int Game_HasEffect(game_effect effect)
 {
     switch (effect)
     {
-    case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT: return 0;
+    case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT:
+    case GAME_EFFECT_WIND: return 0;
     }
     return 1;
 }
@@ -133,6 +136,28 @@ void Game_Sun(game_sun *sun) { *sun = (game_sun){ 1, 0.4f, 0.3f, 0.6f, 1 }; }
 
 /* Heretic's pools are clear and still: a fantasy mirror, not sewage. */
 float Game_WaterClarity(void) { return 1; }
+
+/* Heretic's palette has its own ramps, and its grey is mostly stone. */
+int Game_SurfaceGloss(void) { return 1; }
+
+/* Specials 40-51 (P_XYMovement): east, north, south, west, each light,
+   medium and strong, as windTab's 5, 10 and 25 thrust. */
+int Game_SectorWind(int special, float *east, float *north)
+{
+    static const float speed[3] = { 40, 80, 200 };
+    float s;
+    *east = *north = 0;
+    if (special < 40 || special > 51) return 0;
+    s = speed[(special - 40) % 3];
+    switch ((special - 40) / 3)
+    {
+    case 0: *east = s; break;
+    case 1: *north = s; break;
+    case 2: *north = -s; break;
+    default: *east = -s; break;
+    }
+    return 1;
+}
 
 /* The chandeliers' candles, the serpent torches' flames and the glowing
    orbs over the key statues; wall torches and braziers are fullbright. */

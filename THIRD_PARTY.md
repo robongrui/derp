@@ -1,6 +1,6 @@
 # Third-party code and data
 
-Duct-Tape DOOM is licensed under the GNU General Public License, version 3
+DERP is licensed under the GNU General Public License, version 3
 ([`LICENSE.TXT`](LICENSE.TXT)), with the attribution term in
 [`NOTICE.txt`](NOTICE.txt). This file lists everything in the game that
 comes from elsewhere, and its license.
@@ -33,12 +33,12 @@ and the community has read the release as "version 2 or later" since 2008:
 the idgames description of the archive carries the "either version 2 of the
 License, or (at your option) any later version" notice, Chocolate Doom's
 Heretic and Hexen code is published under that notice, and GZDoom ships
-Raven-derived code under GPL 3. Duct-Tape DOOM follows that reading and uses
+Raven-derived code under GPL 3. DERP follows that reading and uses
 the Heretic source under GPL 3.
 
 **SDL, Nuked OPL3, TinySoundFont and GeneralUser GS** are not in this
 repository; CMake downloads the pinned versions while building. Each release
-has a `DuctTapeDOOM-source.tar.gz` with this repository and the exact library
+has a `DERP-source.tar.gz` with this repository and the exact library
 sources and SoundFont the downloads were built from, so the game, with or
 without changes to those libraries, can be rebuilt without an internet
 connection (see `dependencies/README.txt` inside it).

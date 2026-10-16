@@ -686,7 +686,7 @@ void TryRunTics (void)
 		counts = realtics;
 	else
 		counts = availabletics;
-	// DTD: with frames between tics, return to draw one instead of waiting.
+	// DERP: with frames between tics, return to draw one instead of waiting.
 	if (r_uncapped && !netgame && availabletics < 1)
 		return;
 	if (counts < 1)

@@ -59,7 +59,11 @@ layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // blend: the crossfade toward the animation's next frame. weaponProbe, for
 // the relit weapon only: what it sees ahead, behind, right, left, up and
 // down in the view's frame (rgb; weaponProbe in scene3d/weapon.cpp).
-layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; };
+// frameMean, cycleMean: a liquid flat's average color at this crossfade and
+// over its whole animation; cycleMean.a is the contrast it keeps far away,
+// 0 for everything that is not a liquid (surfaceBinding in scene3d/scene.cpp).
+// frameMean.a is 1 on ice floors (iceFlat): deep grooves, glassy shine.
+layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 frameMean; vec4 cycleMean; };
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
 #include "indexed.glsl"
@@ -142,6 +146,17 @@ void main() {
     else color=surfaceTexture(image,uv,texelPixel,lod);
     // Animated flats and walls crossfade toward their next frame.
     if(blend>0.0) color=mix(color,surfaceTexture(nextImage,uv,texelPixel,lod),blend);
+    // Big pools: with distance the liquid's artwork fades into detail on a
+    // steady average color, its contrast kept down to cycleMean.a, so far
+    // water reads as one body instead of a tiled floor and no longer pulses
+    // as the frames change. Grazing views fade it sooner. poolTone varies
+    // the whole body a little across calm and rough stretches.
+    if(!sprite&&cycleMean.a>0.0&&c.effects.z==0.0) {
+        float facing=abs(normalize(c.eye.xyz-vWorld).z);
+        float reach=vDistance*mix(2.5,1.0,saturate(facing*2.5));
+        float detail=mix(1.0,cycleMean.a,smoothstep(192.0,1024.0,reach));
+        color.rgb=max(cycleMean.rgb+(color.rgb-frameMean.rgb)*detail,vec3(0))*poolTone(vWorld.xy);
+    }
     if(color.a<0.45) discard;
 #ifdef COVERAGE
     // Depth comes from the rasterizer, per sample like the shading pass.
@@ -202,6 +217,13 @@ void main() {
             specular+=vec3(round(edge*saturate(dot(illumination,vec3(0.299,0.587,0.114)))*0.45*16.0)/16.0);
         }
     }
+    // FEATURE_GLOW_EDGES: walls at a glowing liquid's edge take its painted
+    // strip (edgeStrip in world/shore.glsl), glowing where the strip does.
+    float edgeGlow=0.0;
+    if(mapped&&(bakeFlags&FEATURE_GLOW_EDGES)!=0u&&abs(normal.z)<=0.5) {
+        vec3 paint;float amount=edgeStrip(vWorld,normal,paint,edgeGlow);
+        color.rgb=mix(color.rgb,paint,amount);
+    }
     float emission=0.0;
     // MODE_GLOWING_EYES: a monster's painted eyes shine a little past full
     // brightness whatever light falls on it.
@@ -222,6 +244,7 @@ void main() {
             if(!glassy) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114))*0.15),emission);
             emission=0.0;
         }
+        emission=max(emission,edgeGlow);
         illumination=max(illumination,vec3(emission));
     }
     // FEATURE_DAMP_SHORES: damp walls and banks above liquids (shoreWet), darker and

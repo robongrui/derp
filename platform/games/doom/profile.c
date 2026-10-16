@@ -94,6 +94,10 @@ void Game_Sun(game_sun *sun) { *sun = (game_sun){ 0, 0.3f, 0, 0.3f, 0 }; }
 
 float Game_WaterClarity(void) { return 0; }
 
+int Game_SurfaceGloss(void) { return 0; }
+
+int Game_SectorWind(int special, float *east, float *north) { (void)special; *east = *north = 0; return 0; }
+
 /* DOOM's light amplification visor is a colormap, not a flame. */
 int Game_Torch(float *flame) { *flame = 0; return 0; }
 

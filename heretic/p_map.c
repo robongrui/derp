@@ -56,7 +56,7 @@ line_t		*ceilingline;
 
 // keep track of special lines as they are hit, but don't process them
 // until the move is proven valid
-// DTD: grows on demand; vanilla's 8 entries overflowed into other globals.
+// DERP: grows on demand; vanilla's 8 entries overflowed into other globals.
 line_t	**spechit;
 int			 numspechit;
 static int	maxspechit;
@@ -1270,7 +1270,7 @@ boolean		PTR_ShootTraverse (intercept_t *in)
 				goto hitline;
 		}
 
-		// DTD: the accelerated renderer breaks window glass the shot crosses.
+		// DERP: the accelerated renderer breaks window glass the shot crosses.
 		if (R_ShotPassed)
 			R_ShotPassed (li, trace.x + FixedMul (trace.dx, in->frac),
 				trace.y + FixedMul (trace.dy, in->frac),
@@ -1295,7 +1295,7 @@ hitline:
 		}
 				
 		P_SpawnPuff (x,y,z);
-		// DTD: wall marks and sparks in the accelerated renderer.
+		// DERP: wall marks and sparks in the accelerated renderer.
 		if (R_WallImpact)
 			R_WallImpact (li, P_PointOnLineSide (trace.x, trace.y, li), x, y, z);
 		return false;			// don't go any farther
@@ -1349,7 +1349,7 @@ hitline:
 		if(!(in->d.thing->flags&MF_NOBLOOD) && P_Random() < 192)
 		{
 			P_BloodSplatter(x, y, z, in->d.thing);
-			// DTD: blood on walls and floors in the accelerated renderer.
+			// DERP: blood on walls and floors in the accelerated renderer.
 			if (R_BloodHit)
 				R_BloodHit (th, x, y, z, trace.dx, trace.dy, la_damage);
 		}

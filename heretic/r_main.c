@@ -15,9 +15,9 @@ int			viewangleoffset;
 int newViewAngleOff;
 #endif
 
-// DTD: counts level loads, so the platform code knows when to rebuild.
+// DERP: counts level loads, so the platform code knows when to rebuild.
 unsigned	r_levelserial;
-// DTD: the accelerated renderer's hooks (r_local.h); null for the classic one.
+// DERP: the accelerated renderer's hooks (r_local.h); null for the classic one.
 void (*R_AcceleratedView)(player_t *player);
 void (*R_BeforeTic)(void);
 void (*R_MuzzleFlash)(mobj_t *source, int weapon, int projectile);

@@ -16,7 +16,7 @@ FogLights fogLights;
 std::vector<LightBlocker> lightBlockers;
 std::unordered_map<int,Image> images;
 std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches,mirrorBatches;
-std::vector<Vertex> mistVertices,particleVertices,heatVertices,skyVertices,shaftVertices;
+std::vector<Vertex> mistVertices,particleVertices,crestVertices,heatVertices,skyVertices,shaftVertices;
 GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 GpuTextureRef wallDirectionTexture,flatDirectionTexture;
 float reflectionPlane=0;
@@ -157,6 +157,23 @@ static void planStages(bool level) {
     planLoading(LoadStage::Ambient,(settings.skyLight||settings.bakedAO)&&(level||ambientKey!=bakeThingsKey));
     planLoading(LoadStage::Flow,settings.lightFlow&&(level||flowKey!=flowInputs()));
 }
+// What frameMean's alpha tells surfaceLight about a texture's material:
+// 0 DOOM's palette ramps, 1 ice (iceFlat); with Game_SurfaceGloss, 2 a
+// sprite (judged by colour alone), else 3 + its game_surface.
+static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2&&GAME_SURFACE_FLESH==3&&GAME_SURFACE_SOIL==4&&GAME_SURFACE_LIQUID==5,
+              "materialGloss in world/surface.glsl numbers the surfaces");
+static float surfaceMaterial(int key,int pic,bool flat) {
+    if(flat&&iceFlat(pic))return 1;
+    if(!Game_SurfaceGloss())return 0;
+    static std::unordered_map<int,float> known;
+    auto found=known.find(key);
+    if(found!=known.end())return found->second;
+    float material=2;
+    char name[9]={};
+    if(key>=0) {R_TextureName(key,name);material=3+(float)Game_WallSurface(name);}
+    else if(flat) {memcpy(name,lumpinfo[firstflat+pic].name,8);material=3+(float)Game_FlatSurface(name);}
+    return known[key]=material;
+}
 // Binds a batch texture with its next animation frame and crossfade amount.
 // The engine switches frames before leveltime++, so the phase uses leveltime-1.
 SurfaceBinding surfaceBinding(int key) {
@@ -173,7 +190,28 @@ SurfaceBinding surfaceBinding(int key) {
             }
         }
     }
-    return {&image,next,blend};
+    SurfaceBinding binding={&image,next,blend};
+    binding.frameMean[3]=surfaceMaterial(key,pic,flat);
+    float floor=flat?liquidDetailFloor(pic):0;
+    if(floor>0) {
+        // The frames' average at the crossfade, and the average over the
+        // whole cycle, which stays put as the frames change.
+        const auto &a=averageColor(image),&b=averageColor(const_cast<Image&>(*next));
+        std::array<float,3> cycle={};int frames=0;
+        for(int at=pic,n=0;n<64;++n) {
+            const auto &mean=averageColor(lumpImage(firstflat+at,true));
+            for(int c=0;c<3;++c)cycle[c]+=mean[c];
+            ++frames;int following;
+            if(P_PicAnimationNext(false,at,&following)<=0||following==pic)break;
+            at=following;
+        }
+        for(int c=0;c<3;++c) {
+            binding.frameMean[c]=a[c]+(b[c]-a[c])*blend;
+            binding.cycleMean[c]=cycle[c]/frames;
+        }
+        binding.cycleMean[3]=floor;
+    }
+    return binding;
 }
 void screenQuad(std::vector<Vertex> &out,float x,float y,float w,float h,float u0,float v0,float u1,float v1,float light,unsigned mode) {
     quad(out,{x,y,0,u0,v0,light,mode},{x+w,y,0,u1,v0,light,mode},
@@ -220,7 +258,8 @@ FrameView prepareFrame(int w,int h) {
         (settings.detail&&settings.variedHighlights?FEATURE_VARIED_HIGHLIGHTS:0)|
         (settings.windowLight&&bakedLightsActive?FEATURE_WINDOW_LIGHT:0)|
         (settings.detail&&settings.unevenTiles?FEATURE_UNEVEN_TILES:0)|(settings.detail&&settings.unevenWalls?FEATURE_UNEVEN_WALLS:0)|
-        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0)|(settings.stippledShadows?FEATURE_STIPPLED_SHADOWS:0);
+        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0)|(settings.stippledShadows?FEATURE_STIPPLED_SHADOWS:0)|
+        (settings.glowEdges&&shoreTexture&&causticPattern?FEATURE_GLOW_EDGES:0);
     camera.flashlightTint[3]=(float)features; // see shaders/feature_flags.h
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;

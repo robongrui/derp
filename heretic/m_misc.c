@@ -373,7 +373,7 @@ typedef struct
 	int     defaultvalue;
 	int     scantranslate;      // PC scan code hack
 	int     untranslated;       // lousy hack
-	char    **string_location;  // DTD: string settings, instead of a pointer in an int
+	char    **string_location;  // DERP: string settings, instead of a pointer in an int
 	char    *defaultstring;
 } default_t;
 
@@ -437,7 +437,7 @@ default_t defaults[] =
 	{ "key_speed", &key_speed, SC_RSHIFT, 1 },
 #endif
 
-// DTD: Raven's NeXT table, with DTD's DOOM layout for moving (WASD, use on
+// DERP: Raven's NeXT table, with DERP's DOOM layout for moving (WASD, use on
 // space, fire on Ctrl). Without it only the DOS build bound any keys.
 #ifndef __WATCOMC__
 	{ "key_right", &key_right, KEY_RIGHTARROW },

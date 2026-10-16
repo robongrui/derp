@@ -397,7 +397,7 @@ void P_LoadBlockMap (int lump)
 	
 	int16_t	*data;
 
-	// DTD: widened to 32 bits like DOOM's; offsets and line numbers are
+	// DERP: widened to 32 bits like DOOM's; offsets and line numbers are
 	// unsigned, and 0xffff ends a list.
 	data = W_CacheLumpNum (lump,PU_STATIC);
 	count = W_LumpLength (lump)/2;

@@ -36,6 +36,7 @@ game_liquid Game_LiquidFlat(const char *name)
     return GAME_LIQUID_NONE;
 }
 
+int Game_IceFlat(const char *name) { (void)name; return 0; }
 int Game_HotFlat(const char *name) { return !strncmp(name, "LAVA", 4); }
 
 int Game_DamagingFloor(int special)

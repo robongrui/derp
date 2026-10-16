@@ -457,6 +457,7 @@ void geometry(const Uniforms &camera,float fraction) {
     buildBlood(camera);
     buildHeat(camera);
     buildDust(camera);
+    buildEmbers(camera);
     buildBubbles(camera);
 }
 } // namespace doom3d

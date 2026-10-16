@@ -929,7 +929,7 @@ void A_StaffAttackPL2(player_t *player, pspdef_t *psp)
 
 void A_FireBlasterPL1(player_t *player, pspdef_t *psp)
 {
-	// DTD: light from the shot in the accelerated renderer.
+	// DERP: light from the shot in the accelerated renderer.
 	if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 	mobj_t *mo;
 	angle_t angle;
@@ -978,7 +978,7 @@ void A_FireBlasterPL2(player_t *player, pspdef_t *psp)
 
 void A_FireGoldWandPL1(player_t *player, pspdef_t *psp)
 {
-	// DTD: light from the shot in the accelerated renderer.
+	// DERP: light from the shot in the accelerated renderer.
 	if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 	mobj_t *mo;
 	angle_t angle;
@@ -1006,7 +1006,7 @@ void A_FireGoldWandPL1(player_t *player, pspdef_t *psp)
 
 void A_FireGoldWandPL2(player_t *player, pspdef_t *psp)
 {
-	// DTD: light from the shot in the accelerated renderer.
+	// DERP: light from the shot in the accelerated renderer.
 	if (R_MuzzleFlash) R_MuzzleFlash(player->mo, player->readyweapon, -1);
 	int i;
 	mobj_t *mo;

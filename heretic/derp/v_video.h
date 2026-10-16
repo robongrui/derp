@@ -1,6 +1,6 @@
-/* DTD: DOOM's v_video.h for the shared platform code (heretic/v_video.c). */
-#ifndef DTD_HERETIC_V_VIDEO_H
-#define DTD_HERETIC_V_VIDEO_H
+/* DERP: DOOM's v_video.h for the shared platform code (heretic/v_video.c). */
+#ifndef DERP_HERETIC_V_VIDEO_H
+#define DERP_HERETIC_V_VIDEO_H
 #include "doomdef.h"
 // screens[0] is Heretic's screen buffer.
 extern byte *screens[1];

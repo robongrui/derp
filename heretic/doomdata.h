@@ -132,12 +132,12 @@ typedef struct
 	int32_t		masked;	
 	short		width;
 	short		height;
-	int32_t		columndirectory;	// OBSOLETE (DTD: 4 bytes on disk, not a pointer)
+	int32_t		columndirectory;	// OBSOLETE (DERP: 4 bytes on disk, not a pointer)
 	short		patchcount;
 	mappatch_t	patches[1];
 } maptexture_t;
 
-// DTD: the C++ renderer includes this header too.
+// DERP: the C++ renderer includes this header too.
 #ifdef __cplusplus
 static_assert(sizeof(mappatch_t) == 10, "WAD texture patch layout");
 static_assert(offsetof(maptexture_t, patches) == 22, "WAD texture header layout");

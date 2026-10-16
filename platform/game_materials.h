@@ -20,6 +20,8 @@ int Game_ScreenTexture(const char *name, int flat);
    bubbles and goo. Only flats the engine animates count as liquid. */
 typedef enum { GAME_LIQUID_NONE, GAME_LIQUID_WATER, GAME_LIQUID_THICK } game_liquid;
 game_liquid Game_LiquidFlat(const char *name);
+/* Ice floors: smooth and glassy, their painted streaks cut deep grooves. */
+int Game_IceFlat(const char *name);
 /* Floors hot enough for heat haze. */
 int Game_HotFlat(const char *name);
 /* Sector specials that hurt whoever stands there (toxic mist). */

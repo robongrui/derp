@@ -61,7 +61,7 @@ void P_AddAmbientSfx(int sequence);
 
 // every tic
 void P_UpdateSpecials(void);
-int P_PicAnimationNext(boolean istexture, int pic, int *next);	// DTD
+int P_PicAnimationNext(boolean istexture, int pic, int *next);	// DERP
 void P_AmbientSound(void);
 
 // when needed
@@ -241,7 +241,7 @@ void	P_ActivateInStasis(int tag);
 */
 typedef enum
 {
-	// DTD: prefixed; "open" and "close" clash with the POSIX functions.
+	// DERP: prefixed; "open" and "close" clash with the POSIX functions.
 	vld_normal,
 	vld_close30ThenOpen,
 	vld_close,

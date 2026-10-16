@@ -170,6 +170,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     [](const Settings &d){return d.sun!=0&&d.sunShafts!=0;}),
                 check("sun_disc","Sun in the sky",&s.sunDisc,"A faint sun disc and soft glow where the baked sunlight comes from, over the sky texture's brightest part."),
                 check("dust_motes","Dust motes",&s.dust,"Specks that glint in indoor sunbeams and the flashlight beam."),
+                check("embers","Embers",&s.embers,"A few sparks rise from torches and fires and cool as they climb; where the game's wind blows, it carries them off."),
                 check("heat_haze","Heat haze",&s.heatHaze,"Rows of pixels shimmer above lava, hot damaging floors and flames.")}},
             {"Combat",{
                 check("blood","Blood splats and pools",&s.blood,
@@ -219,6 +220,12 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("damp_shores","Damp shores",&s.dampShores,
                     "Walls and banks just above water, nukage, slime and blood turn darker and damp up to a ragged line, "
                     "a little stained by the liquid. Lava stays dry."),
+                check("glow_edges","Glowing liquid edges",&s.glowEdges,
+                    "Walls running straight into nukage, slime or lava take the glowing strip the game paints on its own edge textures, "
+                    "like the NUKE24 steps, instead of only the walls a mapper gave that texture."),
+                check("shore_ripples","Shore ripples",&s.shoreRipples,
+                    "Liquids ripple where they meet walls, like the splash rings running along the shore: quick thin lines on water, "
+                    "slow broad ones on nukage and slime, slow glowing ones on lava, a still dark line on blood."),
                 check("splashes","Splashes",&s.splashes,"Ripple rings where things land, wade or are shot in liquids, and spouts where shots and projectiles hit them. "
                     "Things standing in liquids sink in; nukage, slime, blood and lava splash thick and bubble.")}}}},
         {"Sound",{

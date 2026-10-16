@@ -124,7 +124,7 @@ void P_RecursiveSound(sector_t *sec, int soundblocks)
 void P_NoiseAlert(mobj_t *target, mobj_t *emmiter)
 {
 	if(P_Unseen(target))
-	{ // DTD: the F5 menu's "no target"
+	{ // DERP: the F5 menu's "no target"
 		return;
 	}
 	soundtarget = target;
@@ -326,7 +326,7 @@ void P_NewChaseDir (mobj_t *actor)
 {
 	fixed_t		deltax,deltay;
 	dirtype_t	d[3];
-	// DTD: tdir is an int so the countdown below can pass DI_EAST; Watcom's
+	// DERP: tdir is an int so the countdown below can pass DI_EAST; Watcom's
 	// enums were signed, clang's enum here is unsigned and never got there.
 	int			tdir;
 	dirtype_t	olddir, turnaround;
@@ -524,7 +524,7 @@ boolean P_LookForPlayers(mobj_t *actor, boolean allaround)
 		if (player->health <= 0)
 			continue;		// dead
 		if (P_Unseen (player->mo))
-			continue;		// DTD: the F5 menu's "no target"
+			continue;		// DERP: the F5 menu's "no target"
 		if (!P_CheckSight (actor, player->mo))
 			continue;		// out of sight
 			
@@ -690,7 +690,7 @@ void A_Chase(mobj_t *actor)
 	}
 
 	if(P_Unseen(actor->target))
-	{ // DTD: forget a player who turned on "no target"
+	{ // DERP: forget a player who turned on "no target"
 		actor->target = NULL;
 	}
 	if(!actor->target || !(actor->target->flags&MF_SHOOTABLE))

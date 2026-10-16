@@ -26,11 +26,11 @@ byte gammatable[5][256] =
 
 extern byte *tinttable;
 
-// DTD: patches are clipped to the screen instead of stopping the game with
+// DERP: patches are clipped to the screen instead of stopping the game with
 // "Bad V_DrawPatch"; the 2025 IWAD has graphics wider than 320.
 enum { DRAW_SOLID, DRAW_FUZZ, DRAW_SHADOW };
 
-// DTD: DOOM's names the shared platform code reads. screens[0] is the screen
+// DERP: DOOM's names the shared platform code reads. screens[0] is the screen
 // buffer; while the accelerated renderer draws the view, patches mark the
 // pixels they cover so the 2D overlay goes over the 3D picture.
 byte *screens[1];

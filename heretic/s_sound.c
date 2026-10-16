@@ -10,7 +10,7 @@
 #include "i_sound.h"
 #include "soundst.h"
 
-// DTD: DMX took volumes 0-127; DTD's mixer takes DOOM's 0-15 effects scale.
+// DERP: DMX took volumes 0-127; DERP's mixer takes DOOM's 0-15 effects scale.
 #define MIXER_VOLUME(v) (((v)+4)>>3)
 
 boolean S_StopSoundID(int sound_id, int priority);
@@ -113,7 +113,7 @@ void S_StartSound(mobj_t *origin, int sound_id)
 	{
 		origin = players[consoleplayer].mo;
 	}
-	// DTD: on the title screen and between levels there is no player to
+	// DERP: on the title screen and between levels there is no player to
 	// hear from, and DOS read the null pointer's memory instead of crashing.
 	// Those sounds come from the listener, like menu sounds.
 	if(origin == NULL || players[consoleplayer].mo == NULL)
@@ -245,7 +245,7 @@ void S_StartSound(mobj_t *origin, int sound_id)
 	}
 	else
 	{
-		// DTD: panned from the origin; Raven read channel[i].mo here, which
+		// DERP: panned from the origin; Raven read channel[i].mo here, which
 		// is the channel's previous sound and is often null.
 		angle = R_PointToAngle2(players[consoleplayer].mo->x,
 			players[consoleplayer].mo->y, origin->x, origin->y);
@@ -450,12 +450,12 @@ void S_UpdateSounds(mobj_t *listener)
 	{
 		return;
 	}
-	// DTD: nothing to place sounds around until a level has a player.
+	// DERP: nothing to place sounds around until a level has a player.
 	if(listener == NULL)
 	{
 		return;
 	}
-	// DTD: no purging of unused sounds; the mixer keeps every effect it
+	// DERP: no purging of unused sounds; the mixer keeps every effect it
 	// loaded at startup, so their lumps must stay in the zone.
 	for(i=0;i<snd_Channels;i++)
 	{
@@ -522,7 +522,7 @@ void S_UpdateSounds(mobj_t *listener)
 void S_Init(void)
 {
 	soundCurve = Z_Malloc(MAX_SND_DIST, PU_STATIC, NULL);
-	// DTD: I_Init (platform/i_portable_system.c) started the sound device.
+	// DERP: I_Init (platform/i_portable_system.c) started the sound device.
 	if(snd_Channels > 8)
 	{
 		snd_Channels = 8;
@@ -587,7 +587,7 @@ void S_SetMusicVolume(void)
 
 void S_ShutDown(void)
 {
-	// DTD: I_Quit and I_Error shut the sound device down.
+	// DERP: I_Quit and I_Error shut the sound device down.
 	I_StopSong(rs);
 	I_UnRegisterSong(rs);
 }

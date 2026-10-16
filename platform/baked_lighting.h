@@ -225,6 +225,10 @@ inline float addBakedArea(const BakeMap &map,const BakeArea &area,int sector,flo
             for(float &c:v)c/=std::max(length,0.001f);
             if(length>0.5f&&!traceRay(map,sector,x,y,z,v,length-0.5f,SkyCeiling::open))continue;
         } else d[0]=d[1]=0,d[2]=area.ceiling?-1.0f:1.0f;
+        // A wall sees the pool over at most half its view, so it never takes
+        // more than half of what the pool's own surface does: at a rim it
+        // would otherwise glow brighter than the nukage lighting it.
+        if(normal&&std::fabs(normal[2])<=0.5f)amount=std::min(amount,area.strength*0.5f);
         for(int c=0;c<3;++c)out[c]+=area.color[c]*amount*facing;
         if(direction)for(int c=0;c<3;++c)direction[c]=d[c];
         if(inside)*inside=plane<=0.001f;

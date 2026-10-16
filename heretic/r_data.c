@@ -40,7 +40,7 @@ int			*texturewidthmask;
 fixed_t		*textureheight;		// needed for texture pegging
 int			*texturecompositesize;
 short		**texturecolumnlump;
-uint32_t		**texturecolumnofs;	// DTD: 32-bit, for composites past 64k
+uint32_t		**texturecolumnofs;	// DERP: 32-bit, for composites past 64k
 byte		**texturecomposite;
 
 int			*flattranslation;		// for global animation
@@ -232,7 +232,7 @@ void R_GenerateLookup (int texnum)
 		{
 			collump[x] = -1;	// use the cached block
 			colofs[x] = texturecompositesize[texnum];
-			// DTD: no 64k limit; the 2025 IWAD has larger multi-patch textures.
+			// DERP: no 64k limit; the 2025 IWAD has larger multi-patch textures.
 			texturecompositesize[texnum] += texture->height;
 		}
 	}	
@@ -535,7 +535,7 @@ void R_InitData (void)
 ================
 */
 
-// DTD: a flat by name within F_START..F_END only, so a same-named patch or
+// DERP: a flat by name within F_START..F_END only, so a same-named patch or
 // sound elsewhere in the WADs is never taken for it.
 int	R_CheckFlatNumForName (char *name)
 {
@@ -559,7 +559,7 @@ int	R_FlatNumForName (char *name)
 	return i;
 }
 
-// DTD: texture access for the accelerated renderer and the sound code.
+// DERP: texture access for the accelerated renderer and the sound code.
 void R_TextureDimensions(int texture, int *width, int *height)
 {
 	if (texture < 0 || texture >= numtextures) I_Error("Invalid GPU texture");

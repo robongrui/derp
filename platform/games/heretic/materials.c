@@ -42,6 +42,8 @@ game_liquid Game_LiquidFlat(const char *name)
     return GAME_LIQUID_NONE;
 }
 
+/* FLAT517: the Ice Grotto's blue ice floor (E2M4, E2M9...). */
+int Game_IceFlat(const char *name) { return !strcmp(name, "FLAT517"); }
 int Game_HotFlat(const char *name) { return starts(name, "FLTLAVA") || starts(name, "FLATHUH"); }
 
 /* Damage_LavaWimpy, Damage_LavaHefty, Scroll_EastLavaDamage, Damage_Sludge. */
@@ -102,10 +104,10 @@ int Game_AmbientFlat(const char *name, int ceiling)
     return -1;
 }
 
-/* Waterfalls pour, lava falls roar, LAVA1 ticks; the gems are silent. */
+/* Lava falls roar, LAVA1 ticks; the gems are silent. Waterfalls have their
+   own sound in Heretic (MT_SOUNDWATERFALL things), so they get none here. */
 int Game_AmbientWall(const char *name)
 {
-    if (starts(name, "WATRWAL")) return AMBIENT_SLIMEFALL;
     if (starts(name, "LAVAFL")) return AMBIENT_FIRE;
     if (!strcmp(name, "LAVA1")) return AMBIENT_MAGMA;
     return -1;

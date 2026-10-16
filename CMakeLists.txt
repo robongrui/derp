@@ -120,7 +120,7 @@ target_sources(doom_game INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/d
     "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/materials.c")
 target_link_libraries(doom_game INTERFACE doom_core)
 
-# Heretic: Raven's game code (heretic/), with heretic/dtd/ answering the
+# Heretic: Raven's game code (heretic/), with heretic/derp/ answering the
 # DOOM headers the shared platform code includes.
 set(HERETIC_SOURCES
     heretic/am_map.c heretic/ct_chat.c heretic/d_main.c heretic/d_net.c heretic/f_finale.c
@@ -134,7 +134,7 @@ set(HERETIC_SOURCES
 )
 add_library(heretic_core STATIC ${HERETIC_SOURCES})
 target_include_directories(heretic_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/heretic"
-    "${CMAKE_CURRENT_SOURCE_DIR}/heretic/dtd")
+    "${CMAKE_CURRENT_SOURCE_DIR}/heretic/derp")
 target_link_libraries(heretic_core PUBLIC doom_options doom_engine)
 if(NOT MSVC)
     # Raven's code as released: K&R-style declarations and DOS-era casts.
@@ -150,7 +150,7 @@ endif()
 add_library(heretic_game INTERFACE)
 target_sources(heretic_game INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/heretic/profile.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/heretic/materials.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/heretic/i_dtd.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/heretic/i_derp.c")
 target_link_libraries(heretic_game INTERFACE heretic_core)
 
 # A complete link of the engine without graphics/audio dependencies.
@@ -255,6 +255,8 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/glass_light.cpp
         platform/scene3d/blood.cpp
         platform/scene3d/caustics.cpp
+        platform/scene3d/liquid_edges.cpp
+        platform/scene3d/embers.cpp
         platform/scene3d/config.cpp
         platform/scene3d/exposure.cpp
         platform/scene3d/geometry.cpp
@@ -314,6 +316,8 @@ if(DOOM_BUILD_SDL)
         target_sources(doom PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm)
         set_source_files_properties(platform/i_wad_launcher.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-D_DARWIN_C_SOURCE")
         target_link_libraries(doom PRIVATE "-framework AudioToolbox" "-framework CoreFoundation" "-framework Cocoa")
+        # The identifier keeps the project's old name: changing it would make
+        # macOS treat the app as new and forget the launcher's WAD folder.
         set_target_properties(doom PROPERTIES
             OUTPUT_NAME "Play DOOM"
             OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES
@@ -344,27 +348,27 @@ if(DOOM_BUILD_SDL)
         add_custom_command(TARGET doom POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DOOM_GAME_DATA}" "$<TARGET_FILE_DIR:doom>/default.wad")
     endif()
-    # The Heretic program: dtd-heretic -iwad heretic.wad
-    add_executable(dtd-heretic platform/sdl_main.c platform/i_sdl_video.c
+    # The Heretic program: derp-heretic -iwad heretic.wad
+    add_executable(derp-heretic platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
-    target_link_libraries(dtd-heretic PRIVATE heretic_game SDL3::SDL3 doom_music)
-    target_compile_definitions(dtd-heretic PRIVATE DOOM_NATIVE)
-    doom_add_renderer(dtd-heretic ${DOOM_RENDER3D})
+    target_link_libraries(derp-heretic PRIVATE heretic_game SDL3::SDL3 doom_music)
+    target_compile_definitions(derp-heretic PRIVATE DOOM_NATIVE)
+    doom_add_renderer(derp-heretic ${DOOM_RENDER3D})
     if(APPLE)
-        target_sources(dtd-heretic PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm)
-        target_link_libraries(dtd-heretic PRIVATE "-framework AudioToolbox" "-framework CoreFoundation" "-framework Cocoa")
-        set_target_properties(dtd-heretic PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES)
-        # One app plays both: the launcher hands Heretic WADs to dtd-heretic
+        target_sources(derp-heretic PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm)
+        target_link_libraries(derp-heretic PRIVATE "-framework AudioToolbox" "-framework CoreFoundation" "-framework Cocoa")
+        set_target_properties(derp-heretic PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES)
+        # One app plays both: the launcher hands Heretic WADs to derp-heretic
         # beside Play DOOM in Contents/MacOS (sdl_main.c).
-        add_dependencies(doom dtd-heretic)
+        add_dependencies(doom derp-heretic)
         # A target of its own, so a Heretic-only change reaches the bundle
         # even when Play DOOM itself doesn't relink.
-        add_custom_target(dtd-heretic-bundle ALL
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:dtd-heretic>"
-                "$<TARGET_BUNDLE_DIR:doom>/Contents/MacOS/dtd-heretic"
+        add_custom_target(derp-heretic-bundle ALL
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:derp-heretic>"
+                "$<TARGET_BUNDLE_DIR:doom>/Contents/MacOS/derp-heretic"
             VERBATIM)
-        add_dependencies(dtd-heretic-bundle doom dtd-heretic)
+        add_dependencies(derp-heretic-bundle doom derp-heretic)
     endif()
     if(BUILD_TESTING)
         function(doom_add_smoke target game renderer)

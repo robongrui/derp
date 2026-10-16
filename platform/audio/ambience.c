@@ -14,6 +14,7 @@
 #include <string.h>
 #include "doomstat.h"
 #include "p_local.h"
+#include "../game_profile.h"
 #include "acoustic_graph.h"
 #include "ambience_spots.h"
 #include "map.h"
@@ -79,7 +80,7 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
     /* Out under the sky the listener is in the wind, whatever spots lie
        about; eased, so stepping out of a door blows up rather than switches. */
     static float open_air;
-    open_air += ((Map_Sky(listener->subsector->sector) ? 1 : 0) - open_air) * ease;
+    open_air += ((Map_Sky(listener->subsector->sector) && Game_HasEffect(GAME_EFFECT_WIND) ? 1 : 0) - open_air) * ease;
 
     for (int k = 0; k < AMBIENT_KINDS; ++k)
     {

@@ -56,12 +56,12 @@ static const char *program_for(int game)
     if (game == DOOM_WAD_DOOM) return "Play DOOM";
 #elif defined(_WIN32)
     if (game == DOOM_WAD_DOOM) return "doom.exe";
-    if (game == DOOM_WAD_HERETIC) return "dtd-heretic.exe";
+    if (game == DOOM_WAD_HERETIC) return "derp-heretic.exe";
 #else
     if (game == DOOM_WAD_DOOM) return "doom";
 #endif
 #ifndef _WIN32
-    if (game == DOOM_WAD_HERETIC) return "dtd-heretic";
+    if (game == DOOM_WAD_HERETIC) return "derp-heretic";
 #endif
     return NULL;
 }

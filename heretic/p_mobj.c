@@ -516,7 +516,7 @@ void P_ZMovement(mobj_t *mo)
 		if(mo->momz < 0)
 		{
 			if(mo->player && mo->momz < -GRAVITY*8
-				&& !(mo->flags2&MF2_FLY) && !P_Flying()) // squat down (DTD: not in F5 flight)
+				&& !(mo->flags2&MF2_FLY) && !P_Flying()) // squat down (DERP: not in F5 flight)
 			{
 				mo->player->deltaviewheight = mo->momz>>3;
 				S_StartSound(mo, sfx_plroof);
@@ -1470,7 +1470,7 @@ mobj_t *P_SpawnPlayerMissile(mobj_t *source, mobjtype_t type)
 	angle_t an;
 	fixed_t x, y, z, slope;
 
-	// DTD: light from the shot in the accelerated renderer.
+	// DERP: light from the shot in the accelerated renderer.
 	if (R_MuzzleFlash && source->player)
 		R_MuzzleFlash(source, source->player->readyweapon, type);
 

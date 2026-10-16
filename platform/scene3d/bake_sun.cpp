@@ -6,7 +6,7 @@ namespace doom3d {
 bool sunBaked=false;
 float sunLevel=0; // Typical sky-sector light; indoor sun patches rise toward it.
 std::array<float,3> sunTint={1,1,1};
-float sunAzimuth[2]={1,0}; // Horizontal direction toward the baked sun (40 degrees high).
+float sunAzimuth[2]={1,0}; // Horizontal direction toward the baked sun (sunElevation high).
 float sunDirection[3]={0,0,1};
 
 float sunYaw=0,sunGlow=0;

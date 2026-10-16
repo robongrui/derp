@@ -185,7 +185,7 @@ animdef_t animdefs[] =
 anim_t anims[MAXANIMS];
 anim_t *lastanim;
 
-// DTD: renderer query, no simulation effect: the frame after pic in its
+// DERP: renderer query, no simulation effect: the frame after pic in its
 // animation and the tics per frame, or 0 when pic does not animate.
 int P_PicAnimationNext(boolean istexture, int pic, int *next)
 {

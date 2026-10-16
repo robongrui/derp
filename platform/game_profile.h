@@ -72,7 +72,8 @@ int Game_Sprite(game_sprite_role role);
 typedef enum {
     GAME_EFFECT_WINDOW_GLASS,     /* panes in windows, shattering */
     GAME_EFFECT_SHOOTABLE_LIGHTS, /* lamps and screens shot out, machinery sparks */
-    GAME_EFFECT_FLASHLIGHT        /* the F key's flashlight */
+    GAME_EFFECT_FLASHLIGHT,       /* the F key's flashlight */
+    GAME_EFFECT_WIND              /* made-up wind under the sky and through openings */
 } game_effect;
 int Game_HasEffect(game_effect effect);
 
@@ -92,6 +93,17 @@ void Game_Sun(game_sun *sun);
    the water's hue, only bright things punch through), 1 a clear pool that
    mirrors walls too. */
 float Game_WaterClarity(void);
+
+/* Where surface gloss comes from: 0 DOOM's palette ramps (greys and blues
+   read as metal, greens as slime); 1 each texture's material
+   (Game_WallSurface/Game_FlatSurface) and its texels' own colour, for
+   palettes laid out differently from DOOM's. */
+int Game_SurfaceGloss(void);
+
+/* Wind a sector special blows (Heretic's Wind_East to Wind_West, which push
+   things in the game), in map units per second toward east and north;
+   0 where none. */
+int Game_SectorWind(int special, float *east, float *north);
 
 /* Decorations that light the room although their artwork isn't drawn
    fullbright (Heretic's chandeliers and serpent torches), by sprite number.

@@ -48,6 +48,7 @@ static float units(fixed_t v) { return v / (float)FRACUNIT; }
 static spot_t *add_spot(int kind, float x, float y, float z, float size, int sector, int portal)
 {
     if (kind < 0 || size <= 0) return NULL;
+    if (kind == AMBIENT_WIND && !Game_HasEffect(GAME_EFFECT_WIND)) return NULL; /* the game's own wind */
     spots_t *list = &ambience_spots[kind];
     int cx = (int)floorf(x / CELL), cy = (int)floorf(y / CELL), cz = (int)floorf(z / CELL) + (portal ? 1 << 20 : 0);
     spot_t *spot = NULL;

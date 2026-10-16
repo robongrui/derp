@@ -196,7 +196,7 @@ typedef enum
 ====================
 */
 
-// DTD: special1 and special2 hold either numbers or pointers to other mobjs
+// DERP: special1 and special2 hold either numbers or pointers to other mobjs
 // (seeker missiles' targets, a pod's generator). Pointers are saved as the
 // index of the mobj among the saved ones, far outside any number's range,
 // and turned back into pointers after loading. Raven saved them raw, so a
@@ -289,7 +289,7 @@ void P_ArchiveThinkers(void)
 ====================
 */
 
-// DTD: saved mobj indices in special1/special2 back to pointers.
+// DERP: saved mobj indices in special1/special2 back to pointers.
 static intptr_t LoadSpecial(intptr_t value)
 {
 	intptr_t index;

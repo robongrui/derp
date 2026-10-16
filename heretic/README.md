@@ -1,18 +1,12 @@
-# Duct-Tape Heretic
+# DERP: Heretic
 
-This branch, `heretic-port`, brings Heretic to Duct-Tape DOOM. Raven's game
+DERP plays Heretic too. Raven's game
 runs on the same 3D renderer, lighting, sound and music as the DOOM program,
 and all of it is still worked out from the WAD you play: no replacement
 textures, models or recorded sounds.
 
-It is a work in progress. It plays, but it is not finished and not released.
-
-## The main branch stays where it is for a while
-
-`main` stays at **v0.4.5**, the current release, while this branch is under
-way. New work happens here on `heretic-port`. When Heretic is ready, the
-branch will be merged into `main` and released together with DOOM. Until then
-`main` gets no new features.
+It is new: it plays, but it has had far less play than DOOM, and not every
+level has been played through.
 
 ## What you need
 
@@ -29,7 +23,7 @@ The shareware `heretic1.wad` should work but has not been tried.
 ## Building and starting it
 
 Build the SDL app as described in [`BUILDING.md`](../BUILDING.md). That also
-builds the Heretic program, `dtd-heretic`, and on the Mac puts it inside
+builds the Heretic program, `derp-heretic`, and on the Mac puts it inside
 `Play DOOM.app`.
 
 Then either:
@@ -39,7 +33,7 @@ Then either:
 - start it from a terminal with the full path to the WAD:
 
   ```
-  build/play/dtd-heretic -iwad /path/to/heretic.wad
+  build/play/derp-heretic -iwad /path/to/heretic.wad
   ```
 
   `-warp 1 1` jumps straight to E1M1.
@@ -75,8 +69,10 @@ renderer it burns as a flickering flame you carry.
   fall onto the floor in front of it.
 - Water that reflects, sludge and lava that bubble and steam, with caustics on
   the walls around them.
-- Heretic's sounds and music through DTD's mixer, room echo, muffling and the
-  made-up ambience: lava rumbling, water lapping, waterfalls, teleport pads.
+- Heretic's sounds and music through DERP's mixer, room echo, muffling and the
+  made-up ambience where Heretic has none of its own: lava rumbling, water
+  lapping, teleport pads, crackling torches. Heretic's own wind and waterfall
+  sounds play as in the original.
 - Shots lighting the room, wall marks, blood, and exploding pods.
 - Saving and loading, and mouse look that Heretic's aiming follows.
 
@@ -94,9 +90,9 @@ renderer it burns as a flickering flame you carry.
 
 ## Where the code is
 
-- [`heretic/`](.): Raven's game code, ported to 64-bit systems and to DTD's
-  platform layer. Most changes are marked with a `DTD:` comment.
-- [`heretic/dtd/`](dtd/): small headers that give the shared code the names it
+- [`heretic/`](.): Raven's game code, ported to 64-bit systems and to DERP's
+  platform layer. Most changes are marked with a `DERP:` comment.
+- [`heretic/derp/`](derp/): small headers that give the shared code the names it
   knows from DOOM.
 - [`platform/games/heretic/`](../platform/games/heretic/): what the shared
   renderer and sound code need to know about Heretic, and the rules for its

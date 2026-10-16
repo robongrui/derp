@@ -95,6 +95,7 @@ struct Settings {
     int eyeAdaptation=1; // Brief stepped over/underexposure when the light changes.
     int splashes=1; // Ripple rings where things land or walk in liquids, spouts where shots hit them; bubbles and sinking in thick ones.
     int dust=1; // Specks glinting in sunbeams and the flashlight beam.
+    int embers=1; // A few sparks rising from flames, blown along by the game's wind.
     int playerShadow=1; // The player's own sprite shadow from the sun or a strong light.
     int doorLight=1; // Light from a bright room spills through a door as it opens.
     int movingRelight=1; // Baked lamp light and sun re-bake around doors, lifts and lowering walls as they move.
@@ -111,6 +112,8 @@ struct Settings {
     int causticsSprites=1; // Monsters and things near liquids catch the caustics too.
     int causticsShots=0; // Muzzle flashes and projectiles over liquids throw caustics, not just the flashlight.
     int dampShores=1; // Walls and banks just above liquids turn darker and damp up to a ragged line.
+    int glowEdges=1; // Walls meeting nukage, slime or lava take the strip the game paints on its edge textures.
+    int shoreRipples=1; // Liquids ripple a little where they meet walls, each in its own way.
     int sunDisc=1; // A faint sun in the sky where the baked sunlight comes from.
     int sunShafts=1; // Soft sunbeams slanting down through ceiling holes and windows, with the dust motes in them.
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
@@ -167,6 +170,9 @@ extern std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches;
 // player's own included (addThing in scene3d/geometry.cpp).
 extern std::map<int,std::vector<Vertex>> mirrorBatches;
 extern std::vector<Vertex> mistVertices,particleVertices,heatVertices;
+// Liquid crests (splash rings, shore ripples): brighten what is under them by
+// one plus their color (crestPipeline).
+extern std::vector<Vertex> crestVertices;
 // Sunbeam ribbons, drawn additively in the mist pass.
 extern std::vector<Vertex> shaftVertices;
 // Sky ceilings and sky walls, drawn into depth with the sky shader.
@@ -205,7 +211,11 @@ struct FrameView {
     Uniforms camera;
     float uiX,uiY,uiWidth,uiHeight,worldX,worldY,worldW,worldH;
 };
-struct SurfaceBinding { const Image *image,*next; float blend; };
+// frameMean and cycleMean (liquid flats only): the shown frames' average color
+// at the crossfade, and the whole animation's; cycleMean's alpha is how much
+// of the artwork's contrast stays far away (0: not a liquid, no fade);
+// frameMean's alpha is the material (surfaceMaterial in scene3d/scene.cpp).
+struct SurfaceBinding { const Image *image,*next; float blend; std::array<float,4> frameMean{},cycleMean{}; };
 struct SpriteDraw { const Image *image; std::vector<Vertex> vertices; };
 
 // Lifecycle: init reads options and graphics.cfg, the backend may override

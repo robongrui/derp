@@ -67,7 +67,7 @@ char *LevelNames[] =
 	"E5M9:  SKEIN OF D'SPARIL"
 };
 
-// DTD: the level's name for the loading screen, as DOOM's HU_LevelTitle.
+// DERP: the level's name for the loading screen, as DOOM's HU_LevelTitle.
 const char *HU_LevelTitle(void)
 {
 	int index = (gameepisode-1)*9+gamemap-1;
