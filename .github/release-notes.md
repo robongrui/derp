@@ -1,5 +1,5 @@
-A hacked-together-for-fun DOOM port. Each download includes **Freedoom**, so you can
-play straight away; add your own WADs to play DOOM, DOOM II or custom maps.
+DERP, the DOOM Engine Remaster Project. Each download includes **Freedoom**, so you can
+play straight away; add your own WADs to play DOOM, DOOM II, Heretic or custom maps.
 
 ## Download
 
@@ -37,4 +37,5 @@ versions are built automatically but have had little real play, so please
 [report problems](https://github.com/robongrui/derp/issues).
 
 Supported maps: vanilla and limit-removing, including DEHACKED patches. Boom,
-MBF21 and GZDoom maps are not supported. Multiplayer is not implemented.
+MBF21 and GZDoom maps are not supported. Heretic plays from your own `heretic.wad`
+or `HERETIC.WAD`; Hexen is not supported yet. Multiplayer is not implemented.
