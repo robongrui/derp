@@ -105,6 +105,14 @@ void P_PlayerThink(player_t *player);
 // whether mouselook is on. Heretic's own look keys still use lookdir.
 extern float tourpitch;
 extern boolean freeaim;
+// DTD: level-checking cheats (F5 menu), as in the DOOM program. Flying
+// follows the look direction (E/Q rise and sink); god mode and flight also
+// ignore special sectors. They outlive map changes, unlike player->cheats.
+extern boolean debugfly, debugnoclip, debuggod, debugnomonsters, debugnotarget;
+boolean P_DebugAllowed(void);
+boolean P_Flying(void);
+boolean P_Unseen(mobj_t *mo);
+void P_SetCheat(player_t *player, boolean *setting, boolean on);
 void P_Thrust(player_t *player, angle_t angle, fixed_t move);
 void P_PlayerRemoveArtifact(player_t *player, int slot);
 void P_PlayerUseArtifact(player_t *player, artitype_t arti);

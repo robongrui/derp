@@ -98,15 +98,58 @@ int Game_Sprite(game_sprite_role role)
     case GAME_SPRITE_BLOOD: return SPR_BLOD;
     case GAME_SPRITE_PUFF: return SPR_PUF2;
     case GAME_SPRITE_EXPLOSION: return SPR_XPL1;
+    case GAME_SPRITE_TORCH: return SPR_TRCH;
     }
     return -1;
+}
+
+/* No glass in the windows, nothing to shoot out (torches and gems aren't
+   bulbs), and no flashlight: the Torch item is Heretic's light. */
+int Game_HasEffect(game_effect effect)
+{
+    switch (effect)
+    {
+    case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT: return 0;
+    }
+    return 1;
+}
+
+/* The Torch (P_PlayerThink) sets colormaps 1 (brightest) to 7, wandering
+   between them; running out it blinks to 0, which puts the flame out. */
+int Game_Torch(float *flame)
+{
+    const player_t *player = &players[displayplayer];
+    int map = player->fixedcolormap;
+    *flame = 0;
+    if (!player->powers[pw_infrared] || map < 0 || map > 7) return 0;
+    *flame = map ? 1 - 0.06f * (map - 1) : 0;
+    return 1;
+}
+
+/* The sun stands where the sky paints it (most of Heretic's skies glow low
+   on the horizon), sunlit stone stands out from the shade, the light takes
+   the sky's colour (grey, hell red, night blue), and distance fades into it. */
+void Game_Sun(game_sun *sun) { *sun = (game_sun){ 1, 0.4f, 0.3f, 0.6f, 1 }; }
+
+/* Heretic's pools are clear and still: a fantasy mirror, not sewage. */
+float Game_WaterClarity(void) { return 1; }
+
+/* The chandeliers' candles, the serpent torches' flames and the glowing
+   orbs over the key statues; wall torches and braziers are fullbright. */
+int Game_DecorationLight(int sprite)
+{
+    switch (sprite)
+    {
+    case SPR_CHDL: case SPR_SRTC: case SPR_KGZB: case SPR_KGZG: case SPR_KGZY: return 1;
+    default: return 0;
+    }
 }
 
 game_decoration Game_Decoration(int sprite)
 {
     switch (sprite)
     {
-    case SPR_CHDL: return GAME_DECORATION_LAMP;
+    case SPR_CHDL: return GAME_DECORATION_CANDLES;
     case SPR_SRTC: case SPR_KFR1: return GAME_DECORATION_TORCH;
     case SPR_WTRH: return GAME_DECORATION_SHORT_TORCH;
     default: return GAME_DECORATION_NONE;

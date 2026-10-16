@@ -58,8 +58,45 @@ int Game_LookPitch(float *pitch);
 void Game_Look(float delta);
 
 /* Sprites the effects borrow artwork from: a sprite number, or -1. */
-typedef enum { GAME_SPRITE_BLOOD, GAME_SPRITE_PUFF, GAME_SPRITE_EXPLOSION } game_sprite_role;
+typedef enum { GAME_SPRITE_BLOOD, GAME_SPRITE_PUFF, GAME_SPRITE_EXPLOSION, GAME_SPRITE_TORCH } game_sprite_role;
+
+/* A torch the player carries (Heretic's Torch item): 1 while the game's
+   fixed colormap is its light, with *flame how brightly it burns (0-1, the
+   game's own flicker). The renderer lights the view with a carried flame
+   and a faint lift instead of that colormap. */
+int Game_Torch(float *flame);
 int Game_Sprite(game_sprite_role role);
+
+/* Effects made for DOOM's world that a game can do without: their F4
+   options stay off and greyed out where Game_HasEffect says no. */
+typedef enum {
+    GAME_EFFECT_WINDOW_GLASS,     /* panes in windows, shattering */
+    GAME_EFFECT_SHOOTABLE_LIGHTS, /* lamps and screens shot out, machinery sparks */
+    GAME_EFFECT_FLASHLIGHT        /* the F key's flashlight */
+} game_effect;
+int Game_HasEffect(game_effect effect);
+
+/* The outdoor light. fromSky: 1 reads the sun from the sky texture: its
+   height where the sky paints its bright patch (low patches give long
+   shadows), and from how bright the sky is, how strong it shines and in
+   what colour (a dark sky gives soft moonlight in its own hue); 0 keeps it
+   at 40 degrees in the bright columns' tint. shade: the share of light
+   shaded outdoor surfaces lose; gain: the share sunlit ones win (walls by
+   how squarely they face the sun). skyCast: how much of the outdoor light
+   takes the sky's colour. haze: how far outdoor surfaces fade into the
+   sky's horizon colour with distance (0 none, 1 strong). */
+typedef struct { int fromSky; float shade, gain, skyCast, haze; } game_sun;
+void Game_Sun(game_sun *sun);
+
+/* How clearly water mirrors the room, 0 to 1: 0 is murky (DOOM: stained in
+   the water's hue, only bright things punch through), 1 a clear pool that
+   mirrors walls too. */
+float Game_WaterClarity(void);
+
+/* Decorations that light the room although their artwork isn't drawn
+   fullbright (Heretic's chandeliers and serpent torches), by sprite number.
+   Fullbright decorations light the room anyway. */
+int Game_DecorationLight(int sprite);
 
 /* Decorations the ambience gives a sound, by sprite number. */
 typedef enum {

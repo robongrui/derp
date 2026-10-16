@@ -1531,6 +1531,31 @@ void G_DeferedInitNew (skill_t skill, int episode, int map)
 	gameaction = ga_newgame;
 }
 
+// DTD: the next or previous map that exists (the F5 menu's map picker and
+// its in-game keys), wrapping around the episodes.
+boolean G_StepMap (int step, int *episode, int *map)
+{
+	int e = *episode;
+	int m = *map;
+	int tries;
+
+	for (tries = 0; tries < 60; tries++)
+	{
+		m += step;
+		if (m < 1) { m = 9; e--; }
+		else if (m > 9) { m = 1; e++; }
+		if (e < 1) e = 6;
+		else if (e > 6) e = 1;
+		if (M_ValidEpisodeMap (e, m))
+		{
+			*episode = e;
+			*map = m;
+			return true;
+		}
+	}
+	return false;
+}
+
 void G_DoNewGame (void)
 {
 	G_InitNew (d_skill, d_episode, d_map);

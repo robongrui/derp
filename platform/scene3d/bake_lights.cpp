@@ -163,6 +163,7 @@ static void gatherStatic(const BakeMap &map,int sector,float x,float y,float z,c
         // The pool's own surface (facing the way the pool glows).
         else if(inside&&normal[2]*(bakeAreas[n-points].ceiling?-1:1)>0.5f)sheen+=weight;
     }
+    addGlassLight(map,sector,x,y,z,normal,sum);
     float scale=capWindowLight(window);
     for(int c=0;c<3;++c) {sum[c]+=window[c];towards[c]+=windowTowards[c]*scale;}
     total+=windowTotal*scale;
@@ -295,6 +296,19 @@ std::array<float,3> skyColor() {
     std::array<float,3> tint;
     for(int c=0;c<3;++c)tint[c]=(float)(0.5+0.5*sum[c]/peak);
     return tint;
+}
+// The sky's color at the horizon, as sky.frag draws its low rows: what
+// distant outdoor surfaces fade into (Game_Sun haze).
+std::array<float,3> skyHorizon() {
+    const Image &sky=wallImage(skytexture);
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    double sum[3]={},count=0;
+    for(int y=sky.height*88/100;y<std::max(sky.height*88/100+1,sky.height*96/100);++y)for(int x=0;x<sky.width;++x) {
+        size_t i=(size_t)y*sky.width+x;if(!sky.pixels[2*i+1])continue;
+        for(int c=0;c<3;++c)sum[c]+=palette[sky.pixels[2*i]*3+c]/255.0;
+        ++count;
+    }
+    return {(float)(count?sum[0]/count:0.5),(float)(count?sum[1]/count:0.5),(float)(count?sum[2]/count:0.5)};
 }
 // Window light: every opening from an indoor sector into a sky sector
 // (windows, doorways, the rim of a hole in the ceiling) is a soft lamp facing
@@ -463,6 +477,7 @@ void bakeLights() {
         merged=mergedSurfaceLights(points);
     }
     assignLampGroups(merged); // Before decorations take the groups left.
+    findGlassWindows();
     for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
         if(decorationLight(*thing)) {sources.push_back(decorationSource(*thing));sourceGroups.push_back((uint8_t)flickerGroup(*thing));}
     for(const auto &light:merged) {

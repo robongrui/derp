@@ -217,6 +217,49 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr) {
     if(!image.relief)I_Error((char*)"Could not allocate a GPU texture");
     return image;
 }
+// Leaded stained glass (Image::leaded): its relief in place of withRelief's.
+// The glowing panes are the shards, split by the dark lead between them
+// (4-connected groups of glowing texels): each shard is flat glass leaning a
+// little its own way, by a hash of its first texel, so a light glints off
+// some shards and not their neighbors. The lead is a groove: its texels
+// slope down from the panes on either side, so its edges catch the light.
+// RGBA8 as withRelief's (no tiles); B (grain) 0: glass is smooth.
+static Image &withLeadedRelief(Image &image) {
+    int w=image.width,h=image.height;size_t count=(size_t)w*h;
+    const std::vector<byte> &mask=image.emission;
+    std::vector<int> shard(count,-1);std::vector<size_t> stack;
+    auto pane=[&](int x,int y){x=(x%w+w)%w;y=(y%h+h)%h;return !mask.empty()&&mask[(size_t)y*w+x]>0;};
+    for(size_t start=0;start<count;++start) {
+        if(shard[start]>=0||mask.empty()||!mask[start])continue;
+        shard[start]=(int)start;stack.assign(1,start);
+        while(!stack.empty()) {
+            size_t i=stack.back();stack.pop_back();int x=(int)(i%w),y=(int)(i/w);
+            const int steps[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
+            for(const auto &s:steps) {
+                int nx=x+s[0],ny=y+s[1];if(nx<0||ny<0||nx>=w||ny>=h)continue;
+                size_t j=(size_t)ny*w+nx;
+                if(shard[j]<0&&mask[j]) {shard[j]=(int)start;stack.push_back(j);}
+            }
+        }
+    }
+    std::vector<byte> cells(count*4);
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
+        size_t i=(size_t)y*w+x;float sx=0,sy=0;
+        if(shard[i]>=0) {
+            uint32_t hash=(uint32_t)shard[i]*2654435761u;hash^=hash>>13;hash*=0x5bd1e995u;hash^=hash>>15;
+            sx=((hash&1023)/1023.0f*2-1)*0.18f;sy=(((hash>>10)&1023)/1023.0f*2-1)*0.18f;
+        } else {
+            // Down from the panes: the slope points away from them.
+            sx=0.45f*((float)pane(x-1,y)-(float)pane(x+1,y));sy=0.45f*((float)pane(x,y-1)-(float)pane(x,y+1));
+        }
+        byte *cell=&cells[i*4];
+        cell[0]=(byte)std::lround(128+127*std::clamp(sx,-1.0f,1.0f));cell[1]=(byte)std::lround(128+127*std::clamp(sy,-1.0f,1.0f));
+        cell[2]=0;cell[3]=255;
+    }
+    image.relief=gpuCreateTexture(GpuFormat::RGBA8,w,h,cells.data(),w*4);
+    if(!image.relief)I_Error((char*)"Could not allocate a GPU texture");
+    return image;
+}
 // Masks live beside graphics.cfg, or in the directory selected by -emissive.
 static std::vector<byte> emissionMask(const char *name,bool flat,int w,int h,const byte *pixels) {
     std::vector<byte> mask((size_t)w*h,0);
@@ -271,13 +314,13 @@ static bool livingMonsterLump(int lump) {
 // LEDs (TEKWALL*, COMPTALL, COMPWERD: under 0.6% glows) keep their glowing
 // artwork but light only as much as those LEDs; with the floor E1M2's
 // TEKWALL4 room went red from its few red LEDs. Stained glass glows over
-// most of its area but is a window, not a lamp: it lights the room softly.
+// most of its area but is a window, not a lamp: it lights the room softly,
+// most of its color reaching the floor as projected light (glass_light.cpp).
 static Image &speckledPanel(Image &image,const char *name,bool flat) {
     int kind=Game_GlowKind(name,flat);
     if(image.emissionCoverage>0&&image.emissionCoverage<0.006f&&kind==DOOM_EMISSIVE_PANEL)
         image.emissionWeight=image.emissionCoverage*8.0f;
-    if(kind==DOOM_EMISSIVE_GLASS)
-        image.emissionWeight*=0.35f;
+    if(kind==DOOM_EMISSIVE_GLASS) {image.emissionWeight*=0.2f;image.leaded=!image.emission.empty();}
     return image;
 }
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
@@ -296,6 +339,7 @@ Image &wallImage(int index) {
     int next;bool animated=P_PicAnimationNext(true,index,&next)>0;
     Image &image=speckledPanel(images.emplace(index,upload(w,h,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
         glass.empty()?nullptr:glass.data(),true)).first->second,name,false);
+    if(image.leaded)return withLeadedRelief(withGlassFrame(image,frame));
     return withRelief(withGlassFrame(image,frame),image.opaque&&!animated?wallTiles:nullptr);
 }
 Image &lumpImage(int lump,bool flat) {
@@ -350,6 +394,7 @@ Image &lumpImage(int lump,bool flat) {
     }
     Image image=upload(w,h,pixels.data(),SHORT(patch->leftoffset),SHORT(patch->topoffset),nullptr,normals.data());
     image.glowWeight=doom_sprite_glow(pixels.data(),(size_t)w*h,palette,image.glow.data());
+    image.glowHeight=doom_sprite_glow_height(pixels.data(),w,h,palette,image.glow.data());
     return images.emplace(key,std::move(image)).first->second;
 }
 const std::array<float,3> &averageColor(Image &image) {

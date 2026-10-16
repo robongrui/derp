@@ -60,14 +60,19 @@ same graphics panel as in DOOM.
 | Run | Shift |
 | Fly up, down, level out | U / J / K |
 | Inventory left, right, use | [ / ] / Enter |
+| Cheat menu: fly, no clipping, god mode, warp | F5 (while flying, the inventory keys change the map) |
+
+There is no flashlight on F: the Torch item is Heretic's light, and in the 3D
+renderer it burns as a flickering flame you carry.
 
 ## What works so far
 
 - Both WADs, in the 3D renderer and the classic one. Not every level has
   been played through yet.
 - Lighting from Heretic's own artwork: lava falls and lava floors, the cracks
-  in the hot rock, the orange gems set into the walls, and stained glass that
-  glows softly in its own colours.
+  in the hot rock, the orange gems set into the walls, the torches and
+  chandeliers, and leaded stained glass whose shards glint and whose colours
+  fall onto the floor in front of it.
 - Water that reflects, sludge and lava that bubble and steam, with caustics on
   the walls around them.
 - Heretic's sounds and music through DTD's mixer, room echo, muffling and the

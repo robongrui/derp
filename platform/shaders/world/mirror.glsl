@@ -32,10 +32,13 @@ void liquidMirror(inout vec4 color,vec3 albedo) {
     } else mirrored=textureLod(reflection,uv,0.0).rgb;
     // Murky, not glass: the liquid stains what it mirrors in its own hue,
     // and only bright things (lights, sky, fire) punch through; dim walls
-    // sink into the water. Grazing views still reflect more.
+    // sink into the water. Grazing views still reflect more. The game's
+    // water clarity (c.eye.w, Game_WaterClarity) clears it toward a pool
+    // that mirrors the walls too, stained less.
+    float clear=c.eye.w;
     float hue=max(max(albedo.r,albedo.g),max(albedo.b,0.05));
-    mirrored*=mix(vec3(1),albedo/hue,0.3);
+    mirrored*=mix(vec3(1),albedo/hue,mix(0.3,0.15,clear));
     float bright=smoothstep(0.08,0.6,dot(mirrored,vec3(0.299,0.587,0.114)));
     float grazing=1.0-saturate(abs(normalize(c.eye.xyz-vWorld).z));
-    color.rgb=mix(color.rgb,mirrored,(0.18+0.42*pow(grazing,3.0))*mix(0.55,1.0,bright)*mix(0.15,1.0,near));
+    color.rgb=mix(color.rgb,mirrored,(mix(0.18,0.35,clear)+0.42*pow(grazing,3.0))*mix(mix(0.55,0.85,clear),1.0,bright)*mix(mix(0.15,0.5,clear),1.0,near));
 }

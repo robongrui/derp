@@ -13,6 +13,7 @@ static void addWall(const line_t &line,int side,Point a,Point b,float bottom,flo
     tex=texturetranslation[tex]; wallImage(tex);
     float u=units(sides[line.sidenum[side]].textureoffset),len=std::hypot(b.x-a.x,b.y-a.y);
     auto &out=batches[tex];unsigned mode=sectorMode(sides[line.sidenum[side]].sector);
+    if(wallImage(tex).leaded&&settings.emissive)mode|=MODE_STAINED_GLASS;
     size_t first=out.size();
     Vertex corners[4]={{a.x,a.y,top,u,anchor-top,light,mode},{b.x,b.y,top,u+len,anchor-top,light,mode},
                        {b.x,b.y,bottom,u+len,anchor-bottom,light,mode},{a.x,a.y,bottom,u,anchor-bottom,light,mode}};

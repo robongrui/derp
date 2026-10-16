@@ -126,6 +126,17 @@ void main() {
             uv=clamp(origin+(lensed*0.5+0.5)*extent,origin+0.5,origin+extent-0.5);
         }
     }
+    // MODE_STAINED_GLASS: leaded stained glass, shaded like a shot-out
+    // screen's broken glass. Its colored panes (the glow mask) are the
+    // shards; each leans its own way (the leaded relief, withLeadedRelief)
+    // and so takes its own highlights and sheen; the lead stays a matte wall.
+    if(!sprite&&!glassy&&(vMode&MODE_STAINED_GLASS)!=0u&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&
+       maskAt(image,vUV,false)>0.0) {
+        vec3 tangent,bitangent;textureFrame(normal,dp1,dp2,duv1,duv2,tangent,bitangent);
+        vec2 lean=(texelFetch(relief,wrapTexel(ivec2(floor(vUV)),textureSize(relief,0)),0).rg*255.0-128.0)/127.0;
+        screenNormal=normalize(normal+lean.x*tangent+lean.y*bitangent);
+        glassy=true;
+    }
     vec4 color;
     if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0,false);
     else color=surfaceTexture(image,uv,texelPixel,lod);
@@ -259,6 +270,12 @@ void main() {
     if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&(MODE_SCREEN|MODE_SOFT))==0u&&c.effects.z==0.0)
         color.rgb+=albedo*(1.0-emission)*caustics(vWorld,normal,0u,true)*2.5;
     if((vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
+    // Outdoor haze (c.haze, Game_Sun): surfaces under open sky fade toward
+    // the sky's horizon color with distance, so far walls meet the sky.
+    if(c.haze.w>0.0&&c.effects.z==0.0&&(vMode&MODE_SCREEN)==0u&&(vMode>>MODE_SECTOR_SHIFT)>0u&&sectorInfo[sector].w>0.0) {
+        float open=1.0-outdoorShape(sector).x;
+        color.rgb=mix(color.rgb,c.haze.rgb*c.fx.x,open*c.haze.w*0.6*(1.0-exp(-max(vDistance-256.0,0.0)/1400.0)));
+    }
     if((vMode&MODE_SCREEN)==0u) {
         vec4 fog=fogAlong(vWorld);
         color.rgb=color.rgb*fog.a+fog.rgb;
@@ -290,10 +307,11 @@ void main() {
 #else
     // Mirror pass (water = plane,0,0,1): alpha holds how near the point is
     // to the liquid surface along the mirrored ray, sharp within a step's
-    // height, gone a couple of storeys up. Blended geometry keeps it.
+    // height, gone a couple of storeys up (clear water, c.eye.w: a whole
+    // hall up). Blended geometry keeps it.
     if(c.water.z==0.0&&c.water.w>0.0) {
         float along=max(vWorld.z-c.water.x,0.0)/max(abs(normalize(vWorld-c.eye.xyz).z),0.05);
-        color.a=1.0-smoothstep(16.0,256.0,along);
+        color.a=1.0-smoothstep(16.0,mix(256.0,1024.0,c.eye.w),along);
     }
 #endif
     outColor=color;

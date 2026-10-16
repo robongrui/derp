@@ -516,7 +516,7 @@ void P_ZMovement(mobj_t *mo)
 		if(mo->momz < 0)
 		{
 			if(mo->player && mo->momz < -GRAVITY*8
-				&& !(mo->flags2&MF2_FLY))       // squat down
+				&& !(mo->flags2&MF2_FLY) && !P_Flying()) // squat down (DTD: not in F5 flight)
 			{
 				mo->player->deltaviewheight = mo->momz>>3;
 				S_StartSound(mo, sfx_plroof);

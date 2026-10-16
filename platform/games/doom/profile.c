@@ -83,9 +83,22 @@ int Game_Sprite(game_sprite_role role)
     case GAME_SPRITE_BLOOD: return SPR_BLUD;
     case GAME_SPRITE_PUFF: return SPR_PUFF;
     case GAME_SPRITE_EXPLOSION: return SPR_BEXP;
+    case GAME_SPRITE_TORCH: return -1;
     }
     return -1;
 }
+
+int Game_HasEffect(game_effect effect) { (void)effect; return 1; }
+
+void Game_Sun(game_sun *sun) { *sun = (game_sun){ 0, 0.3f, 0, 0.3f, 0 }; }
+
+float Game_WaterClarity(void) { return 0; }
+
+/* DOOM's light amplification visor is a colormap, not a flame. */
+int Game_Torch(float *flame) { *flame = 0; return 0; }
+
+/* Every lit decoration in DOOM is drawn fullbright. */
+int Game_DecorationLight(int sprite) { (void)sprite; return 0; }
 
 game_decoration Game_Decoration(int sprite)
 {

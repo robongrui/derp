@@ -46,8 +46,8 @@ struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
 // sky light level (0: off); texFilter: sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],flicker[4][4]; };
-static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==320,"Shader buffer layout");
+struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],flicker[4][4]; };
+static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==352,"Shader buffer layout");
 using Flash=doom_flash_t;
 // 63 lights keep the FlashSet uniform block under 4 KB and fit the 64-bit light masks.
 constexpr unsigned maxLights=63;
@@ -143,7 +143,7 @@ struct Settings {
 // glassFrame: on textures with monitor screens, where each glass pixel sits
 // on its screen (see screen_glass.h); null otherwise. relief: on walls and
 // flats, the bump slope and grain the shader shades them with (withRelief).
-struct Image { bool opaque=true; std::vector<byte> pixels; GpuTextureRef texture,glassFrame,relief; int width=0,height=0,left=0,top=0; std::array<float,3> glow={1,1,1}; float glowWeight=0; std::array<float,3> emissionColor={}; float emissionWeight=0,emissionCoverage=0,emissionU=0,emissionV=0; std::vector<byte> emission,screens; std::array<float,3> average={},brightest={}; bool averaged=false,brightened=false; };
+struct Image { bool opaque=true; std::vector<byte> pixels; GpuTextureRef texture,glassFrame,relief; int width=0,height=0,left=0,top=0; std::array<float,3> glow={1,1,1}; float glowWeight=0,glowHeight=0.85f; std::array<float,3> emissionColor={}; float emissionWeight=0,emissionCoverage=0,emissionU=0,emissionV=0; std::vector<byte> emission,screens; std::array<float,3> average={},brightest={}; bool averaged=false,brightened=false; bool leaded=false; };
 
 // Frame profiling for the performance smoke test (I_Render3DProfile).
 struct Profile { bool enabled=false; unsigned skip=0; const char *screenshotPath=nullptr; I_Render3DFrameProfile frame={}; };

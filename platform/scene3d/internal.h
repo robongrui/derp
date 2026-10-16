@@ -178,6 +178,13 @@ extern float sunDirection[3];
 // The sun drawn in the sky: yaw of the baked direction, and its strength
 // from how bright the sky texture is around it (a dark sky shows only a hint).
 extern float sunYaw,sunGlow;
+extern float sunElevation,sunDiscElevation,sunShade,sunGain;
+std::array<float,3> skyHorizon();
+std::array<float,3> torchColor();
+// Light through stained glass, baked with the static lights (glass_light.cpp).
+void findGlassWindows();
+void addGlassLight(const BakeMap &map,int sector,float x,float y,float z,const float normal[3],float out[3]);
+void glassLightShutdown();
 extern std::vector<SunShaft> sunShafts;
 // Sectors whose air sunbeams and sunlit dust show in (bakeShafts): under a
 // ceiling, or in a sky opening that is enclosed and at most 400x400 units in

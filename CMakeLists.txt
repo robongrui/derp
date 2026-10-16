@@ -252,6 +252,7 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/bake_indirect.cpp
         platform/scene3d/bake_lights.cpp
         platform/scene3d/bake_sun.cpp
+        platform/scene3d/glass_light.cpp
         platform/scene3d/blood.cpp
         platform/scene3d/caustics.cpp
         platform/scene3d/config.cpp
@@ -357,9 +358,13 @@ if(DOOM_BUILD_SDL)
         # One app plays both: the launcher hands Heretic WADs to dtd-heretic
         # beside Play DOOM in Contents/MacOS (sdl_main.c).
         add_dependencies(doom dtd-heretic)
-        add_custom_command(TARGET doom POST_BUILD
+        # A target of its own, so a Heretic-only change reaches the bundle
+        # even when Play DOOM itself doesn't relink.
+        add_custom_target(dtd-heretic-bundle ALL
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:dtd-heretic>"
-                "$<TARGET_BUNDLE_DIR:doom>/Contents/MacOS/dtd-heretic")
+                "$<TARGET_BUNDLE_DIR:doom>/Contents/MacOS/dtd-heretic"
+            VERBATIM)
+        add_dependencies(dtd-heretic-bundle doom dtd-heretic)
     endif()
     if(BUILD_TESTING)
         function(doom_add_smoke target game renderer)

@@ -3,11 +3,16 @@
 
 // P_user.c
 
+#include <math.h>
 #include "doomdef.h"
 #include "p_local.h"
 #include "soundst.h"
 
 void P_PlayerNextArtifact(player_t *player);
+static void P_FlyMove(player_t *player); // DTD
+extern boolean gamekeydown[];
+extern int key_speed;
+extern boolean demorecording;
 
 // Macros
 
@@ -175,7 +180,12 @@ void P_MovePlayer(player_t *player)
 	onground = (player->mo->z <= player->mo->floorz
 		|| (player->mo->flags2&MF2_ONMOBJ));
 
-	if(player->chickenTics)
+	if(P_Flying())
+	{ // DTD: the F5 menu's flight; the look keys below still work
+		onground = false;
+		P_FlyMove(player);
+	}
+	else if(player->chickenTics)
 	{ // Chicken speed
 		if(cmd->forwardmove && (onground||player->mo->flags2&MF2_FLY))
 			P_Thrust(player, player->mo->angle, cmd->forwardmove*2500);
@@ -248,6 +258,10 @@ void P_MovePlayer(player_t *player)
 	if(fly > 7)
 	{
 		fly -= 16;
+	}
+	if(P_Flying())
+	{
+		return;
 	}
 	if(fly && player->powers[pw_flight])
 	{
@@ -517,6 +531,102 @@ boolean P_UndoPlayerChicken(player_t *player)
 // DTD: see p_local.h.
 float tourpitch;
 boolean freeaim;
+boolean debugfly, debugnoclip, debuggod, debugnomonsters, debugnotarget;
+
+boolean P_DebugAllowed(void)
+{
+	return !demoplayback && !demorecording && !netgame;
+}
+
+boolean P_Flying(void)
+{
+	return debugfly && P_DebugAllowed();
+}
+
+// "No target": monsters neither see nor hear the player.
+boolean P_Unseen(mobj_t *mo)
+{
+	return mo && mo->player && debugnotarget && P_DebugAllowed();
+}
+
+void P_SetCheat(player_t *player, boolean *setting, boolean on)
+{
+	int bit = setting == &debugnoclip ? CF_NOCLIP
+		: setting == &debuggod ? CF_GODMODE
+		: setting == &debugfly ? CF_NOMOMENTUM : 0;
+
+	*setting = on;
+	if(on)
+	{
+		player->cheats |= bit;
+	}
+	else
+	{
+		player->cheats &= ~bit;
+	}
+	if(setting == &debuggod && on)
+	{
+		player->health = MAXHEALTH;
+		if(player->mo)
+		{
+			player->mo->health = MAXHEALTH;
+		}
+	}
+	if(setting == &debugfly && !on && player->mo
+		&& !(player->mo->flags2&MF2_FLY))
+	{
+		player->mo->flags &= ~MF_NOGRAVITY;
+	}
+}
+
+static void P_RemoveMonsters(void)
+{
+	thinker_t *th;
+	mobj_t *mo;
+
+	for(th = thinkercap.next; th != &thinkercap; th = th->next)
+	{
+		if(th->function != (think_t)P_MobjThinker)
+		{
+			continue;
+		}
+		mo = (mobj_t *)th;
+		if(!mo->player && (mo->flags&MF_COUNTKILL))
+		{
+			P_RemoveMobj(mo);
+		}
+	}
+}
+
+// Flying moves along the look direction (lookdir 173 is slope 1); E and Q
+// climb and sink, faster with run held.
+static void P_FlyMove(player_t *player)
+{
+	ticcmd_t *cmd = &player->cmd;
+	mobj_t *mo = player->mo;
+	fixed_t speed = FRACUNIT*2/5;
+	fixed_t forward = cmd->forwardmove*speed;
+	fixed_t side = cmd->sidemove*speed;
+	double pitch = atan(player->lookdir/173.0);
+	fixed_t flat = (fixed_t)(cos(pitch)*FRACUNIT);
+	fixed_t rise = (fixed_t)(sin(pitch)*FRACUNIT);
+	angle_t a = mo->angle >> ANGLETOFINESHIFT;
+	angle_t s = (mo->angle-ANG90) >> ANGLETOFINESHIFT;
+	fixed_t climb = gamekeydown[key_speed] ? 20*FRACUNIT : 10*FRACUNIT;
+
+	forward = FixedMul(forward, flat);
+	mo->momx = FixedMul(forward, finecosine[a]) + FixedMul(side, finecosine[s]);
+	mo->momy = FixedMul(forward, finesine[a]) + FixedMul(side, finesine[s]);
+	mo->momz = FixedMul(cmd->forwardmove*speed, rise);
+	if(gamekeydown['e'])
+	{
+		mo->momz += climb;
+	}
+	if(gamekeydown['q'])
+	{
+		mo->momz -= climb;
+	}
+}
 
 void P_PlayerThink(player_t *player)
 {
@@ -525,6 +635,26 @@ void P_PlayerThink(player_t *player)
 
 	extern boolean ultimatemsg;
 
+	if(P_DebugAllowed())
+	{ // DTD: the F5 menu's cheats
+		if(debugnoclip)
+		{
+			player->cheats |= CF_NOCLIP;
+		}
+		if(debuggod)
+		{
+			player->cheats |= CF_GODMODE;
+		}
+		if(debugfly)
+		{
+			player->cheats |= CF_NOMOMENTUM;
+			player->mo->flags |= MF_NOGRAVITY;
+		}
+		if(debugnomonsters)
+		{
+			P_RemoveMonsters();
+		}
+	}
 	// No-clip cheat
 	if(player->cheats&CF_NOCLIP)
 	{
@@ -569,7 +699,8 @@ void P_PlayerThink(player_t *player)
 		P_MovePlayer(player);
 	}
 	P_CalcHeight(player);
-	if(player->mo->subsector->sector->special)
+	if(player->mo->subsector->sector->special
+		&& !((debugfly || debuggod) && P_DebugAllowed()))
 	{
 		P_PlayerInSpecialSector(player);
 	}

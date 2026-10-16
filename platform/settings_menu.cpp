@@ -284,7 +284,7 @@ void I_Render3DSettingsKey(int scancode,int shift) {
     case SDL_SCANCODE_TAB: selectTab(panel.tab+(shift?-1:1)); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
     case SDL_SCANCODE_PAGEUP: selectTab(panel.tab-1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
     case SDL_SCANCODE_PAGEDOWN: selectTab(panel.tab+1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
-    case SDL_SCANCODE_R: panel.draft=Settings{}; S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE)); break;
+    case SDL_SCANCODE_R: panel.draft=Settings{}; fitGame(panel.draft); S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE)); break;
     case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_F4: case SDL_SCANCODE_BACKSPACE: closePanel(); break;
     default:
         if(scancode>=SDL_SCANCODE_1&&scancode<SDL_SCANCODE_1+(int)panel.tabs.size()) {

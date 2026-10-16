@@ -899,6 +899,7 @@ void G_DeathMatchSpawnPlayer (int playernum);
 void G_InitNew (skill_t skill, int episode, int map);
 
 void G_DeferedInitNew (skill_t skill, int episode, int map);
+boolean G_StepMap (int step, int *episode, int *map); // DTD
 // can be called by the startup code or M_Responder
 // a normal game starts at map 1, but a warp test can start elsewhere
 

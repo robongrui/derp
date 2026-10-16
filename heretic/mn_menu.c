@@ -40,6 +40,7 @@ typedef enum
 	MENU_FILES,
 	MENU_LOAD,
 	MENU_SAVE,
+	MENU_CHEATS, // DTD
 	MENU_NONE
 } MenuType_t;
 
@@ -92,6 +93,13 @@ static void DrawLoadMenu(void);
 static void DrawSaveMenu(void);
 static void DrawSlider(Menu_t *menu, int item, int width, int slot);
 void MN_LoadSlotText(void);
+static boolean SCCheatToggle(int option);
+static boolean SCCheatGive(int option);
+static boolean SCCheatPick(int option);
+static boolean SCCheatWarp(int option);
+static boolean SCCheatRestart(int option);
+static void DrawCheatsMenu(void);
+static int ItemHeight(Menu_t *menu);
 
 // External Data
 
@@ -272,6 +280,50 @@ static Menu_t Options2Menu =
 	MENU_OPTIONS
 };
 
+// DTD: the level-checking cheats on F5, as in the DOOM program. The
+// items have no text of their own: DrawCheatsMenu writes them in the small
+// font, CHEAT_ITEM_HEIGHT apart.
+#define CHEAT_ITEM_HEIGHT 11
+
+enum
+{
+	cheat_fly,
+	cheat_noclip,
+	cheat_god,
+	cheat_notarget,
+	cheat_nomonsters,
+	cheat_give,
+	cheat_pick,
+	cheat_warp,
+	cheat_restart,
+	cheat_end
+};
+
+static MenuItem_t CheatsItems[] =
+{
+	{ ITT_LRFUNC, NULL, SCCheatToggle, cheat_fly, MENU_NONE },
+	{ ITT_LRFUNC, NULL, SCCheatToggle, cheat_noclip, MENU_NONE },
+	{ ITT_LRFUNC, NULL, SCCheatToggle, cheat_god, MENU_NONE },
+	{ ITT_LRFUNC, NULL, SCCheatToggle, cheat_notarget, MENU_NONE },
+	{ ITT_LRFUNC, NULL, SCCheatToggle, cheat_nomonsters, MENU_NONE },
+	{ ITT_EFUNC, NULL, SCCheatGive, 0, MENU_NONE },
+	{ ITT_LRFUNC, NULL, SCCheatPick, 0, MENU_NONE },
+	{ ITT_EFUNC, NULL, SCCheatWarp, 0, MENU_NONE },
+	{ ITT_EFUNC, NULL, SCCheatRestart, 0, MENU_NONE }
+};
+
+static Menu_t CheatsMenu =
+{
+	72, 30,
+	DrawCheatsMenu,
+	cheat_end, CheatsItems,
+	0,
+	MENU_NONE
+};
+
+static int CheatEpisode;
+static int CheatMap;
+
 static Menu_t *Menus[] =
 {
 	&MainMenu,
@@ -281,7 +333,8 @@ static Menu_t *Menus[] =
 	&Options2Menu,
 	&FilesMenu,
 	&LoadMenu,
-	&SaveMenu
+	&SaveMenu,
+	&CheatsMenu
 };
 
 //---------------------------------------------------------------------------
@@ -517,10 +570,14 @@ void MN_Drawer(void)
 			{
 				MN_DrTextB(item->text, x, y);
 			}
-			y += ITEM_HEIGHT;
+			y += ItemHeight(CurrentMenu);
 			item++;
 		}
-		y = CurrentMenu->y+(CurrentItPos*ITEM_HEIGHT)+SELECTOR_YOFFSET;
+		y = CurrentMenu->y+(CurrentItPos*ItemHeight(CurrentMenu))+SELECTOR_YOFFSET;
+		if(CurrentMenu == &CheatsMenu)
+		{ // DTD: centred on the small font
+			y -= 4;
+		}
 		selName = MenuTime&16 ? "M_SLCTR1" : "M_SLCTR2";
 		V_DrawPatch(x+SELECTOR_XOFFSET, y,
 			W_CacheLumpName(selName, PU_CACHE));
@@ -1133,6 +1190,20 @@ boolean MN_Responder(event_t *event)
 	}
 	if(MenuActive == false && !chatmodeon)
 	{
+		extern int key_invleft, key_invright;
+
+		if(gamestate == GS_LEVEL && P_Flying()
+			&& (key == key_invleft || key == key_invright))
+		{ // DTD: while flying, the inventory keys change the map
+			int episode = gameepisode;
+			int map = gamemap;
+
+			if(G_StepMap(key == key_invright ? 1 : -1, &episode, &map))
+			{
+				G_DeferedInitNew(gameskill, episode, map);
+			}
+			return(true);
+		}
 		switch(key)
 		{
 			case KEY_MINUS:
@@ -1205,7 +1276,19 @@ boolean MN_Responder(event_t *event)
 				S_StartSound(NULL, sfx_dorcls);
 				slottextloaded = false; //reload the slot text, when needed
 				return true;
-			case KEY_F5: // F5 isn't used in Heretic. (detail level)
+			case KEY_F5: // DTD: the cheat menu (Heretic had no F5)
+				if(gamestate == GS_LEVEL && P_DebugAllowed())
+				{
+					MenuActive = true;
+					FileMenuKeySteal = false;
+					MenuTime = 0;
+					CurrentMenu = &CheatsMenu;
+					CurrentItPos = CurrentMenu->oldItPos;
+					CheatEpisode = gameepisode;
+					CheatMap = gamemap;
+					paused = true;
+					S_StartSound(NULL, sfx_dorcls);
+				}
 				return true;
 			case KEY_F6: // quicksave
 				if(gamestate == GS_LEVEL && !demoplayback)
@@ -1384,6 +1467,12 @@ boolean MN_Responder(event_t *event)
 				S_StartSound(NULL, sfx_dorcls);
 				return(true);
 				break;
+			case KEY_F5:
+				if(CurrentMenu != &CheatsMenu)
+				{
+					return(true);
+				}
+				// fall through: F5 also closes the cheat menu
 			case KEY_ESCAPE:
 				MN_DeactivateMenu();
 				return(true);
@@ -1550,6 +1639,145 @@ void MN_DrawInfo(void)
 //              PU_CACHE));
 }
 
+
+//---------------------------------------------------------------------------
+//
+// DTD: the cheat menu
+//
+//---------------------------------------------------------------------------
+
+static int ItemHeight(Menu_t *menu)
+{
+	return menu == &CheatsMenu ? CHEAT_ITEM_HEIGHT : ITEM_HEIGHT;
+}
+
+static void DrawCheatsMenu(void)
+{
+	static char *labels[cheat_end] =
+	{
+		"FLY", "NO CLIPPING", "GOD MODE", "NO TARGET", "NO MONSTERS",
+		"GIVE WEAPONS AND KEYS", "MAP", "WARP TO MAP", "RESTART MAP"
+	};
+	static char *hints[] =
+	{
+		"FLYING: LOOK AND MOVE, E/Q UP/DOWN,",
+		"INVENTORY LEFT/RIGHT CHANGE MAP"
+	};
+	player_t *player = &players[consoleplayer];
+	boolean on[cheat_give];
+	char mapname[16];
+	int i;
+	int y;
+
+	on[cheat_fly] = debugfly;
+	on[cheat_noclip] = (player->cheats&CF_NOCLIP) != 0;
+	on[cheat_god] = (player->cheats&CF_GODMODE) != 0;
+	on[cheat_notarget] = debugnotarget;
+	on[cheat_nomonsters] = debugnomonsters;
+	MN_DrTextB("CHEATS", 160-MN_TextBWidth("CHEATS")/2, 8);
+	for(i = 0; i < cheat_end; i++)
+	{
+		y = CheatsMenu.y+i*CHEAT_ITEM_HEIGHT;
+		MN_DrTextA(labels[i], CheatsMenu.x, y);
+		if(i < cheat_give)
+		{
+			MN_DrTextA(on[i] ? "ON" : "OFF", CheatsMenu.x+150, y);
+		}
+	}
+	sprintf(mapname, "E%dM%d", CheatEpisode, CheatMap); // FONTA has no < >
+	MN_DrTextA(mapname, CheatsMenu.x+150, CheatsMenu.y+cheat_pick*CHEAT_ITEM_HEIGHT);
+	for(i = 0; i < 2; i++)
+	{
+		MN_DrTextA(hints[i], 160-MN_TextAWidth(hints[i])/2, 136+i*10);
+	}
+}
+
+// Left, right and Enter all flip the selected switch: Heretic hands
+// ITT_LRFUNC items the direction, not their option.
+static boolean SCCheatToggle(int direction)
+{
+	player_t *player = &players[consoleplayer];
+
+	switch(CurrentItPos)
+	{
+		case cheat_fly:
+			P_SetCheat(player, &debugfly, !debugfly);
+			break;
+		case cheat_noclip:
+			P_SetCheat(player, &debugnoclip, !(player->cheats&CF_NOCLIP));
+			break;
+		case cheat_god:
+			P_SetCheat(player, &debuggod, !(player->cheats&CF_GODMODE));
+			SB_state = -1;
+			break;
+		case cheat_notarget:
+			debugnotarget = !debugnotarget;
+			break;
+		case cheat_nomonsters:
+			debugnomonsters = !debugnomonsters;
+			break;
+	}
+	return false;
+}
+
+// The weapons cheat (rambo) and the keys cheat (skel) together.
+static boolean SCCheatGive(int option)
+{
+	extern int playerkeys;
+	player_t *player = &players[consoleplayer];
+	int i;
+
+	player->armorpoints = 200;
+	player->armortype = 2;
+	if(!player->backpack)
+	{
+		for(i = 0; i < NUMAMMO; i++)
+		{
+			player->maxammo[i] *= 2;
+		}
+		player->backpack = true;
+	}
+	for(i = 0; i < NUMWEAPONS-1; i++)
+	{
+		player->weaponowned[i] = true;
+	}
+	if(shareware)
+	{
+		player->weaponowned[wp_skullrod] = false;
+		player->weaponowned[wp_phoenixrod] = false;
+		player->weaponowned[wp_mace] = false;
+	}
+	for(i = 0; i < NUMAMMO; i++)
+	{
+		player->ammo[i] = player->maxammo[i];
+	}
+	player->keys[key_yellow] = true;
+	player->keys[key_green] = true;
+	player->keys[key_blue] = true;
+	playerkeys = 7;
+	SB_state = -1;
+	return false;
+}
+
+static boolean SCCheatPick(int direction)
+{
+	G_StepMap(direction == RIGHT_DIR ? 1 : -1, &CheatEpisode, &CheatMap);
+	return false;
+}
+
+static boolean SCCheatWarp(int option)
+{
+	MN_DeactivateMenu();
+	G_DeferedInitNew(gameskill, CheatEpisode, CheatMap);
+	return false;
+}
+
+static boolean SCCheatRestart(int option)
+{
+	MN_DeactivateMenu();
+	G_DeferedInitNew(gameskill, gameepisode, gamemap);
+	return false;
+}
 
 //---------------------------------------------------------------------------
 //

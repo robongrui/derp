@@ -18,6 +18,7 @@ void main() {
     float eyes=(vMode&(MODE_GLOWING_EYES|MODE_FUZZ))==MODE_GLOWING_EYES?eyeGlow(image,vUV)*0.6:0.0;
     float e=sprite?((vMode&MODE_PICKUP)!=0u?0.3:eyes):mix(maskAt(image,vUV,true),blend>0.0?maskAt(nextImage,vUV,true):0.0,blend);
     if(!sprite&&(vMode&MODE_DEAD_GLOW)!=0u) e=0.0; // A shot-out lamp or screen.
+    if(!sprite&&(vMode&MODE_STAINED_GLASS)!=0u) e=0.0; // Stained glass: no bloom, so its shards' glints show.
     if(!sprite) e*=unpackUnorm4x8(vLampTint).a; // A fading sector's lamps (lampGlow).
     // White strips glow in every channel at once and wash the view out up
     // close; colored bulbs keep their full bloom.
