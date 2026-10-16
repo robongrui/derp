@@ -124,7 +124,7 @@ Image upload(int w,int h,const byte *pixels,int left,int top,const byte *mask,co
 // receives where each glass pixel sits on its screen (doom_screen_glass).
 static std::vector<byte> screenGlass(const char *name,bool flat,int w,int h,const byte *pixels,std::vector<byte> &frame) {
     frame.clear();
-    if(!doom_screen_texture(name,flat))return {};
+    if(!Game_ScreenTexture(name,flat))return {};
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<byte> glass((size_t)w*h);frame.assign((size_t)w*h*4,0);
     if(!doom_screen_glass(w,h,pixels,palette,glass.data(),frame.data())) {frame.clear();return {};}
@@ -223,7 +223,7 @@ static std::vector<byte> emissionMask(const char *name,bool flat,int w,int h,con
     int paletteLump=W_GetNumForName((char*)"PLAYPAL");
     if(W_LumpLength(paletteLump)<768) I_Error((char*)"Invalid emissive palette");
     const byte *palette=(const byte*)W_CacheLumpNum(paletteLump,PU_CACHE);
-    int kind=doom_emissive_kind(name,flat);
+    int kind=Game_GlowKind(name,flat);
     for(size_t i=0;i<mask.size();++i)
         mask[i]=doom_emissive_pixel(kind,palette+pixels[2*i]*3,pixels[2*i+1]);
     std::string root=graphicsConfig;
@@ -270,10 +270,14 @@ static bool livingMonsterLump(int lump) {
 // screens) light their rooms. Computer and tech walls merely dotted with
 // LEDs (TEKWALL*, COMPTALL, COMPWERD: under 0.6% glows) keep their glowing
 // artwork but light only as much as those LEDs; with the floor E1M2's
-// TEKWALL4 room went red from its few red LEDs.
+// TEKWALL4 room went red from its few red LEDs. Stained glass glows over
+// most of its area but is a window, not a lamp: it lights the room softly.
 static Image &speckledPanel(Image &image,const char *name,bool flat) {
-    if(image.emissionCoverage>0&&image.emissionCoverage<0.006f&&doom_emissive_kind(name,flat)==DOOM_EMISSIVE_PANEL)
+    int kind=Game_GlowKind(name,flat);
+    if(image.emissionCoverage>0&&image.emissionCoverage<0.006f&&kind==DOOM_EMISSIVE_PANEL)
         image.emissionWeight=image.emissionCoverage*8.0f;
+    if(kind==DOOM_EMISSIVE_GLASS)
+        image.emissionWeight*=0.35f;
     return image;
 }
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */

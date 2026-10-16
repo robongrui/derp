@@ -255,7 +255,10 @@ FrameView prepareFrame(int w,int h) {
                 yaw=oldYaw+std::remainder(yaw-oldYaw,2*doomPi)*fraction;
             }
         }
-        float look=demoplayback?0:pitch;
+        // A game with its own look (Heretic) sets the pitch, demos included;
+        // mouselook turns that look (I_Render3DLook) so its aiming agrees.
+        float gameLook;
+        float look=Game_LookPitch(&gameLook)?gameLook:demoplayback?0:pitch;
         tourpitch=look;freeaim=settings.look&&!demoplayback;
         camera.right[0]=sin(yaw);camera.right[1]=-cos(yaw);
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
@@ -325,10 +328,18 @@ std::vector<std::array<float,4>> sectorInfo() {
             sectors[i].ceilingpic==skyflatnum?packOutdoor(&sectors[i]):0.0f};
     return info;
 }
-bool renderCheckDue() {return M_CheckParm((char*)"-rendercheck")&&worldPending&&gametic>10;}
+// -rendercheck <png> saves the first 3D frame after tic 10 (or -rendertic N)
+// and quits; -rendersettings opens the F4 panel for that frame first.
+bool renderCheckDue() {
+    int tic=M_CheckParm((char*)"-rendertic");
+    int after=tic&&tic+1<myargc?atoi(myargv[tic+1]):10;
+    bool due=M_CheckParm((char*)"-rendercheck")&&worldPending&&gametic>after;
+    if(due&&M_CheckParm((char*)"-rendersettings")&&!I_Render3DSettingsOpen()) {I_Render3DSettingsMenu();return false;}
+    return due;
+}
 void saveScreenshot(const void *bgra,int width,int height,int stride) {
     SDL_CreateDirectory("Screenshots");
-    char path[256];snprintf(path,sizeof(path),"Screenshots/DOOM-%llu.png",(unsigned long long)SDL_GetTicksNS());
+    char path[256];snprintf(path,sizeof(path),"Screenshots/%s-%llu.png",Game_Title(),(unsigned long long)SDL_GetTicksNS());
     int test=M_CheckParm((char*)"-rendercheck");
     const char *output=test&&test+1<myargc?myargv[test+1]:profile.screenshotPath?profile.screenshotPath:path;
     profile.screenshotPath=nullptr;
@@ -344,8 +355,8 @@ void updateTitle(int width,int height,const char *renderer) {
     if(now-titleTime>1000000000) {
         fps=frameCount*1e9/(now-titleTime);frameCount=0;titleTime=now;
         char rate[32]="";if(settings.fps)snprintf(rate,sizeof(rate)," · %.0f fps",fps);
-        char title[256];snprintf(title,sizeof(title),"DOOM · %s · %dx%d%s · F: flashlight · F4: graphics · F7: screenshot · Esc: menu",
-            settings.accelerated?renderer:"Classic",width,height,rate);
+        char title[256];snprintf(title,sizeof(title),"%s · %s · %dx%d%s · F: flashlight · F4: graphics · F7: screenshot · Esc: menu",
+            Game_Title(),settings.accelerated?renderer:"Classic",width,height,rate);
         SDL_SetWindowTitle(gameWindow,title);
     }
 }
@@ -356,7 +367,12 @@ void updateTitle(int width,int height,const char *renderer) {
 using namespace doom3d;
 void I_Render3DStartFrame(void) {worldPending=false;v_overlayactive=false;}
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
-void I_Render3DLook(float delta) {if(settings.look&&settings.accelerated&&!demoplayback)pitch=std::clamp(pitch-delta*0.002f,-1.2f,1.2f);}
+void I_Render3DLook(float delta) {
+    if(!settings.look||!settings.accelerated||demoplayback)return;
+    float gameLook;
+    if(Game_LookPitch(&gameLook))Game_Look(-delta*0.002f);
+    else pitch=std::clamp(pitch-delta*0.002f,-1.2f,1.2f);
+}
 void I_Render3DToggleFlashlight(void) {if(settings.accelerated)flashlightOn=!flashlightOn;}
 void I_Render3DScreenshot(void) {screenshotPending=true;}
 const I_Render3DFrameProfile *I_Render3DLastFrame(void) {return &profile.frame;}

@@ -116,13 +116,19 @@ static void flatDecal(int sectorIndex,float x,float y,float h,float z,int lump,c
             for(Point p:{polygon[0],polygon[n],polygon[n+1]})decalBatches[lump].push_back(vertex(p));
     }
 }
+// The game's sprite for an effect role; no frames when the game has none.
+static const spritedef_t &effectSprite(game_sprite_role role) {
+    static const spritedef_t none={0,nullptr};
+    int sprite=Game_Sprite(role);
+    return sprite>=0&&sprite<numsprites?sprites[sprite]:none;
+}
 void buildImpacts(const Uniforms &camera) {
     for(auto &batch:decalBatches)batch.second.clear();
     particleVertices.clear();
     dropOldLevelImpacts();
     float now=gameSeconds();
     scorches.erase(std::remove_if(scorches.begin(),scorches.end(),[&](const Scorch &d){return now-d.born>60||now<d.born;}),scorches.end());
-    const auto &blast=sprites[SPR_BEXP];
+    const auto &blast=effectSprite(GAME_SPRITE_EXPLOSION);
     if(blast.numframes>2&&!scorches.empty()) {
         // Scorches reuse a fireball frame's coverage, clipped to the sector floor.
         int lump=firstspritelump+blast.spriteframes[2].lump[0];Image &image=lumpImage(lump,false);
@@ -134,7 +140,7 @@ void buildImpacts(const Uniforms &camera) {
     }
     wallDecals.erase(std::remove_if(wallDecals.begin(),wallDecals.end(),[&](const WallDecal &d){return now-d.born>40||now<d.born;}),wallDecals.end());
     flatDecals.erase(std::remove_if(flatDecals.begin(),flatDecals.end(),[&](const FlatDecal &d){return now-d.born>40||now<d.born;}),flatDecals.end());
-    const auto &puff=sprites[SPR_PUFF];
+    const auto &puff=effectSprite(GAME_SPRITE_PUFF);
     if(puff.numframes>2) {
         int lump=firstspritelump+puff.spriteframes[2].lump[0];Image &image=lumpImage(lump,false);
         for(const auto &d:flatDecals) {

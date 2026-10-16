@@ -282,7 +282,7 @@ void watchGlass() {
             if(at<bottom-2||at>top+2)continue;
             shatter(p.frame,watch.x+(x-watch.x)*t,watch.y+(y-watch.y)*t,at,x-watch.x,y-watch.y);
         }
-        if(watch.missile&&!missile&&thing->type==MT_ROCKET)glassBlast(x,y,z,96);
+        if(watch.missile&&!missile&&Game_ThingRole(thing->type)==GAME_THING_ROCKET)glassBlast(x,y,z,96);
         watch.x=x;watch.y=y;watch.z=z;watch.missile=missile;
         if(!missile)watch.seen=false; // Burst: no longer watched.
     }

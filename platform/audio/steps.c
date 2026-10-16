@@ -11,6 +11,8 @@
 #include "w_wad.h"
 #include "impact_synth.h"
 #include "steps.h"
+#include "../game_profile.h"
+#include "../game_materials.h"
 
 #define WADERS 64
 #define MONSTER_STRIDE 44.0f  /* monsters walk in jumps; a splash every so many units */
@@ -18,10 +20,8 @@
 
 extern int numflats;
 
-static int starts(const char *name, const char *prefix) { return !strncmp(name, prefix, strlen(prefix)); }
 
-/* What a floor flat sounds like underfoot. SLIME09-12 are hot rock and
-   SLIME13 on are metal in DOOM II, only the first eight are sludge. */
+/* What a floor flat sounds like underfoot (Game_FloorStep), named once per WAD. */
 static int floor_kind(int pic)
 {
     static signed char *kinds;
@@ -36,21 +36,7 @@ static int floor_kind(int pic)
             char name[9];
             for (int c = 0; c < 8; ++c) name[c] = (char)toupper((unsigned char)lumpinfo[firstflat + i].name[c]);
             name[8] = 0;
-            static const char *const metals[] = { "FLOOR4", "FLOOR5", "FLAT20", "FLAT22", "FLAT23", "CEIL3", "COMP",
-                "GATE", "STEP", "TLITE", "CONS1", NULL };
-            static const char *const woods[] = { "FLAT5_1", "FLAT5_2", "CEIL1_1", "CRATOP", NULL };
-            static const char *const soils[] = { "GRASS", "RROCK19", "RROCK20", "MFLR8_3", "FLAT10", NULL };
-            int kind = IMPACT_STEP_STONE;
-            int sludge = starts(name, "SLIME") && name[5] == '0' && name[6] >= '1' && name[6] <= '8';
-            if (starts(name, "FWATER") || starts(name, "SWATER") || starts(name, "WATER")) kind = IMPACT_SPLASH_WATER;
-            else if (starts(name, "NUKAGE") || starts(name, "BLOOD") || starts(name, "LAVA") || sludge) kind = IMPACT_SPLASH_THICK;
-            else
-            {
-                for (int k = 0; metals[k]; ++k) if (starts(name, metals[k])) kind = IMPACT_STEP_METAL;
-                for (int k = 0; woods[k]; ++k) if (starts(name, woods[k])) kind = IMPACT_STEP_WOOD;
-                for (int k = 0; soils[k]; ++k) if (starts(name, soils[k])) kind = IMPACT_STEP_SOFT;
-            }
-            kinds[i] = (signed char)kind;
+            kinds[i] = (signed char)Game_FloorStep(name);
         }
     }
     return pic >= 0 && pic < known ? kinds[pic] : IMPACT_STEP_STONE;
@@ -104,7 +90,7 @@ static int monster_splashes(step_event_t *events, int count, int max)
     float lx = units(listener->x), ly = units(listener->y);
     for (thinker_t *th = thinkercap.next; th && th != &thinkercap; th = th->next)
     {
-        if (th->function.acp1 != (actionf_p1)P_MobjThinker) continue;
+        if (!Game_ThinkerIsMobj(th)) continue;
         const mobj_t *mo = (const mobj_t *)th;
         if (mo->player || !(mo->flags & MF_SHOOTABLE) || (mo->flags & MF_CORPSE) || mo->health <= 0 || !grounded(mo)) continue;
         int kind = floor_kind(mo->subsector->sector->floorpic);

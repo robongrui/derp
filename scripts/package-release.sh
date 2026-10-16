@@ -26,6 +26,13 @@ fi
 rm -rf "$stage"
 mkdir -p "$stage/wads" "$stage/licenses/Freedoom"
 cp "$program" "$stage/"
+# The Heretic program beside it: the launcher hands Heretic WADs over.
+for candidate in "$(dirname -- "$program")/dtd-heretic.exe" "$(dirname -- "$program")/dtd-heretic"; do
+    if [ -f "$candidate" ]; then
+        cp "$candidate" "$stage/"
+        break
+    fi
+done
 cp "$freedoom_dir/freedoom1.wad" "$stage/default.wad"
 cp "$project_dir/README.md" "$project_dir/PLAY.md" "$stage/"
 cp "$project_dir/LICENSE.TXT" "$stage/licenses/GPL-3.txt"

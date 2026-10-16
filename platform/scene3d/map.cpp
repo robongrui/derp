@@ -108,12 +108,12 @@ static void weldFloors() {
         poly=std::move(out);
     }
 }
-// Liquids are the liquid-named flats the engine animates: Doom 2's SLIME13-16
-// share the name but are still metal floors (MAP04's courtyard).
-static bool liquidFlat(int pic) {
-    const char *name=lumpinfo[firstflat+pic].name;int next;
-    return (!strncmp(name,"NUKAGE",6)||!strncmp(name,"FWATER",6)||!strncmp(name,"SLIME",5)||
-            !strncmp(name,"BLOOD",5)||!strncmp(name,"LAVA",4))&&P_PicAnimationNext(false,pic,&next)>0;
+// Liquids are the liquid flats (game_materials.h) the engine animates: Doom 2's
+// SLIME13-16 share the name but are still metal floors (MAP04's courtyard).
+static game_liquid liquidFlat(int pic) {
+    char name[9];memcpy(name,lumpinfo[firstflat+pic].name,8);name[8]=0;int next;
+    game_liquid kind=Game_LiquidFlat(name);
+    return kind!=GAME_LIQUID_NONE&&P_PicAnimationNext(false,pic,&next)>0?kind:GAME_LIQUID_NONE;
 }
 static void classifySectorMist() {
     sectorMist.assign(numsectors,{});
@@ -132,21 +132,23 @@ static void classifySectorMist() {
         }
         mist.pit=hasNeighbor&&lowestNeighbor-units(sector.floorheight)>=24;
         int lump=firstflat+sector.floorpic;
-        mist.liquid=liquidFlat(sector.floorpic);
+        game_liquid liquid=liquidFlat(sector.floorpic);
+        mist.liquid=liquid!=GAME_LIQUID_NONE;
         // Only water mirrors the room: nukage, slime, blood and lava are too
         // murky for the toned-down reflection to read as more than a smudge.
-        mist.reflective=mist.liquid&&!strncmp(lumpinfo[lump].name,"FWATER",6);
+        mist.reflective=liquid==GAME_LIQUID_WATER;
         // Every liquid but water is thick: heavy splashes, bubbles, and a
         // collar of goo around things standing in it.
         mist.thick=mist.liquid&&!mist.reflective;
-        mist.toxic=sector.special==4||sector.special==5||sector.special==7||sector.special==11||sector.special==16;
+        mist.toxic=Game_DamagingFloor(sector.special);
         if(mist.liquid&&W_LumpLength(lump)>=4096) {
             const byte *flat=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
             mist.color={};
             for(int pixel=0;pixel<4096;++pixel)for(int c=0;c<3;++c)
                 mist.color[c]+=palette[flat[pixel]*3+c]/(4096.0f*255.0f);
         } else if(mist.toxic) mist.color={0.18f,0.30f,0.12f};
-        bool lava=!strncmp(lumpinfo[lump].name,"LAVA",4);
+        char flatName[9];memcpy(flatName,lumpinfo[lump].name,8);flatName[8]=0;
+        bool lava=Game_HotFlat(flatName);
         if((lava||mist.toxic)&&W_LumpLength(lump)>=4096) {
             const byte *flat=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
             float rgb[3]={};

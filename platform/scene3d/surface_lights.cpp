@@ -2,7 +2,6 @@
    see each other. */
 #include "internal.h"
 extern "C" {
-#include "light_swings.h"
 }
 
 namespace doom3d {
@@ -126,7 +125,7 @@ static void readLampRanges() {
     if(lampRanges.size()==(size_t)numsectors)return;
     lampRanges.resize(numsectors);
     for(int i=0;i<numsectors;++i)lampRanges[i]={sectors[i].lightlevel,sectors[i].lightlevel,false,false};
-    doom_light_swings([](int sector,int low,int high,int smooth,void*) {
+    Game_LightSwings([](int sector,int low,int high,int smooth,void*) {
         if(sector<0||sector>=numsectors)return;
         LampRange &range=lampRanges[sector];
         range={low,std::max(range.peak,high),true,smooth!=0};

@@ -18,6 +18,7 @@
 #include "audio/resample.h"
 #include "audio/treble.h"
 #include "audio/reverb.h"
+#include "game_profile.h"
 #include "audio/sf2_synth.h"
 #include "audio/sound_options.h"
 #include <SDL3/SDL.h>
@@ -45,9 +46,9 @@ typedef struct {
     float cutoff, target, low[2];
     treble_t treble;
     int handle, measured;
-} channel_t;
+} mix_channel_t;
 static sample_t samples[NUMSFX];
-static channel_t channels[MIX_CHANNELS];
+static mix_channel_t channels[MIX_CHANNELS];
 static SDL_AudioStream *stream;
 static int next_handle = 1;
 static int acoustics = 1, muffle_walls = 1, muffle_distance = 1;
@@ -68,7 +69,7 @@ static uint32_t little32(const byte *p)
    Panning follows DMX: full level on both sides at the center (separation
    128), fading on the far side only. The reverb send falls off slower than
    the dry sound, so far sounds come out wetter. */
-static void gains(channel_t *channel, float volume, int separation, int pitch)
+static void gains(mix_channel_t *channel, float volume, int separation, int pitch)
 {
     float level = SDL_clamp(volume, 0.0f, 15.0f) / 15.0f;
     separation = SDL_clamp(separation, 1, 254);
@@ -91,7 +92,7 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
         memset(send, 0, (size_t)count * sizeof(float));
         for (int c = 0; c < MIX_CHANNELS; ++c)
         {
-            channel_t *channel = &channels[c];
+            mix_channel_t *channel = &channels[c];
             if (!channel->handle) continue;
             channel->cutoff *= powf(channel->target / channel->cutoff, 1 - expf(-count / (MUFFLE_GLIDE_SECONDS * OUTPUT_RATE)));
             float keep = expf(-2 * SDL_PI_F * channel->cutoff / OUTPUT_RATE);
@@ -136,14 +137,6 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
     }
 }
 
-int I_GetSfxLumpNum(sfxinfo_t *sfx)
-{
-    char name[9];
-    if (sfx->link) sfx = sfx->link;
-    snprintf(name, sizeof(name), "ds%s", sfx->name);
-    int lump = W_CheckNumForName(name);
-    return lump >= 0 ? lump : W_GetNumForName("dspistol");
-}
 void I_InitSound(void)
 {
     if (M_CheckParm("-nosound")) return;
@@ -152,7 +145,7 @@ void I_InitSound(void)
         int lump = I_GetSfxLumpNum(&S_sfx[i]);
         int length = W_LumpLength(lump);
         byte *data = W_CacheLumpNum(lump, PU_SOUND);
-        S_sfx[i].data = data;
+        Game_SfxLoaded(i, data);
         if (length < 8 || little16(data) != 3) continue;
         uint32_t size = little32(data + 4);
         if (!size || size > (uint32_t)(length - 8)) continue;
@@ -224,7 +217,7 @@ void I_SetSfxPlayback(int mode, float treble)
     if (stream) SDL_UnlockAudioStream(stream);
 }
 
-static channel_t *find(int handle)
+static mix_channel_t *find(int handle)
 {
     for (int i = 0; i < MIX_CHANNELS; ++i)
         if (channels[i].handle == handle) return &channels[i];
@@ -236,7 +229,7 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
     if (!stream) return;
     if (!handle) { next_cutoff = Occlusion_Cutoff(x, y, z, muffle_walls, muffle_distance); return; }
     SDL_LockAudioStream(stream);
-    channel_t *channel = find(handle);
+    mix_channel_t *channel = find(handle);
     int due = channel && (gametic < channel->measured || gametic - channel->measured >= 2);
     if (due) channel->measured = gametic;
     SDL_UnlockAudioStream(stream);
@@ -258,7 +251,7 @@ static int start_sample(sample_t sample, float volume, int separation, int pitch
         if (!channels[i].handle) { slot = i; break; }
         if (channels[i].handle < channels[slot].handle) slot = i;
     }
-    channel_t *channel = &channels[slot];
+    mix_channel_t *channel = &channels[slot];
     channel->sample = sample;
     channel->position = 0;
     channel->cutoff = channel->target = cutoff;

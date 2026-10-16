@@ -12,7 +12,6 @@ extern "C" {
 #include "doomtype.h"
 #include "doomdef.h"
 #include "s_sound.h"
-#include "sounds.h"
 #include "w_wad.h"
 #include "z_zone.h"
 extern boolean paused;
@@ -21,6 +20,7 @@ extern boolean paused;
 #include "i_render3d.h"
 #include "scene3d.h"
 #include "settings_panel.h"
+#include "game_profile.h"
 
 using namespace doom3d;
 
@@ -54,11 +54,13 @@ void fill(int x,int y,int w,int h,unsigned color) {
         std::fill(image+row*width+std::max(0,x),image+row*width+std::min(width,x+w),color);
 }
 
-// The HUD font, STCFN033 ('!') to STCFN095 ('_'), as brightness masks: 0 is
-// transparent, otherwise the palette color's brightness relative to the
-// font's brightest pixel, so the artwork's shading survives any text color.
+// The game's small font ('!' to '_', Game_FontLump: DOOM's STCFN, Heretic's
+// FONTA) as brightness masks: 0 is transparent, otherwise the palette color's
+// brightness relative to the font's brightest pixel, so the artwork's
+// shading survives any text color. glyphHeight is the tallest letter's.
 struct Glyph { int width=0,height=0,left=0,top=0;std::vector<unsigned char> shade; };
-const int firstGlyph='!',lastGlyph='_',spaceWidth=4,glyphHeight=7;
+const int firstGlyph='!',lastGlyph='_',spaceWidth=4;
+int glyphHeight=7;
 std::vector<Glyph> glyphs;
 
 void loadFont() {
@@ -68,10 +70,9 @@ void loadFont() {
     std::vector<int> brightness(256);
     for(int i=0;i<256;++i)brightness[i]=palette[3*i]*299+palette[3*i+1]*587+palette[3*i+2]*114;
     std::vector<std::vector<int>> raw(glyphs.size());
-    int brightest=1;
+    int brightest=1,letterHeight=0;
     for(int c=firstGlyph;c<=lastGlyph;++c) {
-        char name[9];snprintf(name,sizeof(name),"STCFN%03d",c);
-        int lump=W_CheckNumForName(name);
+        int lump=Game_FontLump(c);
         if(lump<0)continue;
         const byte *data=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
         int size=W_LumpLength(lump);
@@ -97,8 +98,10 @@ void loadFont() {
             }
         }
         glyph.width=w;glyph.height=h;
+        if(c>='A'&&c<='Z')letterHeight=std::max(letterHeight,h);
         glyph.left=(short)(data[4]|data[5]<<8);glyph.top=(short)(data[6]|data[7]<<8);
     }
+    if(letterHeight)glyphHeight=letterHeight;
     for(size_t i=0;i<glyphs.size();++i) {
         Glyph &glyph=glyphs[i];
         glyph.shade.resize(raw[i].size());
@@ -116,7 +119,7 @@ const Glyph *glyphFor(char c) {
 
 int textWidth(const std::string &string) {
     int w=0;
-    for(char c:string) {const Glyph *glyph=glyphFor(c);w+=glyph?glyph->width:spaceWidth;}
+    for(char c:string) {const Glyph *glyph=glyphFor(c);w+=glyph?glyph->width+Game_FontSpacing():spaceWidth;}
     return w;
 }
 
@@ -137,7 +140,7 @@ int drawTextAt(const std::string &string,int x,int row,unsigned color) {
                 int shade=glyph->shade[(size_t)(y*glyph->width+i)],px=left+i,py=top+y;
                 if(shade&&px>=0&&px<width&&py>=0&&py<height)image[py*width+px]=shaded(color,shade);
             }
-        x+=glyph->width;
+        x+=glyph->width+Game_FontSpacing();
     }
     return x;
 }
@@ -213,7 +216,7 @@ void moveSelection(int direction) {
     do panel.selected=((panel.selected+direction)%count+count)%count;
     while(!panel.lines[(size_t)panel.selected].option);
     keepSelectionVisible();
-    S_StartSound(NULL,sfx_pstop);
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));
 }
 
 Option &selectedOption() { return *panel.lines[(size_t)panel.selected].option; }
@@ -222,14 +225,14 @@ void setSlider(Option &option,double value) { *option.number=option.snap(value);
 
 void changeOption(int direction) {
     Option &option=selectedOption();
-    if(!option.isEnabled(panel.draft)) {S_StartSound(NULL,sfx_oof);return;}
+    if(!option.isEnabled(panel.draft)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
     if(option.kind==OptionKind::Check)*option.flag=!*option.flag;
     else if(option.kind==OptionKind::Choice) {
         int count=(int)option.values.size(),index=0;
         for(int i=0;i<count;++i)if(option.values[(size_t)i]==*option.flag)index=i;
         *option.flag=option.values[(size_t)(((index+direction)%count+count)%count)];
     } else setSlider(option,*option.number+direction*option.step);
-    S_StartSound(NULL,sfx_stnmov);
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
 }
 
 void closePanel() {
@@ -237,7 +240,7 @@ void closePanel() {
     paused=panel.wasPaused;
     panel.open=false;
     settingsChanged();
-    S_StartSound(NULL,sfx_swtchx);
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_CLOSE));
 }
 
 int sliderLeft() { return (rightColumn-valueColumns-sliderColumns)*cellWidth; }
@@ -265,7 +268,7 @@ void I_Render3DSettingsMenu(void) {
     selectTab(panel.tab);
     panel.wasPaused=paused;paused=true;
     panel.open=true;
-    S_StartSound(NULL,sfx_swtchn);
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_OPEN));
 }
 
 int I_Render3DSettingsOpen(void) { return panel.open; }
@@ -278,14 +281,14 @@ void I_Render3DSettingsKey(int scancode,int shift) {
     case SDL_SCANCODE_LEFT: changeOption(-1); break;
     case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: case SDL_SCANCODE_SPACE:
         changeOption(1); break;
-    case SDL_SCANCODE_TAB: selectTab(panel.tab+(shift?-1:1)); S_StartSound(NULL,sfx_pstop); break;
-    case SDL_SCANCODE_PAGEUP: selectTab(panel.tab-1); S_StartSound(NULL,sfx_pstop); break;
-    case SDL_SCANCODE_PAGEDOWN: selectTab(panel.tab+1); S_StartSound(NULL,sfx_pstop); break;
-    case SDL_SCANCODE_R: panel.draft=Settings{}; S_StartSound(NULL,sfx_stnmov); break;
+    case SDL_SCANCODE_TAB: selectTab(panel.tab+(shift?-1:1)); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
+    case SDL_SCANCODE_PAGEUP: selectTab(panel.tab-1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
+    case SDL_SCANCODE_PAGEDOWN: selectTab(panel.tab+1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
+    case SDL_SCANCODE_R: panel.draft=Settings{}; S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE)); break;
     case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_F4: case SDL_SCANCODE_BACKSPACE: closePanel(); break;
     default:
         if(scancode>=SDL_SCANCODE_1&&scancode<SDL_SCANCODE_1+(int)panel.tabs.size()) {
-            selectTab(scancode-SDL_SCANCODE_1);S_StartSound(NULL,sfx_pstop);
+            selectTab(scancode-SDL_SCANCODE_1);S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));
         }
         break;
     }
@@ -298,7 +301,7 @@ void I_Render3DSettingsClick(int x,int y,int button) {
         if(button!=1)return;
         for(size_t i=0;i<panel.tabSpans.size();++i)
             if(x>=panel.tabSpans[i].first&&x<panel.tabSpans[i].second) {
-                if((int)i!=panel.tab) {selectTab((int)i);S_StartSound(NULL,sfx_pstop);}
+                if((int)i!=panel.tab) {selectTab((int)i);S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));}
                 return;
             }
         return;
@@ -309,10 +312,10 @@ void I_Render3DSettingsClick(int x,int y,int button) {
     if(button==0)return; // Hovering highlights the option.
     Option &option=selectedOption();
     if(option.kind==OptionKind::Slider&&button==1&&x>=sliderLeft()-cellWidth) {
-        if(!option.isEnabled(panel.draft)) {S_StartSound(NULL,sfx_oof);return;}
+        if(!option.isEnabled(panel.draft)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
         double fraction=(double)(x-sliderLeft())/(sliderWidth()-1);
         setSlider(option,option.low+std::clamp(fraction,0.0,1.0)*(option.high-option.low));
-        S_StartSound(NULL,sfx_stnmov);
+        S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
     } else changeOption(button==1?1:-1);
 }
 

@@ -51,7 +51,7 @@ static bool poolSurface(int sector,bool ceiling) {
     const Image &image=lumpImage(lump,true);
     if(image.emissionWeight<=0)return false;
     char name[9];memcpy(name,lumpinfo[lump].name,8);name[8]=0;
-    int kind=doom_emissive_kind(name,1);
+    int kind=Game_GlowKind(name,1);
     return kind==DOOM_EMISSIVE_LAVA||kind==DOOM_EMISSIVE_SLIME||kind==DOOM_EMISSIVE_MAGMA||image.emissionCoverage>=0.4f;
 }
 // One area light per pool: neighboring sectors whose floor (or ceiling)

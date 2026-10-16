@@ -43,6 +43,8 @@ int P_PicAnimationNext(boolean istexture,int pic,int *next);
 }
 #include <SDL3/SDL.h>
 #include "../i_render3d.h"
+#include "../game_profile.h"
+#include "../game_materials.h"
 #include "../scene3d.h"
 #include "../emissive.h"
 #include "../screen_glass.h"

@@ -29,16 +29,14 @@ static std::array<float,3> frameGlow(int sprite,int frame) {
 void muzzleFlash(mobj_t *source,int weapon,int projectile) {
     if(!source||gamestate!=GS_LEVEL) return;
     if(flashLevelSerial!=r_levelserial) {flashPulses.clear();flashLevelSerial=r_levelserial;}
-    float radius=384,strength=1.9f;
-    if(weapon==wp_shotgun||weapon==wp_supershotgun) {radius=448;strength=2.4f;}
-    else if(weapon==wp_missile||weapon==wp_bfg) {radius=480;strength=2.6f;}
-    else if(weapon==wp_plasma) {radius=320;strength=1.6f;}
+    float radius=384,strength=1.9f;int flashState=-1;
+    Game_MuzzleFlash(weapon,&radius,&strength,&flashState);
     float z=source->player?units(source->player->viewz)-8:units(source->z)+units(source->height)*0.65f;
     int sprite=source->sprite,frame=source->frame;
     if(projectile>=0&&projectile<NUMMOBJTYPES) {
         const auto &state=states[mobjinfo[projectile].spawnstate];sprite=state.sprite;frame=state.frame;
-    } else if(source->player&&weapon>=0&&weapon<NUMWEAPONS) {
-        const auto &state=states[weaponinfo[weapon].flashstate];sprite=state.sprite;frame=state.frame;
+    } else if(source->player&&flashState>=0) {
+        const auto &state=states[flashState];sprite=state.sprite;frame=state.frame;
     }
     FlashPulse pulse={units(source->x),units(source->y),z,radius,strength,leveltime,source,frameGlow(sprite,frame)};
     for(auto &old:flashPulses) if(old.source==source) {old=pulse;return;}
@@ -95,19 +93,18 @@ static void doorSpill(const Uniforms &camera);
 // a floor scorch, once per barrel.
 static std::unordered_map<const mobj_t*,bool> burstBarrels;
 static float barrelLight(const mobj_t &thing) {
-    if(thing.type!=MT_BARREL||!thing.state)return 0;
-    int state=int(thing.state-states);
-    if(state<S_BEXP||state>S_BEXP5)return 0;
-    static const float curve[]={0.7f,1.2f,1.8f,2.8f,1.5f};
-    float strength=curve[state-S_BEXP];
-    if(state==S_BEXP5)strength*=std::clamp(thing.tics/10.0f,0.0f,1.0f);
+    int frame=Game_BlastFrame(&thing);
+    if(frame<0)return 0;
+    static const float curve[GAME_BLAST_FRAMES]={0.7f,1.2f,1.8f,2.8f,1.5f};
+    float strength=curve[frame];
+    if(frame==GAME_BLAST_FRAMES-1)strength*=std::clamp(thing.tics/10.0f,0.0f,1.0f);
     return strength;
 }
 // Teleport fog (and the item respawn fog): a burst that peaks as it appears
 // and fades over the rest of its frames, timed from the state chain so
 // DEHACKED changes keep it in step. 0 for every other thing.
 static float teleportLight(const mobj_t &thing) {
-    if((thing.type!=MT_TFOG&&thing.type!=MT_IFOG)||!thing.state)return 0;
+    if(Game_ThingRole(thing.type)!=GAME_THING_TELEPORT_FOG||!thing.state)return 0;
     int total=0,elapsed=-1,current=int(thing.state-states);
     for(int state=thing.info->spawnstate,n=0;state!=S_NULL&&n<32;state=states[state].nextstate,++n) {
         if(state==current)elapsed=total+std::max(0,(int)(states[state].tics-thing.tics));
@@ -243,7 +240,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
             barrels.push_back({thing,dx*dx+dy*dy+dz*dz});
             auto seen=burstBarrels.find(thing);
             if(seen!=burstBarrels.end())seen->second=true;
-            else if(thing->state-states>=S_BEXP4) {burstBarrels[thing]=true;barrelBlast(*thing,x,y,z);}
+            else if(Game_BlastFrame(thing)>=GAME_BLAST_BURST) {burstBarrels[thing]=true;barrelBlast(*thing,x,y,z);}
             continue;
         }
         if(teleportLight(*thing)>0) {
@@ -293,8 +290,9 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         const mobj_t &thing=*projectiles[n].thing;
         float x,y,z;interpolatedPosition(thing,fraction,x,y,z);
         float radius=256,strength=1.7f;
-        if(thing.type==MT_BFG) {radius=448;strength=2.4f;}
-        else if(thing.type==MT_ROCKET) {radius=288;strength=1.5f;}
+        game_thing_role role=Game_ThingRole(thing.type);
+        if(role==GAME_THING_BIG_SHOT) {radius=448;strength=2.4f;}
+        else if(role==GAME_THING_ROCKET) {radius=288;strength=1.5f;}
         appendLight(x,y,z+units(thing.height)*0.5f,radius,strength,frameGlow(thing.sprite,thing.frame),&thing,0.75f);
     }
     // Teleport flashes share the projectiles' light kind; the nearest four.
