@@ -137,8 +137,14 @@ typedef struct
 	mappatch_t	patches[1];
 } maptexture_t;
 
+// DTD: the C++ renderer includes this header too.
+#ifdef __cplusplus
+static_assert(sizeof(mappatch_t) == 10, "WAD texture patch layout");
+static_assert(offsetof(maptexture_t, patches) == 22, "WAD texture header layout");
+#else
 _Static_assert(sizeof(mappatch_t) == 10, "WAD texture patch layout");
 _Static_assert(offsetof(maptexture_t, patches) == 22, "WAD texture header layout");
+#endif
 
 
 /*
