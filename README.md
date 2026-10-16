@@ -1,6 +1,7 @@
 # DOOM Engine Remaster Project - DERP
 
 ## A few thoughts: 
+The name is slightly imprecise technically, since the renderer sits on top of the original engine, but DERP was too good to pass up.
 
 This has grown into more than I initially had in mind. The basic idea is described further down and still holds, but during development I realised how much I enjoy thinking about what these environments were supposed to look and feel like, and what the technical constraints of the time kept them from doing.
 
