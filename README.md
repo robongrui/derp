@@ -1,5 +1,9 @@
 # Duct-Tape DOOM
 
+> **This is the `heretic-port` branch,** where Heretic is being added. See
+> [`heretic/README.md`](heretic/README.md). The `main` branch stays at
+> v0.4.5 for a while; this work goes into `main` once it is ready.
+
 An idea of how DOOM could have looked if id had kept iterating on this engine,
 and if we still played on CRTs. It tries to look newer without looking modern:
 light comes from lamps and windows, monsters are lit as rounded bodies, water
