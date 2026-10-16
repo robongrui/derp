@@ -1,4 +1,4 @@
-# Duct-Tape DOOM
+# DOOM Engine Remaster Project - DERP
 
 ## A few thoughts: 
 
