@@ -7,6 +7,7 @@ extern "C" {
 #include <cmath>
 #include <cstring>
 #include "settings_panel.h"
+#include "game_profile.h"
 
 namespace doom3d {
 namespace {
@@ -24,6 +25,13 @@ Option slider(const char *key,const char *title,float *number,double low,double 
     option.number=number;option.low=low;option.high=high;option.step=step;option.enabled=enabled;option.items=labels;
     return option;
 }
+bool hasGlass(const Settings&) {return Game_HasEffect(GAME_EFFECT_WINDOW_GLASS)!=0;}
+bool hasFlashlight(const Settings&) {return Game_HasEffect(GAME_EFFECT_FLASHLIGHT)!=0;}
+}
+
+void fitGame(Settings &s) {
+    if(!Game_HasEffect(GAME_EFFECT_WINDOW_GLASS))s.windowGlass=0;
+    if(!Game_HasEffect(GAME_EFFECT_SHOOTABLE_LIGHTS))s.shootableLights=0;
 }
 
 std::vector<OptionTab> optionTabs(Settings &s) {
@@ -82,7 +90,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("window_glass","Window glass",&s.windowGlass,
                     "Windows found in the map's geometry get a pane of glass: grimy at the edges, streaked with highlights that "
                     "slide as you move, reflecting the sky from outside. The first shot, projectile or blast through it shatters "
-                    "it into shards; shots and sight pass exactly as in vanilla."),
+                    "it into shards; shots and sight pass exactly as in vanilla.",hasGlass),
                 check("glass_reflections","Glass reflections",&s.glassReflections,
                     "Experimental: the window filling most of the view mirrors the room in front of it, monsters and shots "
                     "included, drawn a second time like the liquid reflections and at their resolution. Costs about as much as they do.",
@@ -142,14 +150,14 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     [](const Settings &d){return d.bakedLights!=0||d.sun!=0;}),
                 check("eye_adaptation","Eye adaptation",&s.eyeAdaptation,"Brief stepped over- or underexposure when you move between bright and dark areas.")}},
             {"Flashlight and shadows",{
-                slider("flashlight_tint","Flashlight tint",&s.flashlightTintGain,0,2,0.5,"Subtle target-color tint: left is off, middle is the default, right is stronger."),
+                slider("flashlight_tint","Flashlight tint",&s.flashlightTintGain,0,2,0.5,"Subtle target-color tint: left is off, middle is the default, right is stronger.",hasFlashlight),
                 check("classic_flashlight","Classic flashlight",&s.classicFlashlight,
                     "A shorter, warmer beam that works like Doom's own light levels: it brightens what it hits in "
-                    "hard steps to a little past full brightness and no further, so monsters keep their palette colors."),
+                    "hard steps to a little past full brightness and no further, so monsters keep their palette colors.",hasFlashlight),
                 check("stippled_shadows","Stippled shadow edges",&s.stippledShadows,
                     "The shadows walls, ledges and monsters throw in the flashlight stay hard but break into a coarse dither at the edge: "
-                    "a pixel where the wall meets its shadow, wider the farther the shadow falls behind it."),
-                check("flashlight_shadows","Flashlight silhouettes",&s.flashlightShadows,"Things caught in the flashlight throw their sprite outline onto the wall behind them."),
+                    "a pixel where the wall meets its shadow, wider the farther the shadow falls behind it.",hasFlashlight),
+                check("flashlight_shadows","Flashlight silhouettes",&s.flashlightShadows,"Things caught in the flashlight throw their sprite outline onto the wall behind them.",hasFlashlight),
                 check("player_shadow","Player shadow",&s.playerShadow,"Your own sprite's shadow from the sun or the strongest light above you.")}}}},
         {"Atmosphere",{
             {"Air",{
@@ -162,6 +170,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     [](const Settings &d){return d.sun!=0&&d.sunShafts!=0;}),
                 check("sun_disc","Sun in the sky",&s.sunDisc,"A faint sun disc and soft glow where the baked sunlight comes from, over the sky texture's brightest part."),
                 check("dust_motes","Dust motes",&s.dust,"Specks that glint in indoor sunbeams and the flashlight beam."),
+                check("embers","Embers",&s.embers,"A few sparks rise from torches and fires and cool as they climb; where the game's wind blows, it carries them off."),
                 check("heat_haze","Heat haze",&s.heatHaze,"Rows of pixels shimmer above lava, hot damaging floors and flames.")}},
             {"Combat",{
                 check("blood","Blood splats and pools",&s.blood,
@@ -174,7 +183,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "of a lamp or screen breaks its whole fixture, and rockets and barrels break those around them: they sputter out "
                     "and go dark, and the room darkens with them a moment later. Render-only: monsters see as before, and the lights "
                     "are back after a reload.",
-                    [](const Settings &d){return d.emissive!=0;}),
+                    [](const Settings &d){return d.emissive!=0&&Game_HasEffect(GAME_EFFECT_SHOOTABLE_LIGHTS)!=0;}),
                 check("kill_shots_carry","Kill shots carry on",&s.killShotsCarry,
                     "A bullet or pellet that kills what it hits carries on past the body, so a fight can shoot out the lamps and "
                     "screens behind the monsters. Only for sparks and lights, never damage: the game sees the shot stop as always.",
@@ -211,6 +220,12 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("damp_shores","Damp shores",&s.dampShores,
                     "Walls and banks just above water, nukage, slime and blood turn darker and damp up to a ragged line, "
                     "a little stained by the liquid. Lava stays dry."),
+                check("glow_edges","Glowing liquid edges",&s.glowEdges,
+                    "Walls running straight into nukage, slime or lava take the glowing strip the game paints on its own edge textures, "
+                    "like the NUKE24 steps, instead of only the walls a mapper gave that texture."),
+                check("shore_ripples","Shore ripples",&s.shoreRipples,
+                    "Liquids ripple where they meet walls, like the splash rings running along the shore: quick thin lines on water, "
+                    "slow broad ones on nukage and slime, slow glowing ones on lava, a still dark line on blood."),
                 check("splashes","Splashes",&s.splashes,"Ripple rings where things land, wade or are shot in liquids, and spouts where shots and projectiles hit them. "
                     "Things standing in liquids sink in; nukage, slime, blood and lava splash thick and bubble.")}}}},
         {"Sound",{

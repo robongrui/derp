@@ -222,6 +222,7 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     SDL_BindGPUGraphicsPipeline(pass,decalPipeline);
     for(const auto &batch:decalBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
     SDL_BindGPUGraphicsPipeline(pass,particlePipeline);drawVertices(pass,particleVertices);
+    SDL_BindGPUGraphicsPipeline(pass,crestPipeline);drawVertices(pass,crestVertices);
     // Window glass over everything behind it, shards included; it writes no depth.
     if(!glassVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,glassPipeline);
@@ -302,6 +303,7 @@ static void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const U
     SDL_PushGPUVertexUniformData(render,0,&camera,sizeof(camera));
     SDL_GPUTextureSamplerBinding palette={paletteTexture,nearestClamp};
     SDL_BindGPUFragmentSamplers(glowPass,1,&palette,1);
+    bindEmissionEdges(render,glowPass,camera);
     for(const auto &batch:batches) if(!batch.second.empty()) {bindSurface(render,glowPass,batch.first,0,false);drawVertices(glowPass,batch.second);}
     // The sky hides glow behind it: a covered texel with no emission.
     SDL_GPUTextureSamplerBinding solid={solidTexel,nearestClamp};

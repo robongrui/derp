@@ -7,7 +7,7 @@ namespace doom3d {
 // Contact shadows stay separate and remain after the transient shadow fades.
 void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
                     float x,float y,float z,const Uniforms &camera,const ShadowLight *light,bool anyThing) {
-    if(!anyThing&&!(thing.info->flags&MF_COUNTKILL)&&thing.type!=MT_SKULL) return;
+    if(!anyThing&&!(thing.info->flags&MF_COUNTKILL)&&Game_ThingRole(thing.type)!=GAME_THING_UNCOUNTED_MONSTER) return;
     const sector_t *sector=thing.subsector->sector;
     if(sector->floorpic==skyflatnum) return;
     float floor=floorZ(sector),height=std::max(0.0f,z-floor);

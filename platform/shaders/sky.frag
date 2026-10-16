@@ -71,11 +71,12 @@ void main() {
     // silhouettes meet a soft band rather than a hard painted edge.
     if(c.materials.z>0.0&&c.effects.z==0.0)
         color.rgb=mix(color.rgb,low,0.55*(1.0-smoothstep(-0.05,0.3,ray.z)));
-    // The sun, 40 degrees up at the baked yaw (bakeSun in scene3d/bake_sun.cpp): a small
+    // The sun at the baked yaw and the height the sky paints it (c.outdoor.w;
+    // bakeSun in scene3d/bake_sun.cpp, 40 degrees for DOOM): a small
     // disc and a wide glow in its tint. Smooth, like the softened sky around
     // it; a dither here shimmers over a large part of the sky.
     if(c.fx2.w>0.0) {
-        vec3 toward=vec3(cos(c.fx2.z)*0.76604,sin(c.fx2.z)*0.76604,0.64279);
+        vec3 toward=vec3(cos(c.fx2.z)*cos(c.outdoor.w),sin(c.fx2.z)*cos(c.outdoor.w),sin(c.outdoor.w));
         float a=acos(clamp(dot(ray,toward),-1.0,1.0));
         float disc=1.0-smoothstep(0.016,0.024,a),glow=exp(-a*a/0.012)*0.45+exp(-a/0.35)*0.12;
         float amount=saturate(disc*0.75+glow)*c.fx2.w;

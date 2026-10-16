@@ -13,6 +13,7 @@ static void addWall(const line_t &line,int side,Point a,Point b,float bottom,flo
     tex=texturetranslation[tex]; wallImage(tex);
     float u=units(sides[line.sidenum[side]].textureoffset),len=std::hypot(b.x-a.x,b.y-a.y);
     auto &out=batches[tex];unsigned mode=sectorMode(sides[line.sidenum[side]].sector);
+    if(wallImage(tex).leaded&&settings.emissive)mode|=MODE_STAINED_GLASS;
     size_t first=out.size();
     Vertex corners[4]={{a.x,a.y,top,u,anchor-top,light,mode},{b.x,b.y,top,u+len,anchor-top,light,mode},
                        {b.x,b.y,bottom,u+len,anchor-bottom,light,mode},{a.x,a.y,bottom,u,anchor-bottom,light,mode}};
@@ -331,7 +332,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     // Per-pixel lighting from silhouette normals (flipped with a mirrored frame, below).
     if(settings.detail&&!(thing->frame&FF_FULLBRIGHT))mode|=MODE_RELIT;
     // Airborne blood shines like the floor blood (needs the normals of MODE_RELIT).
-    if(settings.bloodShine&&thing->type==MT_BLOOD&&(mode&MODE_RELIT))mode|=MODE_WET_SPRITE;
+    if(settings.bloodShine&&Game_ThingRole(thing->type)==GAME_THING_BLOOD&&(mode&MODE_RELIT))mode|=MODE_WET_SPRITE;
     if(settings.glowingEyes&&(thing->flags&MF_COUNTKILL)&&thing->health>0)mode|=MODE_GLOWING_EYES;
     if(!(thing->frame&FF_FULLBRIGHT))light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
     // MODE_SOFT: effect sprites (shots, puffs, fogs) dither out at floors
@@ -362,7 +363,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     // MODE_GROUNDED: grounding darkens the feet of things that rest on the floor.
     // Sprites have no sun map, so vSun carries strength and height above floor.
     float lift=units(thing->z-thing->floorz),grounding=1-lift/32;
-    bool grounded=settings.detail&&grounding>0&&!(thing->frame&FF_FULLBRIGHT)&&!soft&&thing->type!=MT_BLOOD&&
+    bool grounded=settings.detail&&grounding>0&&!(thing->frame&FF_FULLBRIGHT)&&!soft&&Game_ThingRole(thing->type)!=GAME_THING_BLOOD&&
         !(thing->flags&(MF_SHADOW|MF_MISSILE|MF_SPAWNCEILING));
     // The quad for one view: that view's frame, facing along its right.
     auto emit=[&](std::map<int,std::vector<Vertex>> &out,unsigned seen,float rx,float ry,bool collar) {
@@ -456,6 +457,7 @@ void geometry(const Uniforms &camera,float fraction) {
     buildBlood(camera);
     buildHeat(camera);
     buildDust(camera);
+    buildEmbers(camera);
     buildBubbles(camera);
 }
 } // namespace doom3d

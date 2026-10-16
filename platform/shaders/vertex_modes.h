@@ -12,6 +12,7 @@
 #define MODE_MIRROR_FLOOR    32u   // a liquid floor sampling the reflection pass
 #define MODE_PICKUP          64u   // pickups: a soft pulse and some bloom
 #define MODE_GROUNDED        128u  // darkened feet of things resting on the floor
+#define MODE_STAINED_GLASS   128u  // map surfaces only: leaded stained glass (Image::leaded)
 #define MODE_BLOOD           256u  // blood decal; vTint carries wetness and drying
 #define MODE_HARD_SILHOUETTE 512u  // shadow pass: keep the sprite's pixel outline
 #define MODE_SOFT            1024u // effect sprite: dithers out at floors, drawn in front of walls

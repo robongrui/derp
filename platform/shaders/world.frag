@@ -59,7 +59,11 @@ layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // blend: the crossfade toward the animation's next frame. weaponProbe, for
 // the relit weapon only: what it sees ahead, behind, right, left, up and
 // down in the view's frame (rgb; weaponProbe in scene3d/weapon.cpp).
-layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; };
+// frameMean, cycleMean: a liquid flat's average color at this crossfade and
+// over its whole animation; cycleMean.a is the contrast it keeps far away,
+// 0 for everything that is not a liquid (surfaceBinding in scene3d/scene.cpp).
+// frameMean.a is 1 on ice floors (iceFlat): deep grooves, glassy shine.
+layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 frameMean; vec4 cycleMean; };
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
 #include "indexed.glsl"
@@ -126,11 +130,33 @@ void main() {
             uv=clamp(origin+(lensed*0.5+0.5)*extent,origin+0.5,origin+extent-0.5);
         }
     }
+    // MODE_STAINED_GLASS: leaded stained glass, shaded like a shot-out
+    // screen's broken glass. Its colored panes (the glow mask) are the
+    // shards; each leans its own way (the leaded relief, withLeadedRelief)
+    // and so takes its own highlights and sheen; the lead stays a matte wall.
+    if(!sprite&&!glassy&&(vMode&MODE_STAINED_GLASS)!=0u&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&
+       maskAt(image,vUV,false)>0.0) {
+        vec3 tangent,bitangent;textureFrame(normal,dp1,dp2,duv1,duv2,tangent,bitangent);
+        vec2 lean=(texelFetch(relief,wrapTexel(ivec2(floor(vUV)),textureSize(relief,0)),0).rg*255.0-128.0)/127.0;
+        screenNormal=normalize(normal+lean.x*tangent+lean.y*bitangent);
+        glassy=true;
+    }
     vec4 color;
     if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0,false);
     else color=surfaceTexture(image,uv,texelPixel,lod);
     // Animated flats and walls crossfade toward their next frame.
     if(blend>0.0) color=mix(color,surfaceTexture(nextImage,uv,texelPixel,lod),blend);
+    // Big pools: with distance the liquid's artwork fades into detail on a
+    // steady average color, its contrast kept down to cycleMean.a, so far
+    // water reads as one body instead of a tiled floor and no longer pulses
+    // as the frames change. Grazing views fade it sooner. poolTone varies
+    // the whole body a little across calm and rough stretches.
+    if(!sprite&&cycleMean.a>0.0&&c.effects.z==0.0) {
+        float facing=abs(normalize(c.eye.xyz-vWorld).z);
+        float reach=vDistance*mix(2.5,1.0,saturate(facing*2.5));
+        float detail=mix(1.0,cycleMean.a,smoothstep(192.0,1024.0,reach));
+        color.rgb=max(cycleMean.rgb+(color.rgb-frameMean.rgb)*detail,vec3(0))*poolTone(vWorld.xy);
+    }
     if(color.a<0.45) discard;
 #ifdef COVERAGE
     // Depth comes from the rasterizer, per sample like the shading pass.
@@ -191,6 +217,13 @@ void main() {
             specular+=vec3(round(edge*saturate(dot(illumination,vec3(0.299,0.587,0.114)))*0.45*16.0)/16.0);
         }
     }
+    // FEATURE_GLOW_EDGES: walls at a glowing liquid's edge take its painted
+    // strip (edgeStrip in world/shore.glsl), glowing where the strip does.
+    float edgeGlow=0.0;
+    if(mapped&&(bakeFlags&FEATURE_GLOW_EDGES)!=0u&&abs(normal.z)<=0.5) {
+        vec3 paint;float amount=edgeStrip(vWorld,normal,paint,edgeGlow);
+        color.rgb=mix(color.rgb,paint,amount);
+    }
     float emission=0.0;
     // MODE_GLOWING_EYES: a monster's painted eyes shine a little past full
     // brightness whatever light falls on it.
@@ -211,6 +244,7 @@ void main() {
             if(!glassy) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114))*0.15),emission);
             emission=0.0;
         }
+        emission=max(emission,edgeGlow);
         illumination=max(illumination,vec3(emission));
     }
     // FEATURE_DAMP_SHORES: damp walls and banks above liquids (shoreWet), darker and
@@ -259,6 +293,12 @@ void main() {
     if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&(MODE_SCREEN|MODE_SOFT))==0u&&c.effects.z==0.0)
         color.rgb+=albedo*(1.0-emission)*caustics(vWorld,normal,0u,true)*2.5;
     if((vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
+    // Outdoor haze (c.haze, Game_Sun): surfaces under open sky fade toward
+    // the sky's horizon color with distance, so far walls meet the sky.
+    if(c.haze.w>0.0&&c.effects.z==0.0&&(vMode&MODE_SCREEN)==0u&&(vMode>>MODE_SECTOR_SHIFT)>0u&&sectorInfo[sector].w>0.0) {
+        float open=1.0-outdoorShape(sector).x;
+        color.rgb=mix(color.rgb,c.haze.rgb*c.fx.x,open*c.haze.w*0.6*(1.0-exp(-max(vDistance-256.0,0.0)/1400.0)));
+    }
     if((vMode&MODE_SCREEN)==0u) {
         vec4 fog=fogAlong(vWorld);
         color.rgb=color.rgb*fog.a+fog.rgb;
@@ -290,10 +330,11 @@ void main() {
 #else
     // Mirror pass (water = plane,0,0,1): alpha holds how near the point is
     // to the liquid surface along the mirrored ray, sharp within a step's
-    // height, gone a couple of storeys up. Blended geometry keeps it.
+    // height, gone a couple of storeys up (clear water, c.eye.w: a whole
+    // hall up). Blended geometry keeps it.
     if(c.water.z==0.0&&c.water.w>0.0) {
         float along=max(vWorld.z-c.water.x,0.0)/max(abs(normalize(vWorld-c.eye.xyz).z),0.05);
-        color.a=1.0-smoothstep(16.0,256.0,along);
+        color.a=1.0-smoothstep(16.0,mix(256.0,1024.0,c.eye.w),along);
     }
 #endif
     outColor=color;

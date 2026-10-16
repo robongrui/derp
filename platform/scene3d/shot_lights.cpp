@@ -180,7 +180,7 @@ static int tileKind(const SurfaceLightKey &key) {
         int pic=key[2]?sectors[key[1]].ceilingpic:sectors[key[1]].floorpic;
         if(pic==skyflatnum)return DOOM_EMISSIVE_NONE;
         memcpy(name,lumpinfo[firstflat+flattranslation[pic]].name,8);name[8]=0;
-        return doom_emissive_kind(name,1);
+        return Game_GlowKind(name,1);
     }
     const line_t &line=lines[key[1]];
     if(line.sidenum[key[2]]<0)return DOOM_EMISSIVE_NONE;
@@ -188,7 +188,7 @@ static int tileKind(const SurfaceLightKey &key) {
     int texture=key[5]==1?s.toptexture:key[5]==2?s.bottomtexture:s.midtexture;
     if(texture<=0)return DOOM_EMISSIVE_NONE;
     R_TextureName(texturetranslation[texture],name);
-    return doom_emissive_kind(name,0);
+    return Game_GlowKind(name,0);
 }
 // A near miss: the unbroken lamp whose light point (the middle of its
 // glow) lies within 16 units of the hit, on whatever surface the hit is. A
@@ -213,7 +213,7 @@ static const SurfaceLight *nearLamp(float x,float y,float z) {
 // piece has none at all, lampless breaks it (or what it joins) whole.
 static void shotSurface(const char *name,bool flat,const Image &image,float u,float v,const std::function<bool(const SurfaceLightKey&)> &matches,
                         const std::function<bool()> &lampless,float x,float y,float z,const float normal[3],int reach) {
-    int kind=doom_emissive_kind(name,flat);
+    int kind=Game_GlowKind(name,flat);
     bool fixture=settings.emissive&&(kind==DOOM_EMISSIVE_LAMP||kind==DOOM_EMISSIVE_PANEL)&&shotGlow(image,u,v,kind==DOOM_EMISSIVE_PANEL,reach);
     std::array<float,3> color=image.emissionColor;
     auto anyTile=[&] {
@@ -236,7 +236,7 @@ static void shotSurface(const char *name,bool flat,const Image &image,float u,fl
         sparkFlash(x+normal[0]*8,y+normal[1]*8,z+normal[2]*8,256,2.0f,color);
         return;
     }
-    if(!doom_spark_texture(name,flat))return;
+    if(!Game_SparkTexture(name,flat))return;
     float pick=randomRange(0,1);
     I_MadeSound(pick<0.5f?IMPACT_SPARK_CRACKLE:pick<0.8f?IMPACT_SPARK_FIZZ:IMPACT_SPARK_ZAP,x,y,z);
     sparks(x,y,z,normal,6,false);
@@ -393,7 +393,7 @@ void blastLights(float x,float y,float z,float radius) {
             float pz=std::clamp(z,span.bottom,span.top);
             if(std::hypot(std::hypot(px-x,py-y),pz-z)>=radius)continue;
             char name[9];R_TextureName(texturetranslation[span.texture],name);
-            int kind=doom_emissive_kind(name,0);
+            int kind=Game_GlowKind(name,0);
             if(kind!=DOOM_EMISSIVE_LAMP&&kind!=DOOM_EMISSIVE_PANEL)continue;
             if(wallImage(texturetranslation[span.texture]).emissionWeight<=0)continue;
             SurfaceLightKey whole=wholePiece(i,side,section);
@@ -415,7 +415,8 @@ static std::unordered_map<const mobj_t*,Flight> flights;
 // breaks no wall.
 static void projectileBurst(const mobj_t &thing,const Flight &flight) {
     float x=units(thing.x),y=units(thing.y),z=units(thing.z)+units(thing.height)/2;
-    if(thing.type==MT_ROCKET||thing.type==MT_BFG)blastLights(x,y,z,128);
+    game_thing_role role=Game_ThingRole(thing.type);
+    if(role==GAME_THING_ROCKET||role==GAME_THING_BIG_SHOT)blastLights(x,y,z,128);
     int reach=std::max(1,(int)std::lround(units(thing.radius)*0.5f));
     int sector=int(thing.subsector->sector-sectors);
     if(thing.z<=thing.floorz+FRACUNIT) {if(sectors[sector].floorpic!=skyflatnum)shotFlat(sector,false,x,y,units(thing.floorz),reach);return;}

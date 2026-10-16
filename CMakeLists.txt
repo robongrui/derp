@@ -61,11 +61,9 @@ set(DOOM_SOURCES
     linuxdoom-1.10/m_argv.c
     linuxdoom-1.10/m_bbox.c
     linuxdoom-1.10/m_cheat.c
-    linuxdoom-1.10/m_fixed.c
     linuxdoom-1.10/m_menu.c
     linuxdoom-1.10/m_misc.c
     linuxdoom-1.10/m_random.c
-    linuxdoom-1.10/m_swap.c
     linuxdoom-1.10/p_ceilng.c
     linuxdoom-1.10/p_doors.c
     linuxdoom-1.10/p_enemy.c
@@ -99,16 +97,61 @@ set(DOOM_SOURCES
     linuxdoom-1.10/st_stuff.c
     linuxdoom-1.10/tables.c
     linuxdoom-1.10/v_video.c
-    linuxdoom-1.10/w_wad.c
     linuxdoom-1.10/wi_stuff.c
-    linuxdoom-1.10/z_zone.c
 )
+# The engine parts every game program shares: WAD access, the zone, byte
+# order and fixed point.
+add_library(doom_engine STATIC linuxdoom-1.10/m_fixed.c linuxdoom-1.10/m_swap.c
+    linuxdoom-1.10/w_wad.c linuxdoom-1.10/z_zone.c)
+target_include_directories(doom_engine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
+target_link_libraries(doom_engine PUBLIC doom_options)
 add_library(doom_core STATIC ${DOOM_SOURCES})
 target_include_directories(doom_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
-target_link_libraries(doom_core PUBLIC doom_options)
+target_link_libraries(doom_core PUBLIC doom_options doom_engine)
 if(NOT WIN32)
     target_link_libraries(doom_core PUBLIC m)
 endif()
+
+# A game program's parts: its simulation and its answers to
+# platform/game_profile.h. The shared platform sources (renderer, audio, F4
+# panel) are compiled into each game program against that game's headers.
+add_library(doom_game INTERFACE)
+target_sources(doom_game INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/profile.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/materials.c")
+target_link_libraries(doom_game INTERFACE doom_core)
+
+# Heretic: Raven's game code (heretic/), with heretic/derp/ answering the
+# DOOM headers the shared platform code includes.
+set(HERETIC_SOURCES
+    heretic/am_map.c heretic/ct_chat.c heretic/d_main.c heretic/d_net.c heretic/f_finale.c
+    heretic/g_game.c heretic/in_lude.c heretic/info.c heretic/m_misc.c heretic/mn_menu.c
+    heretic/p_ceilng.c heretic/p_doors.c heretic/p_enemy.c heretic/p_floor.c heretic/p_inter.c
+    heretic/p_lights.c heretic/p_map.c heretic/p_maputl.c heretic/p_mobj.c heretic/p_plats.c
+    heretic/p_pspr.c heretic/p_setup.c heretic/p_sight.c heretic/p_spec.c heretic/p_switch.c
+    heretic/p_telept.c heretic/p_tick.c heretic/p_user.c heretic/r_bsp.c heretic/r_data.c
+    heretic/r_draw.c heretic/r_main.c heretic/r_plane.c heretic/r_segs.c heretic/r_things.c
+    heretic/s_sound.c heretic/sb_bar.c heretic/sounds.c heretic/tables.c heretic/v_video.c
+)
+add_library(heretic_core STATIC ${HERETIC_SOURCES})
+target_include_directories(heretic_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/heretic"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heretic/derp")
+target_link_libraries(heretic_core PUBLIC doom_options doom_engine)
+if(NOT MSVC)
+    # Raven's code as released: K&R-style declarations and DOS-era casts.
+    # Watcom's char was signed (-j); ticcmds and tables rely on it. Source
+    # options come after doom_options' -Wall, so the quieting sticks.
+    target_compile_options(heretic_core PRIVATE -fsigned-char)
+    set_source_files_properties(${HERETIC_SOURCES} PROPERTIES COMPILE_OPTIONS
+        "-Wno-unused;-Wno-unused-but-set-variable;-Wno-parentheses;-Wno-dangling-else;-Wno-missing-braces;-Wno-char-subscripts;-Wno-switch;-Wno-deprecated-non-prototype;-Wno-unsequenced;-Wno-misleading-indentation;-Wno-sometimes-uninitialized;-Wno-logical-not-parentheses;-Wno-sizeof-pointer-memaccess;-Wno-pointer-sign;-Wno-absolute-value;-Wno-shift-negative-value;-Wno-format;-Wno-non-literal-null-conversion;-Wno-unknown-warning-option")
+endif()
+if(NOT WIN32)
+    target_link_libraries(heretic_core PUBLIC m)
+endif()
+add_library(heretic_game INTERFACE)
+target_sources(heretic_game INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/heretic/profile.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/heretic/materials.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heretic/i_derp.c")
+target_link_libraries(heretic_game INTERFACE heretic_core)
 
 # A complete link of the engine without graphics/audio dependencies.
 add_library(doom_headless_platform OBJECT platform/i_headless.c platform/i_portable_system.c)
@@ -157,8 +200,8 @@ if(DOOM_BUILD_SDL)
     add_library(doom_music STATIC platform/audio/music_score.c platform/audio/music_player.c
         platform/audio/opl_chip.c platform/audio/opl_genmidi.c platform/audio/opl_voices.c
         platform/audio/sf2_synth.c)
-    target_include_directories(doom_music PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10"
-        "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
+    target_include_directories(doom_music PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
+    target_include_directories(doom_music PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
     target_include_directories(doom_music PRIVATE "${tinysoundfont_SOURCE_DIR}")
     target_link_libraries(doom_music PUBLIC nuked_opl3 doom_options)
     if(NOT WIN32)
@@ -191,6 +234,7 @@ if(DOOM_BUILD_SDL)
     # doom-music-render <wad> [-song D_E1M1|all] [-synth opl|sf2] [-sf2 bank.sf2] ...
     add_executable(doom-music-render tests/music_render.c)
     target_link_libraries(doom-music-render PRIVATE doom_music)
+    target_include_directories(doom-music-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
     # Renders the made-up effects (sparks, dying lamps, glass) after a pistol shot, and the ambient
     # sounds of lamps, screens, liquids and fire, dry and in rooms:
     # doom-sfx-render <wad> [-kind name|ambient|all] [-room dry|room|hall|all] [-rate 11025] [-level 0.6] [-gun on|off] [-out dir]
@@ -208,14 +252,16 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/bake_indirect.cpp
         platform/scene3d/bake_lights.cpp
         platform/scene3d/bake_sun.cpp
+        platform/scene3d/glass_light.cpp
         platform/scene3d/blood.cpp
         platform/scene3d/caustics.cpp
+        platform/scene3d/liquid_edges.cpp
+        platform/scene3d/embers.cpp
         platform/scene3d/config.cpp
         platform/scene3d/exposure.cpp
         platform/scene3d/geometry.cpp
         platform/scene3d/images.cpp
         platform/scene3d/impacts.cpp
-        platform/scene3d/light_swings.c
         platform/scene3d/lights.cpp
         platform/scene3d/liquids.cpp
         platform/scene3d/loading.cpp
@@ -262,7 +308,7 @@ if(DOOM_BUILD_SDL)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
-    target_link_libraries(doom PRIVATE doom_core SDL3::SDL3 doom_music)
+    target_link_libraries(doom PRIVATE doom_game SDL3::SDL3 doom_music)
     target_compile_definitions(doom PRIVATE DOOM_NATIVE)
     set_target_properties(doom PROPERTIES WIN32_EXECUTABLE TRUE)
     doom_add_renderer(doom ${DOOM_RENDER3D})
@@ -270,6 +316,8 @@ if(DOOM_BUILD_SDL)
         target_sources(doom PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm)
         set_source_files_properties(platform/i_wad_launcher.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-D_DARWIN_C_SOURCE")
         target_link_libraries(doom PRIVATE "-framework AudioToolbox" "-framework CoreFoundation" "-framework Cocoa")
+        # The identifier keeps the project's old name: changing it would make
+        # macOS treat the app as new and forget the launcher's WAD folder.
         set_target_properties(doom PROPERTIES
             OUTPUT_NAME "Play DOOM"
             OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES
@@ -300,13 +348,35 @@ if(DOOM_BUILD_SDL)
         add_custom_command(TARGET doom POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DOOM_GAME_DATA}" "$<TARGET_FILE_DIR:doom>/default.wad")
     endif()
+    # The Heretic program: derp-heretic -iwad heretic.wad
+    add_executable(derp-heretic platform/sdl_main.c platform/i_sdl_video.c
+        platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
+        platform/i_portable_system.c platform/wad_probe.c)
+    target_link_libraries(derp-heretic PRIVATE heretic_game SDL3::SDL3 doom_music)
+    target_compile_definitions(derp-heretic PRIVATE DOOM_NATIVE)
+    doom_add_renderer(derp-heretic ${DOOM_RENDER3D})
+    if(APPLE)
+        target_sources(derp-heretic PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm)
+        target_link_libraries(derp-heretic PRIVATE "-framework AudioToolbox" "-framework CoreFoundation" "-framework Cocoa")
+        set_target_properties(derp-heretic PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES)
+        # One app plays both: the launcher hands Heretic WADs to derp-heretic
+        # beside Play DOOM in Contents/MacOS (sdl_main.c).
+        add_dependencies(doom derp-heretic)
+        # A target of its own, so a Heretic-only change reaches the bundle
+        # even when Play DOOM itself doesn't relink.
+        add_custom_target(derp-heretic-bundle ALL
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:derp-heretic>"
+                "$<TARGET_BUNDLE_DIR:doom>/Contents/MacOS/derp-heretic"
+            VERBATIM)
+        add_dependencies(derp-heretic-bundle doom derp-heretic)
+    endif()
     if(BUILD_TESTING)
-        function(doom_add_smoke target renderer)
+        function(doom_add_smoke target game renderer)
             add_executable(${target} ${ARGN} platform/i_sdl_video.c
                 platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
                 platform/i_portable_system.c)
             target_compile_definitions(${target} PRIVATE DOOM_TEST_DRIVER)
-            target_link_libraries(${target} PRIVATE doom_core SDL3::SDL3 doom_music)
+            target_link_libraries(${target} PRIVATE ${game} SDL3::SDL3 doom_music)
             doom_add_renderer(${target} ${renderer})
             if(APPLE)
                 target_sources(${target} PRIVATE platform/i_mac_music.c)
@@ -316,19 +386,19 @@ if(DOOM_BUILD_SDL)
         # Plays every map of a WAD and reports slow views and their causes:
         # doom-perf-smoke <iwad> [-maps MAP01,MAP02] [-spacing units] [-budget ms]
         if(DOOM_RENDER3D)
-            doom_add_smoke(doom-perf-smoke ON tests/perf_smoke.c)
+            doom_add_smoke(doom-perf-smoke doom_game ON tests/perf_smoke.c)
         endif()
     endif()
     if(BUILD_TESTING AND DOOM_GAME_DATA)
         file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data")
-        doom_add_smoke(doom-native-smoke OFF tests/native_smoke.c)
+        doom_add_smoke(doom-native-smoke doom_game OFF tests/native_smoke.c)
         add_test(NAME native-gameplay-save-load COMMAND doom-native-smoke "${DOOM_GAME_DATA}")
         set_tests_properties(native-gameplay-save-load PROPERTIES
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data"
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy"
             TIMEOUT 30)
         if(DOOM_TEST_GPU)
-            doom_add_smoke(doom-gpu-smoke ON tests/native_smoke.c)
+            doom_add_smoke(doom-gpu-smoke doom_game ON tests/native_smoke.c)
             add_test(NAME gpu-gameplay-save-load COMMAND doom-gpu-smoke "${DOOM_GAME_DATA}")
             set_tests_properties(gpu-gameplay-save-load PROPERTIES
                 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data" TIMEOUT 60)

@@ -15,6 +15,7 @@
 #include "w_wad.h"
 #include "map.h"
 #include "room.h"
+#include "../game_materials.h"
 
 #define RAYS 32
 #define SPEED 10700.0f  /* sound, in map units per second (a unit is ~3.2 cm) */
@@ -29,43 +30,22 @@ typedef struct { float absorb, dark; } material_t;
 static const material_t metal = {0.06f, 0.15f}, stone = {0.10f, 0.45f}, wood = {0.22f, 0.70f},
     flesh = {0.30f, 0.80f}, liquid = {0.03f, 0.30f}, soil = {0.40f, 0.75f}, open_air = {1, 0};
 
-static int prefixed(const char *name, const char *const *list)
+/* What the game's texture and flat names say they are made of
+   (game_materials.h); names that match nothing sound like stone. */
+static material_t surface_material(game_surface surface)
 {
-    for (; *list; ++list)
+    switch (surface)
     {
-        size_t i = 0;
-        while ((*list)[i] && toupper((unsigned char)name[i]) == (*list)[i]) ++i;
-        if (!(*list)[i]) return 1;
+    case GAME_SURFACE_METAL: return metal;
+    case GAME_SURFACE_WOOD: return wood;
+    case GAME_SURFACE_FLESH: return flesh;
+    case GAME_SURFACE_SOIL: return soil;
+    case GAME_SURFACE_LIQUID: return liquid;
+    default: return stone;
     }
-    return 0;
 }
-/* The IWADs' texture families; PWAD names that match none sound like stone. */
-static material_t wall_material(const char *name)
-{
-    static const char *const metals[] = {"STARTAN", "STARG", "STARBR", "COMP", "METAL", "SUPPORT",
-        "SHAWN", "DOOR", "BIGDOOR", "EXITDOOR", "LITE", "PIPE", "PLAT", "TEKWALL", "TEKGREN", "TEKLITE",
-        "SLADWALL", "SILVER", "BRONZE", "SPACEW", "NUKE", "SW1", "SW2", "STEP", "MIDGRATE", "MIDBARS",
-        "ICKDOOR", "ICKWALL", "TEKBRON", "BROWNPIP", NULL};
-    static const char *const woods[] = {"WOOD", "PANEL", "PANBOOK", "PANBORD", "PANCASE", NULL};
-    static const char *const fleshes[] = {"SKIN", "SKSNAKE", "SKSPINE", "SP_FACE", "FLESH", "SLOPPY", "SPCDOOR", NULL};
-    if (prefixed(name, woods)) return wood;
-    if (prefixed(name, fleshes)) return flesh;
-    if (prefixed(name, metals)) return metal;
-    return stone;
-}
-static material_t flat_material(const char *name)
-{
-    static const char *const liquids[] = {"NUKAGE", "FWATER", "SWATER", "SLIME", "BLOOD", "LAVA", "WATER", NULL};
-    static const char *const soils[] = {"GRASS", "RROCK19", "RROCK20", "MFLR8_3", "FLAT10", NULL};
-    static const char *const woods[] = {"FLAT5_1", "FLAT5_2", "CEIL1_1", "CRATOP", NULL};
-    static const char *const metals[] = {"FLOOR4", "FLOOR5", "FLAT14", "FLAT20", "FLAT22", "FLAT23",
-        "CEIL3", "COMP", "GATE", "STEP", "TLITE", "SLIME13", "CONS1", NULL};
-    if (prefixed(name, liquids)) return liquid;
-    if (prefixed(name, soils)) return soil;
-    if (prefixed(name, woods)) return wood;
-    if (prefixed(name, metals)) return metal;
-    return stone;
-}
+static material_t wall_material(const char *name) { return surface_material(Game_WallSurface(name)); }
+static material_t flat_material(const char *name) { return surface_material(Game_FlatSurface(name)); }
 
 /* Per texture and flat, named once per WAD. */
 static material_t *walls, *flats;

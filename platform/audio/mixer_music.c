@@ -28,7 +28,7 @@ static sf2_bank_t*	bank;
 static score_t		score;
 static music_player_t	player;
 static const music_synth_t*	synth;
-static boolean		song_loaded, paused;
+static boolean		song_loaded, music_paused;
 static float		volume = 8 / 15.0f;
 
 static boolean start_opl (int rate)
@@ -84,7 +84,7 @@ void MixerMusic_Play (boolean loop)
     if (!song_loaded)
 	return;
     Player_Start (&player, &score, synth, loop);
-    paused = false;
+    music_paused = false;
 }
 
 void MixerMusic_Stop (void)
@@ -92,8 +92,8 @@ void MixerMusic_Stop (void)
     Player_Stop (&player);
 }
 
-void MixerMusic_Pause (void) { paused = true; }
-void MixerMusic_Resume (void) { paused = false; }
+void MixerMusic_Pause (void) { music_paused = true; }
+void MixerMusic_Resume (void) { music_paused = false; }
 
 void MixerMusic_SetVolume (int level)
 {
@@ -110,7 +110,7 @@ struct tsf* MixerMusic_UseBank (struct tsf* using)
 
 void MixerMusic_Render (float* stereo, int frames)
 {
-    if (paused || !player.playing)
+    if (music_paused || !player.playing)
 	return;
     Player_Mix (&player, stereo, frames, volume * (synth == &SF2_Synth ? SF2_GAIN : OPL_GAIN));
 }

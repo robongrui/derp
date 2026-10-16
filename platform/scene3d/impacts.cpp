@@ -20,12 +20,15 @@ void dropOldLevelImpacts() {
 }
 // A block size map units across (tall times as high), but never under one
 // Doom pixel, set on the Doom-pixel grid at its depth: a pixel of an old
-// sprite rather than a soft speck. The color is lit, then put in the palette.
+// sprite rather than a soft speck. The color is lit, then put in the palette
+// (unless palette is false: liquid crests match the smoothly shaded water).
+// With taken, a block whose Doom-pixel corner is already in it is skipped.
 // A resting block stands on the point instead of centering on it, so a floor
 // does not swallow half of it. Given its unlit color, the flashlight beam
 // lights it too.
+std::unordered_set<uint64_t> crestCells;
 void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting,
-                const std::array<float,3> *albedo) {
+                const std::array<float,3> *albedo,bool palette,std::unordered_set<uint64_t> *taken) {
     float d[3]={x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]};
     float depth=d[0]*camera.forward[0]+d[1]*camera.forward[1]+d[2]*camera.forward[2];
     if(depth<4)return;
@@ -34,13 +37,14 @@ void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,
     float py=(d[0]*camera.up[0]+d[1]*camera.up[1]+d[2]*camera.up[2])/unit;
     float w=std::max(1.0f,std::round(size/unit)),h=std::max(1.0f,std::round(size*tall/unit));
     float left=std::round(px+across-w*0.5f)-across,bottom=std::round(py+100-(resting?0:h*0.5f))-100;
+    if(taken&&!taken->insert((uint64_t)(uint32_t)(int32_t)std::lround(left)<<32|(uint32_t)(int32_t)std::lround(bottom)).second)return;
     std::array<float,3> shade=color;
     if(albedo&&flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
         const Flash &beam=flashes.lights[0];
         float amount=flashAt(x,y,z,beam);
         if(amount>0)for(int c=0;c<3;++c)shade[c]=std::min(1.0f,shade[c]+(*albedo)[c]*amount*beam.color[c]);
     }
-    auto lit=paletteColor(shade);
+    auto lit=palette?paletteColor(shade):shade;
     auto vertex=[&](float sx,float sz) {
         float r=(sx-px)*unit,u=(sz-py)*unit;
         Vertex v={x+camera.right[0]*r+camera.up[0]*u,y+camera.right[1]*r+camera.up[1]*u,z+camera.right[2]*r+camera.up[2]*u,0,0,1,0};
@@ -116,13 +120,19 @@ static void flatDecal(int sectorIndex,float x,float y,float h,float z,int lump,c
             for(Point p:{polygon[0],polygon[n],polygon[n+1]})decalBatches[lump].push_back(vertex(p));
     }
 }
+// The game's sprite for an effect role; no frames when the game has none.
+static const spritedef_t &effectSprite(game_sprite_role role) {
+    static const spritedef_t none={0,nullptr};
+    int sprite=Game_Sprite(role);
+    return sprite>=0&&sprite<numsprites?sprites[sprite]:none;
+}
 void buildImpacts(const Uniforms &camera) {
     for(auto &batch:decalBatches)batch.second.clear();
-    particleVertices.clear();
+    particleVertices.clear();crestVertices.clear();crestCells.clear();
     dropOldLevelImpacts();
     float now=gameSeconds();
     scorches.erase(std::remove_if(scorches.begin(),scorches.end(),[&](const Scorch &d){return now-d.born>60||now<d.born;}),scorches.end());
-    const auto &blast=sprites[SPR_BEXP];
+    const auto &blast=effectSprite(GAME_SPRITE_EXPLOSION);
     if(blast.numframes>2&&!scorches.empty()) {
         // Scorches reuse a fireball frame's coverage, clipped to the sector floor.
         int lump=firstspritelump+blast.spriteframes[2].lump[0];Image &image=lumpImage(lump,false);
@@ -134,7 +144,7 @@ void buildImpacts(const Uniforms &camera) {
     }
     wallDecals.erase(std::remove_if(wallDecals.begin(),wallDecals.end(),[&](const WallDecal &d){return now-d.born>40||now<d.born;}),wallDecals.end());
     flatDecals.erase(std::remove_if(flatDecals.begin(),flatDecals.end(),[&](const FlatDecal &d){return now-d.born>40||now<d.born;}),flatDecals.end());
-    const auto &puff=sprites[SPR_PUFF];
+    const auto &puff=effectSprite(GAME_SPRITE_PUFF);
     if(puff.numframes>2) {
         int lump=firstspritelump+puff.spriteframes[2].lump[0];Image &image=lumpImage(lump,false);
         for(const auto &d:flatDecals) {

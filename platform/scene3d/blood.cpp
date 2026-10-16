@@ -12,10 +12,11 @@ static std::vector<byte> bloodShades;static bool bloodShadesLoaded=false;
 static const std::vector<byte> &bloodPalette() {
     if(bloodShadesLoaded)return bloodShades;
     bloodShadesLoaded=true;
-    if(SPR_BLUD>=numsprites)return bloodShades;
+    int sprite=Game_Sprite(GAME_SPRITE_BLOOD);
+    if(sprite<0||sprite>=numsprites)return bloodShades;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<std::pair<float,byte>> pixels;
-    const auto &blood=sprites[SPR_BLUD];
+    const auto &blood=sprites[sprite];
     for(int frame=0;frame<blood.numframes;++frame) {
         const Image &image=lumpImage(firstspritelump+blood.spriteframes[frame].lump[0],false);
         for(size_t i=0;i+1<image.pixels.size();i+=2) if(image.pixels[i+1]) {

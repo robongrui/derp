@@ -98,9 +98,11 @@ void watchSplashes() {
 }
 // The light a ring, spout or bubble takes at a point: its sector's, faded with
 // distance like the floor it stands on (world.frag), so it reads as lit
-// liquid, not a glow, in dark rooms. Glowing liquids stay at full light.
+// liquid, not a glow, in dark rooms. Glowing liquids stay at full light:
+// any that glows at all (nukage glows on only some texels), since the pool
+// shines by its own glow and the spray thrown from it is the same stuff.
 float liquidLight(int sector,Image &flat,float x,float y,float z,const Uniforms &camera) {
-    if(flat.emissionCoverage>0.2f||sectorMist[sector].hot||camera.effects[2]!=0)return 1;
+    if(flat.emissionCoverage>0||sectorMist[sector].hot||camera.effects[2]!=0)return 1;
     float depth=(x-camera.eye[0])*camera.forward[0]+(y-camera.eye[1])*camera.forward[1]+(z-camera.eye[2])*camera.forward[2];
     return lighting(&sectors[sector])*std::clamp(1-depth/3200,0.35f,1.0f);
 }
@@ -111,6 +113,22 @@ static std::array<float,3> foam(std::array<float,3> color,float lift,float light
     lift*=std::clamp(light,0.0f,1.0f);
     for(float &c:color)c+=(1-c)*lift;
     return color;
+}
+// Ripple crests (rings, shore ripples) are the liquid as it is drawn, one
+// light step brighter: crestVertices brighten what is under them, so a crest
+// keeps the shaded water's own color, reflection and lamps included, and
+// stays dark where the water is dark. A crest is a slope, so it catches
+// light from directions the still surface cannot: a sharp glint, much
+// brighter while fresh and falling off quickly (squared) as it ages, and
+// more the light's color than the liquid's. fresh (0-1) sets the step in
+// quarters: a new crest doubles the surface, an old one fades out.
+static std::array<float,3> crestOf(int sector,float fresh) {
+    const auto &color=sectorMist[sector].color;
+    float peak=std::max({color[0],color[1],color[2],0.01f});
+    float step=std::round(std::clamp(fresh,0.0f,1.0f)*4)/4,lift=1.0f*step*step;
+    std::array<float,3> crest;
+    for(int c=0;c<3;++c)crest[c]=lift*(0.88f+0.12f*color[c]/peak);
+    return crest;
 }
 // Spouts: a drawn effect, not a simulation; nothing in it falls. A trunk
 // fat at the surface and slimming as it shoots up forks halfway into a few
@@ -147,9 +165,15 @@ static void buildSpouts(const Uniforms &camera) {
         int draw=0;auto random=[&]{return hashUnit(draw++,0x5b0u,s.seed);};
         auto gauss=[&]{return (random()+random()+random()-1.5f)/1.5f;};
         float front=height*1.05f*ease((t+1)/5),collapse=height*1.1f*(1-std::max(0.0f,(t-8)/8)),slim=1-std::clamp((t-9)/10,0.0f,0.7f);
+        // The base lies on the surface: a crest there, the liquid as drawn
+        // made brighter (crestOf), not a color of its own.
         if(t<12) {
             int n=std::max(2,(int)std::round((base+3)*(t<7?1:0.7f)/2));
-            for(int i=0;i<n;++i)put((i-(n-1)*0.5f)*2,0,0,2,t<6?2:1);
+            auto tint=crestOf(s.sector,t<6?1.0f:0.6f);
+            for(int i=0;i<n;++i) {
+                float side=(i-(n-1)*0.5f)*2;
+                pixelBlock(crestVertices,camera,s.x+rx*side,s.y+ry*side,floor,2,1,tint,true,nullptr,false,&crestCells);
+            }
         }
         float x=0,split=height*(0.45f+random()*0.15f);
         for(float z=0;z<split;z+=block) {
@@ -183,11 +207,93 @@ static void buildSpouts(const Uniforms &camera) {
         }
     }
 }
+// Shore ripples (settings.shoreRipples): liquid held by a wall ripples
+// against it, drawn like the splash rings: unbroken lines of Doom-pixel
+// blocks. Each crest is a line of equal distance from the shore, as a wave
+// sent back off the walls would be: straight along walls, meeting in a
+// point in inside corners, curving round outside corners and pillars. The
+// crests sit a wavelength apart and travel out at a steady pace, stepping
+// down from one light step above the liquid as drawn (crestOf) to nothing
+// as they go, so the wall shows a short train of fading lines. Water
+// ripples quick and close, thick liquids slow and broad, lava slower still
+// and glowing; blood only shows a still dark line along the wall. Quiet
+// liquid, so no foam. Phases drift across the map, so the walls of one pool
+// do not pulse in lockstep.
+static void buildShoreRipples(const Uniforms &camera) {
+    if(!settings.shoreRipples||shoreEdges.empty()||camera.effects[2]!=0)return;
+    float now=std::floor(gameSeconds()*TICRATE/frameTics)*frameTics/TICRATE;
+    auto depthOf=[&](float x,float y){return (x-camera.eye[0])*camera.forward[0]+(y-camera.eye[1])*camera.forward[1];};
+    for(const ShoreEdge &edge:shoreEdges) {
+        // Near enough to show, and not wholly behind the eye.
+        float ex=edge.bx-edge.ax,ey=edge.by-edge.ay,length=std::hypot(ex,ey),tx=ex/length,ty=ey/length;
+        float t=std::clamp(((camera.eye[0]-edge.ax)*tx+(camera.eye[1]-edge.ay)*ty)/length,0.0f,1.0f);
+        float nearX=edge.ax+ex*t,nearY=edge.ay+ey*t;
+        if(std::hypot(nearX-camera.eye[0],nearY-camera.eye[1])>1536)continue;
+        if(depthOf(edge.ax,edge.ay)<-32&&depthOf(edge.bx,edge.by)<-32)continue;
+        const sector_t &sector=sectors[edge.sector];
+        int look=liquidLook(sector.floorpic);if(look==LIQUID_LOOK_NONE)continue;
+        Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
+        float z=floorZ(&sector)+decalLift(nearX,nearY,camera)+0.1f;
+        float light=liquidLight(edge.sector,flat,nearX,nearY,z,camera);
+        const auto &base=sectorMist[edge.sector].color;
+        // wavelength, period (s), reach, block width and height, strength
+        // The shore map holds distances out to shoreRange plus two cells
+        // (caustics.cpp), at least 24 units: reaches stay inside that.
+        float wavelength=4.5f,period=0.9f,reach=21,width=0.8f,tall=1,strength=0.75f;
+        if(look==LIQUID_LOOK_THICK) {wavelength=7;period=2.4f;reach=23;width=1.8f;tall=0.6f;strength=0.6f;}
+        else if(look==LIQUID_LOOK_HOT) {wavelength=8;period=3.2f;reach=23;width=2.0f;tall=0.6f;strength=0.85f;}
+        float phase=0.35f*(std::sin(edge.ax*0.011f+edge.ay*0.004f)+std::cos(edge.ay*0.013f-edge.ax*0.006f));
+        float minDepth=std::max(4.0f,std::min(depthOf(edge.ax,edge.ay),depthOf(edge.bx,edge.by)));
+        float u=now/period+phase,lead=u-std::floor(u);
+        for(int j=0;;++j) {
+            float r,step;std::array<float,3> albedo;
+            if(look==LIQUID_LOOK_BLOOD) {
+                if(j)break;
+                r=1.5f;step=1;
+                for(int c=0;c<3;++c)albedo[c]=base[c]*0.55f;
+            } else {
+                // Crests leave the wall a wavelength apart and fade out by reach.
+                r=1.5f+wavelength*(lead+j);
+                if(r>reach)break;
+                step=(1-(r-1.5f)/(reach-1.5f))*strength;
+                if(std::round(step*4)<=0)continue;
+                albedo=crestOf(edge.sector,step);
+            }
+            float w=width+r*0.06f;
+            bool blood=look==LIQUID_LOOK_BLOOD;
+            std::array<float,3> tint=albedo;
+            if(blood)for(int c=0;c<3;++c)tint[c]=std::min(1.0f,albedo[c]*light);
+            float spacing=std::max(std::max(4.0f,minDepth)/(100*camera.projection[1])*0.9f,w*0.7f);
+            // Only where this edge is the nearest shore: the crest stops
+            // where another wall's crest at the same distance takes over.
+            auto put=[&](float x,float y,bool arc) {
+                float d=shoreDistanceAt(x,y);
+                if(d<r-1.5f||(arc&&d>r+1.5f))return;
+                if(blood)pixelBlock(particleVertices,camera,x,y,z,w,tall,tint,true,&albedo,false);
+                else pixelBlock(crestVertices,camera,x,y,z,w,tall,tint,true,nullptr,false,&crestCells);
+            };
+            int points=std::clamp((int)(length/std::max(spacing,0.05f)),1,1024);
+            for(int k=0;k<=points;++k) {
+                float a=length*k/points;
+                put(edge.ax+tx*a+edge.nx*r,edge.ay+ty*a+edge.ny*r,false);
+            }
+            // Round each end: kept only where that corner is the nearest
+            // shore, which is round outside corners and pillars.
+            int around=std::clamp((int)(r*doomPi*0.5f/std::max(spacing,0.05f)),1,64);
+            for(int k=1;k<=around;++k) {
+                float angle=k*doomPi*0.5f/around,cs=std::cos(angle)*r,sn=std::sin(angle)*r;
+                put(edge.ax+edge.nx*cs-tx*sn,edge.ay+edge.ny*cs-ty*sn,true);
+                put(edge.bx+edge.nx*cs+tx*sn,edge.by+edge.ny*cs+ty*sn,true);
+            }
+        }
+    }
+}
 // Rings: up to three full circles, the inner ones a few tics behind, growing
-// a frame every frameTics and thickening as they grow. They start at the brightest
-// texel of the liquid's flat, lit like the spouts, step down toward
-// the liquid's own color as they age, and are gone at the end.
+// a frame every frameTics and thickening as they grow. They start a light
+// step above the liquid as drawn (crestOf), lit by whatever lights it, the
+// flashlight included, step down to it as they age, and are gone at the end.
 void buildRings(Uniforms &camera) {
+    buildShoreRipples(camera);
     if(!settings.splashes||splashLevelSerial!=r_levelserial) {rings.clear();spouts.clear();return;}
     float now=gameSeconds();
     rings.erase(std::remove_if(rings.begin(),rings.end(),[&](const Ring &r){return now-r.born>r.life||now<r.born-0.1f;}),rings.end());
@@ -195,17 +301,6 @@ void buildRings(Uniforms &camera) {
         float age=std::max(0.0f,std::floor((now-ring.born)*TICRATE/frameTics)*frameTics/TICRATE),fade=(1-age/ring.life)*std::max(ring.strength,0.5f);
         const sector_t &sector=sectors[ring.sector];
         float z=floorZ(&sector)+decalLift(ring.x,ring.y,camera)+0.1f;
-        Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
-        float light=liquidLight(ring.sector,flat,ring.x,ring.y,z,camera);
-        const auto &brightest=brightestColor(flat);const auto &base=sectorMist[ring.sector].color;
-        std::array<float,3> albedo;
-        for(int c=0;c<3;++c)albedo[c]=brightest[c];
-        // The flashlight lights the whole ring by its center.
-        float beamAmount=0;std::array<float,3> beamColor={};
-        if(flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
-            const Flash &beam=flashes.lights[0];beamAmount=flashAt(ring.x,ring.y,z+1,beam);
-            for(int c=0;c<3;++c)beamColor[c]=beam.color[c];
-        }
         // Points along each circle close enough to touch at the nearest
         // depth it can have on screen, so it reads as one unbroken line.
         float cx=ring.x-camera.eye[0],cy=ring.y-camera.eye[1],cz=z-camera.eye[2];
@@ -217,17 +312,11 @@ void buildRings(Uniforms &camera) {
             float r=4+ring.speed*inner,width=(thick?2.0f:0.8f)+r*0.06f;
             float spacing=std::max(std::max(4.0f,centerDepth-r)/(100*camera.projection[1])*0.9f,width*0.7f);
             int points=std::clamp((int)(2*doomPi*r/std::max(spacing,0.05f)),12,512);
-            // Palette steps from the bright crest toward the liquid's color.
-            float mixed=std::round(step*4)/4;
-            std::array<float,3> albedoNow,tint;
-            for(int c=0;c<3;++c)albedoNow[c]=base[c]+(albedo[c]-base[c])*mixed;
-            if(!thick)albedoNow=foam(albedoNow,0.3f,light); // Water's rings in its paler foam blue.
-            for(int c=0;c<3;++c) {
-                tint[c]=std::min(1.0f,albedoNow[c]*light+albedoNow[c]*beamAmount*beamColor[c]);
-            }
+            // Light steps from a crest down to the liquid's own look.
+            std::array<float,3> tint=crestOf(ring.sector,step);
             for(int k=0;k<points;++k) {
                 float angle=k*2*doomPi/points;
-                pixelBlock(particleVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,width,thick?0.6f:1.0f,tint,true);
+                pixelBlock(crestVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,width,thick?0.6f:1.0f,tint,true,nullptr,false,&crestCells);
             }
         }
     }
@@ -281,17 +370,21 @@ void buildBubbles(const Uniforms &camera) {
                 }
                 if(!inside||std::hypot(x-camera.eye[0],y-camera.eye[1])>reach)continue;
                 auto color=gooColor(i,seed,x,y,floor,camera);
+                // The dome and the ring it leaves lie on the surface: crests,
+                // the liquid as drawn made brighter (crestOf). The droplets
+                // thrown up keep the goo's own color.
                 if(s<1.15f) {
                     float step=s<0.3f?1:s<0.6f?2:3;
-                    pixelBlock(particleVertices,camera,x,y,floor+0.2f,1.6f*step,s<0.9f?0.6f:0.8f,color,true,&color);
+                    pixelBlock(crestVertices,camera,x,y,floor+0.2f,1.6f*step,s<0.9f?0.6f:0.8f,crestOf(i,0.5f+0.5f*s/1.15f),true,nullptr,false,&crestCells);
                 } else {
                     float q=(s-1.15f)/0.25f,r=2+8*q,z=floor+0.2f+5*std::sin(doomPi*q);
                     for(int k=0;k<4;++k)
                         pixelBlock(particleVertices,camera,x+(k&1?r:-r)*0.7f,y+(k&2?r:-r)*0.7f,z,1.2f,1,color,false,&color);
+                    auto ring=crestOf(i,1-q);
                     for(int k=0;k<8;++k) {
                         if(hashUnit(k,(int)seed,seed^7u)<q)continue;
                         float angle=(k+0.5f)*doomPi/4;
-                        pixelBlock(particleVertices,camera,x+std::cos(angle)*r,y+std::sin(angle)*r,floor+0.2f,1.2f,1,color,true,&color);
+                        pixelBlock(crestVertices,camera,x+std::cos(angle)*r,y+std::sin(angle)*r,floor+0.2f,1.2f,1,ring,true,nullptr,false,&crestCells);
                     }
                 }
             }

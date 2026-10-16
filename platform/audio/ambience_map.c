@@ -10,13 +10,13 @@
 #include "p_local.h"
 #include "r_data.h"
 #include "w_wad.h"
-#include "../emissive.h"
+#include "../game_profile.h"
+#include "../game_materials.h"
 #include "ambience_spots.h"
 #include "map.h"
 
 #define CELL 128.0f      /* sources of a kind within a cell join into one spot */
 
-void T_FireFlicker(fireflicker_t *flick);
 
 spots_t ambience_spots[AMBIENT_KINDS];
 unsigned ambience_built = ~0u;
@@ -48,6 +48,7 @@ static float units(fixed_t v) { return v / (float)FRACUNIT; }
 static spot_t *add_spot(int kind, float x, float y, float z, float size, int sector, int portal)
 {
     if (kind < 0 || size <= 0) return NULL;
+    if (kind == AMBIENT_WIND && !Game_HasEffect(GAME_EFFECT_WIND)) return NULL; /* the game's own wind */
     spots_t *list = &ambience_spots[kind];
     int cx = (int)floorf(x / CELL), cy = (int)floorf(y / CELL), cz = (int)floorf(z / CELL) + (portal ? 1 << 20 : 0);
     spot_t *spot = NULL;
@@ -77,48 +78,12 @@ static spot_t *add(int kind, float x, float y, float z, float size, int sector)
     return add_spot(kind, x, y, z, size, sector, 0);
 }
 
-static int starts(const char *name, const char *prefix) { return !strncmp(name, prefix, strlen(prefix)); }
 
-/* Lamps, the console flats, liquids, hot rock and teleporter pads. */
-static int flat_kind(const char *name, int ceiling)
-{
-    int glow = doom_emissive_kind(name, 1);
-    if (glow == DOOM_EMISSIVE_LAMP) return AMBIENT_LAMP;
-    if (glow == DOOM_EMISSIVE_PANEL) return AMBIENT_COMPUTER;
-    if (ceiling) return -1;
-    if (glow == DOOM_EMISSIVE_LAVA) return AMBIENT_LAVA;
-    if (glow == DOOM_EMISSIVE_MAGMA) return AMBIENT_MAGMA;
-    if (starts(name, "NUKAGE") || starts(name, "SLIME")) return AMBIENT_NUKAGE;
-    if (starts(name, "BLOOD")) return AMBIENT_BLOOD;
-    if (starts(name, "FWATER")) return AMBIENT_WATER;
-    if (starts(name, "GATE")) return AMBIENT_TELEPORTER;
-    return -1;
-}
-/* Light fixtures and the lit strips beside key doors, computers and
-   screens, falls of liquid, fire and hot rock. Walls with only a lamp or a
-   few lights painted in (BSTONE3, the LED-dotted TEKWALL) stay quiet, and so
-   does the Icon of Sin's wall. */
-static int wall_kind(const char *name)
-{
-    static const char *const lamps[] = { "TLITE", "LITE", "LIGHT", "AQLITE", "TEKLITE", "METLITE",
-        "DOORBLU", "DOORRED", "DOORYEL", 0 };
-    static const char *const falls[] = { "SFALL", "SLADFAL", "BLODGR", "BLODRIP", "WFALL", 0 };
-    int glow = doom_emissive_kind(name, 0);
-    for (int i = 0; falls[i]; ++i) if (starts(name, falls[i])) return AMBIENT_SLIMEFALL;
-    if (glow == DOOM_EMISSIVE_LAVA) return starts(name, "DBRAIN") ? -1 : AMBIENT_FIRE;
-    if (glow == DOOM_EMISSIVE_MAGMA) return AMBIENT_MAGMA;
-    if (glow == DOOM_EMISSIVE_LAMP)
-    {
-        for (int i = 0; lamps[i]; ++i) if (starts(name, lamps[i])) return AMBIENT_LAMP;
-        return -1;
-    }
-    if (glow == DOOM_EMISSIVE_PANEL)
-    {
-        if (starts(name, "COMP") || starts(name, "AQCOMP")) return AMBIENT_COMPUTER;
-        if (starts(name, "PLANET") || starts(name, "SILVER3")) return AMBIENT_CRT;
-    }
-    return -1;
-}
+/* Lamps, consoles, liquids, hot rock and teleporter pads; light fixtures,
+   computers and screens, falls of liquid, fire and hot rock on walls: each
+   game's names say which (game_materials.h). */
+static int flat_kind(const char *name, int ceiling) { return Game_AmbientFlat(name, ceiling); }
+static int wall_kind(const char *name) { return Game_AmbientWall(name); }
 
 static void flat_name(int pic, char name[9])
 {
@@ -223,23 +188,23 @@ static void read_things(void)
 {
     for (thinker_t *th = thinkercap.next; th && th != &thinkercap; th = th->next)
     {
-        if (th->function.acp1 != (actionf_p1)P_MobjThinker) continue;
+        if (!Game_ThinkerIsMobj(th)) continue;
         const mobj_t *mo = (const mobj_t *)th;
         float x = units(mo->x), y = units(mo->y), z = units(mo->z), tall = units(mo->height);
         int sector = mo->subsector ? (int)(mo->subsector->sector - sectors) : 0;
-        switch (mo->sprite)
+        switch (Game_Decoration(mo->sprite))
         {
-        case SPR_COLU: case SPR_TLMP: case SPR_TLP2:
+        case GAME_DECORATION_LAMP:
         {
             spot_t *lamp = add(AMBIENT_LAMP, x, y, z + 0.8f * tall, 4096, sector);
             if (lamp) lamp->standing = 1;
             break;
         }
-        case SPR_TBLU: case SPR_TGRN: case SPR_TRED: case SPR_FCAN:
+        case GAME_DECORATION_TORCH:
             add(AMBIENT_FIRE, x, y, z + 0.7f * tall, 6000, sector); break;
-        case SPR_SMBT: case SPR_SMGT: case SPR_SMRT:
+        case GAME_DECORATION_SHORT_TORCH:
             add(AMBIENT_FIRE, x, y, z + 0.7f * tall, 4000, sector); break;
-        case SPR_CBRA:
+        case GAME_DECORATION_CANDLES:
             add(AMBIENT_FIRE, x, y, z + 0.8f * tall, 1200, sector); break;
         default: break;
         }
@@ -247,26 +212,18 @@ static void read_things(void)
 }
 
 /* The sectors whose light flickers, strobes or glows, and between what. */
+static void store_swing(int sector, int low, int high, int smooth, void *data)
+{
+    (void)smooth; (void)data;
+    swings[sector] = (swing_t){ (short)low, (short)high, 1 };
+}
+
 static void read_swings(void)
 {
     free(swings);
     swings = calloc((size_t)numsectors, sizeof(swing_t));
     if (!swings) return;
-    for (thinker_t *th = thinkercap.next; th && th != &thinkercap; th = th->next)
-    {
-        const sector_t *sector = NULL;
-        int low = 0, high = 0;
-        if (th->function.acp1 == (actionf_p1)T_LightFlash)
-        { lightflash_t *l = (lightflash_t *)th; sector = l->sector; low = l->minlight; high = l->maxlight; }
-        else if (th->function.acp1 == (actionf_p1)T_StrobeFlash)
-        { strobe_t *l = (strobe_t *)th; sector = l->sector; low = l->minlight; high = l->maxlight; }
-        else if (th->function.acp1 == (actionf_p1)T_Glow)
-        { glow_t *l = (glow_t *)th; sector = l->sector; low = l->minlight; high = l->maxlight; }
-        else if (th->function.acp1 == (actionf_p1)T_FireFlicker)
-        { fireflicker_t *l = (fireflicker_t *)th; sector = l->sector; low = l->minlight; high = l->maxlight; }
-        if (!sector || high <= low) continue;
-        swings[sector - sectors] = (swing_t){ (short)low, (short)high, 1 };
-    }
+    Game_LightSwings(store_swing, NULL);
 }
 
 void Ambience_Build(void)

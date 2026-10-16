@@ -37,5 +37,7 @@ std::vector<OptionTab> optionTabs(Settings &s);
 // writeOptions writes them all.
 void readOption(Settings &s,const char *key,double value);
 void writeOptions(FILE *file,Settings &s);
+// Switches off the effects the game does without (Game_HasEffect).
+void fitGame(Settings &s);
 }
 #endif

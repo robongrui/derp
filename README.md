@@ -1,7 +1,7 @@
 # DOOM Engine Remaster Project - DERP
 
 ## A few thoughts: 
-The technically correct name would probably be *Remaster Project for DOOM Engine Games*, but RPFDE is a terrible acronym, so DERP it is.
+The technically correct name would probably be *Remaster Project for DOOM Engine Games*, but RPFDE is a terrible acronym, so DERP it is. Up to v0.4.5 this project was called Duct-Tape DOOM.
 
 This has grown into more than I initially had in mind. The basic idea is described further down and still holds, but during development I realised how much I enjoy thinking about what these environments were supposed to look and feel like, and what the technical constraints of the time kept them from doing.
 
@@ -35,7 +35,7 @@ This started as a visual experiment to see how far DOOM's presentation could
 be pushed while it still looks and plays like DOOM. I think of it as an art
 project. Effects stay or go based on how they look in-game, and the code is
 written for trying ideas out quickly. It is not meant to be a reference engine
-or a library to build on, and the "duct tape" in the name is accurate.
+or a library to build on.
 
 To fit the idea at the top, most of the effects are fake-modern: cheap tricks
 of the kind I liked in late-90s games, not the techniques a modern engine
@@ -63,8 +63,11 @@ graphics panel with **F4**.
   the source material, and there are no added sound files either.
 - **Compatibility:** vanilla and limit-removing maps, including DEHACKED
   patches.
-- **Not supported:** Boom, MBF21 and GZDoom maps, slopes, 3D floors, model
-  packs, ray tracing and multiplayer.
+- **Heretic too:** Raven's Heretic runs as a second program on the same
+  renderer, lighting and sound, tuned for its fantasy world. The launcher
+  hands Heretic WADs over by itself. See [Heretic](#heretic) below.
+- **Not supported:** Boom, MBF21 and GZDoom maps, Hexen, DOOM 64, slopes,
+  3D floors, model packs, ray tracing and multiplayer.
 - **Window glass:** windows found in the map get glass that reflects the room
   and shatters when something goes through it.
 - **Lights can be shot out:** lamps and screens break when shot or caught in a
@@ -92,7 +95,7 @@ but have had less real play.
 ## Download and play
 
 Ready-to-play builds for macOS, Windows and Linux are on the
-[Releases page](https://github.com/robongrui/duct-tape-doom/releases). Each one
+[Releases page](https://github.com/robongrui/derp/releases). Each one
 includes Freedoom, so it plays straight away.
 
 On Windows and Linux, put your own `.wad` files in the `wads` folder next to
@@ -103,6 +106,28 @@ sound options.
 
 The ambience is quiet by design and the music covers it. For the soundscape,
 turn the music down or off in **Options → Sound Volume**.
+
+## Heretic
+
+DERP plays Raven's Heretic as well, on the same 3D renderer, lighting, sound
+and music, and again worked out entirely from the WAD you load. Pick a
+Heretic WAD in the launcher (or drop it in the `wads` folder) and the game
+starts the Heretic program, `derp-heretic`, which ships next to the DOOM one.
+You need your own copy: the 2025 *Heretic + Hexen* release has both the new
+`heretic.wad` and the original DOS `HERETIC.WAD`, and both work.
+
+The effects are tuned for a fantasy world rather than a tech base. There is
+no window glass to shatter, no lamps to shoot out and no flashlight: the
+Torch item is the light you carry, burning as a flickering flame. Torches,
+chandeliers and serpent statues light their rooms, stained glass glints and
+throws its colours onto the floor, water is clear and mirror-like, the Ice
+Grotto's floor gets glassy streaks, and gloss comes from each texture's
+material instead of DOOM's palette ramps. Where Heretic already has
+something of its own, such as its wind and waterfall sounds, the game's
+version is used and DERP's made-up one stays off.
+
+Heretic is new and less played than DOOM; [`heretic/README.md`](heretic/README.md)
+has its controls, what works and what doesn't yet.
 
 ## Screenshots
 
@@ -381,6 +406,19 @@ Liquid flats can throw moving caustics onto nearby walls and, optionally,
 ceilings. The pattern is taken from the level's own liquid artwork. Banks just
 above liquids that aren't hot can darken as if damp.
 
+Walls running straight into nukage, slime or lava take the glowing strip the
+game paints at the foot of its own edge textures (DOOM's NUKE24 steps, for
+example). The strip is found in the WAD when the level loads, so every wall
+meeting the liquid gets it, not only the ones a mapper textured that way.
+Along the shore, thin ripple lines run out from the walls like the splash
+rings: quick and fine on water, slow and broad on nukage and slime, slow and
+glowing on lava, a still dark line on blood.
+
+Big pools read as one body of liquid instead of a tiled flat. Far away and at
+grazing angles the flat's detail fades toward the animation's average colour,
+and the surface drifts between calmer and rougher patches with long, slow
+wave bands in the reflection. Up close the WAD's own flat is still the detail.
+
 Bullets hitting liquid throw palette-colored drops and expanding rings, and
 things landing or wading in it disturb it too. Nukage, slime, blood and lava
 act heavier, with slower rings, bigger drops, bubbles and a wobbling collar
@@ -538,7 +576,9 @@ damaging floors can carry low cloud-like layers of mist. Sunlit openings can
 cast simple light shafts back toward the sun, with dust motes showing only
 where the sun or flashlight catches them. Hot floors and flames create small
 heat volumes, which a screen pass turns into a sideways shimmer that steps with
-the game tics.
+the game tics. Flames shed a few one-pixel embers that rise, cool from the
+flame's own colour to dark red and go out; where Heretic's wind sectors blow,
+the wind carries them off.
 
 The sun's position is inferred from the level's sky lighting. It can be drawn
 in the sky, optionally with forward scattering.
@@ -820,6 +860,8 @@ Please don't commit or upload commercial WAD files to this repository.
 
 You need CMake 3.21+ and a C11/C++17 compiler (Apple Clang, Clang, GCC or
 Visual Studio 2022). SDL3 is downloaded automatically if it isn't installed.
+The build makes both programs, `doom` (`Play DOOM.app` on the Mac) and
+`derp-heretic`; on the Mac the Heretic program goes inside the app.
 
 ```sh
 cmake -S . -B build/play -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON \
@@ -833,8 +875,9 @@ ctest --test-dir build/play --output-on-failure
 Copyright © 2026 Robert Heidenreich. Licensed under the GNU General Public
 License version 3 ([`LICENSE.TXT`](LICENSE.TXT)), with one additional term
 under section 7(b): redistributions and derivative works containing the
-original Duct-Tape DOOM contributions must preserve the attribution
-"Duct-Tape DOOM — https://github.com/robongrui/duct-tape-doom". The full
+original DERP contributions must preserve the attribution
+"DERP, the DOOM Engine Remaster Project — https://github.com/robongrui/derp".
+The full
 notice is in [`NOTICE.txt`](NOTICE.txt).
 
 The DOOM source by id Software, which this is built on, is GPL version 2 or

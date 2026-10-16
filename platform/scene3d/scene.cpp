@@ -5,6 +5,7 @@
 extern "C" {
 #include "../audio/sound_options.h"
 }
+#include "../settings_panel.h"
 
 namespace doom3d {
 Profile profile;
@@ -15,7 +16,7 @@ FogLights fogLights;
 std::vector<LightBlocker> lightBlockers;
 std::unordered_map<int,Image> images;
 std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches,mirrorBatches;
-std::vector<Vertex> mistVertices,particleVertices,heatVertices,skyVertices,shaftVertices;
+std::vector<Vertex> mistVertices,particleVertices,crestVertices,heatVertices,skyVertices,shaftVertices;
 GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 GpuTextureRef wallDirectionTexture,flatDirectionTexture;
 float reflectionPlane=0;
@@ -41,8 +42,22 @@ void interpolatedPosition(const mobj_t &thing,float fraction,float &x,float &y,f
         z=old->second[2]+(z-old->second[2])*fraction;
     }
 }
+// -renderview x y angle (map units, degrees) puts the player there once
+// per level, to aim -rendercheck frames.
+extern "C" boolean P_TeleportMove(mobj_t *thing,fixed_t x,fixed_t y);
+static void renderViewPlace(player_t &player) {
+    static unsigned placed=~0u;
+    int view=M_CheckParm((char*)"-renderview");
+    if(!view||view+3>=myargc||placed==r_levelserial)return;
+    placed=r_levelserial;
+    mobj_t *mo=player.mo;
+    P_TeleportMove(mo,(fixed_t)(atof(myargv[view+1])*FRACUNIT),(fixed_t)(atof(myargv[view+2])*FRACUNIT));
+    mo->z=mo->floorz;mo->angle=(angle_t)(int64_t)(atof(myargv[view+3])/360.0*4294967296.0);
+    player.viewz=mo->z+player.viewheight;
+}
 static void beforeTic() {
     if(gamestate!=GS_LEVEL||!players[displayplayer].mo||paused) {tickTime=0;return;}
+    renderViewPlace(players[displayplayer]);
     mobj_t *mo=players[displayplayer].mo;
     oldEye[0]=units(mo->x);oldEye[1]=units(mo->y);oldEye[2]=units(players[displayplayer].viewz);
     oldYaw=(float)(mo->angle*(2.0*doomPi/4294967296.0));tickTime=SDL_GetTicksNS();
@@ -64,6 +79,7 @@ static void acceleratedView(player_t *player) {
     }
 }
 void applySettings() {
+    fitGame(settings);
     R_AcceleratedView=settings.accelerated?acceleratedView:nullptr;
     R_BeforeTic=settings.accelerated?beforeTic:nullptr;
     R_MuzzleFlash=settings.accelerated?muzzleFlash:nullptr;
@@ -89,7 +105,7 @@ void sceneInit(SDL_Window *window) {
     loadSettings();if(M_CheckParm((char*)"-classic"))settings.accelerated=0;
     if(M_CheckParm((char*)"-rendercheck"))settings.accelerated=1;
     int fov=M_CheckParm((char*)"-fov");if(fov&&fov+1<myargc)settings.fov=std::clamp((float)atof(myargv[fov+1]),60.0f,120.0f);
-    flashlightOn=M_CheckParm((char*)"-flashlight")!=0;
+    flashlightOn=M_CheckParm((char*)"-flashlight")!=0&&Game_HasEffect(GAME_EFFECT_FLASHLIGHT);
     int tintOption=M_CheckParm((char*)"-flashlighttint");
     if(tintOption&&tintOption+1<myargc)
         settings.flashlightTintGain=std::clamp((float)atof(myargv[tintOption+1]),0.0f,2.0f);
@@ -104,7 +120,7 @@ void sceneShutdown() {
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     batches.clear();shadowBatches.clear();decalBatches.clear();mirrorBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
-    imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();exposureShutdown();
+    imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();glassLightShutdown();exposureShutdown();
     bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
     impactsShutdown();bloodShutdown();splashesShutdown();glassShutdown();shotLightsShutdown();
 }
@@ -141,6 +157,23 @@ static void planStages(bool level) {
     planLoading(LoadStage::Ambient,(settings.skyLight||settings.bakedAO)&&(level||ambientKey!=bakeThingsKey));
     planLoading(LoadStage::Flow,settings.lightFlow&&(level||flowKey!=flowInputs()));
 }
+// What frameMean's alpha tells surfaceLight about a texture's material:
+// 0 DOOM's palette ramps, 1 ice (iceFlat); with Game_SurfaceGloss, 2 a
+// sprite (judged by colour alone), else 3 + its game_surface.
+static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2&&GAME_SURFACE_FLESH==3&&GAME_SURFACE_SOIL==4&&GAME_SURFACE_LIQUID==5,
+              "materialGloss in world/surface.glsl numbers the surfaces");
+static float surfaceMaterial(int key,int pic,bool flat) {
+    if(flat&&iceFlat(pic))return 1;
+    if(!Game_SurfaceGloss())return 0;
+    static std::unordered_map<int,float> known;
+    auto found=known.find(key);
+    if(found!=known.end())return found->second;
+    float material=2;
+    char name[9]={};
+    if(key>=0) {R_TextureName(key,name);material=3+(float)Game_WallSurface(name);}
+    else if(flat) {memcpy(name,lumpinfo[firstflat+pic].name,8);material=3+(float)Game_FlatSurface(name);}
+    return known[key]=material;
+}
 // Binds a batch texture with its next animation frame and crossfade amount.
 // The engine switches frames before leveltime++, so the phase uses leveltime-1.
 SurfaceBinding surfaceBinding(int key) {
@@ -157,7 +190,28 @@ SurfaceBinding surfaceBinding(int key) {
             }
         }
     }
-    return {&image,next,blend};
+    SurfaceBinding binding={&image,next,blend};
+    binding.frameMean[3]=surfaceMaterial(key,pic,flat);
+    float floor=flat?liquidDetailFloor(pic):0;
+    if(floor>0) {
+        // The frames' average at the crossfade, and the average over the
+        // whole cycle, which stays put as the frames change.
+        const auto &a=averageColor(image),&b=averageColor(const_cast<Image&>(*next));
+        std::array<float,3> cycle={};int frames=0;
+        for(int at=pic,n=0;n<64;++n) {
+            const auto &mean=averageColor(lumpImage(firstflat+at,true));
+            for(int c=0;c<3;++c)cycle[c]+=mean[c];
+            ++frames;int following;
+            if(P_PicAnimationNext(false,at,&following)<=0||following==pic)break;
+            at=following;
+        }
+        for(int c=0;c<3;++c) {
+            binding.frameMean[c]=a[c]+(b[c]-a[c])*blend;
+            binding.cycleMean[c]=cycle[c]/frames;
+        }
+        binding.cycleMean[3]=floor;
+    }
+    return binding;
 }
 void screenQuad(std::vector<Vertex> &out,float x,float y,float w,float h,float u0,float v0,float u1,float v1,float light,unsigned mode) {
     quad(out,{x,y,0,u0,v0,light,mode},{x+w,y,0,u1,v0,light,mode},
@@ -188,7 +242,9 @@ FrameView prepareFrame(int w,int h) {
     camera.projection[2]=1;camera.projection[3]=32768;
     camera.effects[0]=settings.filter;camera.effects[1]=settings.retro;
     camera.texFilter[0]=settings.sharpSoftness;camera.texFilter[1]=settings.paletteMips&&settings.filter;
-    camera.effects[2]=players[displayplayer].fixedcolormap;
+    // A carried torch's colormap (Game_Torch) becomes real light (lights.cpp).
+    float torchFlame;
+    camera.effects[2]=Game_Torch(&torchFlame)?0:players[displayplayer].fixedcolormap;
     camera.effects[3]=settings.spriteFilter;camera.materials[0]=settings.emissive;
     unsigned features=(settings.detail?FEATURE_SURFACE_DETAIL:0)|(settings.retroReflections?FEATURE_RETRO_REFLECTIONS:0)|
         (settings.caustics&&causticTexture?FEATURE_CAUSTICS:0)|(settings.texelLight?FEATURE_TEXEL_BAKE:0)|
@@ -202,7 +258,8 @@ FrameView prepareFrame(int w,int h) {
         (settings.detail&&settings.variedHighlights?FEATURE_VARIED_HIGHLIGHTS:0)|
         (settings.windowLight&&bakedLightsActive?FEATURE_WINDOW_LIGHT:0)|
         (settings.detail&&settings.unevenTiles?FEATURE_UNEVEN_TILES:0)|(settings.detail&&settings.unevenWalls?FEATURE_UNEVEN_WALLS:0)|
-        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0)|(settings.stippledShadows?FEATURE_STIPPLED_SHADOWS:0);
+        (settings.classicFlashlight?FEATURE_CLASSIC_FLASHLIGHT:0)|(settings.stippledShadows?FEATURE_STIPPLED_SHADOWS:0)|
+        (settings.glowEdges&&shoreTexture&&causticPattern?FEATURE_GLOW_EDGES:0);
     camera.flashlightTint[3]=(float)features; // see shaders/feature_flags.h
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;
@@ -212,6 +269,7 @@ FrameView prepareFrame(int w,int h) {
     // through the dimmed backdrop and soften the panel's text.
     camera.materials[1]=settings.emissive&&worldPending&&camera.effects[2]==0&&!I_Render3DSettingsOpen();
     camera.fx[0]=1;
+    camera.eye[3]=Game_WaterClarity();
     float uiWidth=std::min((float)w,h*4.0f/3),uiHeight=uiWidth*0.75f,uiX=(w-uiWidth)/2;
     float uiY=worldPending&&settings.widescreen?h-uiHeight:(h-uiHeight)/2;
     float worldX=uiX+uiWidth*viewwindowx/320,worldY=uiY+uiHeight*viewwindowy/200.0f;
@@ -234,6 +292,9 @@ FrameView prepareFrame(int w,int h) {
         for(int c=0;c<3;++c)camera.sun[c]=sun?sunTint[c]:0;
         camera.sun[3]=sun?sunLevel:0;
         camera.fx2[2]=sunYaw;camera.fx2[3]=sun&&settings.sunDisc?sunGlow:0;
+        // outdoor: shade, sun gain, sky color share, the sun disc's height (Game_Sun).
+        game_sun game;Game_Sun(&game);
+        camera.outdoor[0]=sunShade;camera.outdoor[1]=sunGain;camera.outdoor[2]=game.skyCast;camera.outdoor[3]=sunDiscElevation;
         bakedLightsActive=settings.bakedLights&&lightBakeKey==lightBakeInputs();
         bakeOnlyActive=bakedLightsActive&&(lightBakeKey&2);
         // bake.z: 1 bake-only lights (directions and flicker groups), -1
@@ -255,7 +316,10 @@ FrameView prepareFrame(int w,int h) {
                 yaw=oldYaw+std::remainder(yaw-oldYaw,2*doomPi)*fraction;
             }
         }
-        float look=demoplayback?0:pitch;
+        // A game with its own look (Heretic) sets the pitch, demos included;
+        // mouselook turns that look (I_Render3DLook) so its aiming agrees.
+        float gameLook;
+        float look=Game_LookPitch(&gameLook)?gameLook:demoplayback?0:pitch;
         tourpitch=look;freeaim=settings.look&&!demoplayback;
         camera.right[0]=sin(yaw);camera.right[1]=-cos(yaw);
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
@@ -287,13 +351,20 @@ FrameView prepareFrame(int w,int h) {
         camera.fx2[1]=settings.skyLight&&ambient?skyLevel:0;
         // The fog haze takes the sky's color too, so it follows the sky without the sky-light bake.
         static int tintedSky=-1;
-        if(skytexture!=tintedSky){skyTint=skyColor();tintedSky=skytexture;}
+        static std::array<float,3> horizon;
+        if(skytexture!=tintedSky){skyTint=skyColor();horizon=skyHorizon();tintedSky=skytexture;}
         for(int c=0;c<3;++c)camera.fx[1+c]=skyTint[c];
+        // Outdoor haze in the sky's horizon color (Game_Sun), with the fog.
+        for(int c=0;c<3;++c)camera.haze[c]=horizon[c];
+        camera.haze[3]=settings.fog?game.haze:0;
         buildMist(camera);
         buildShafts(camera);
         buildRings(camera);
         updateExposure(camera);
         updateFlashlightTint(camera);
+        // The Torch item's faint lift over the whole view, flickering with
+        // the flame; most of its light is the carried flame (lights.cpp).
+        if(torchFlame>0)for(int c=0;c<3;++c)camera.flashlightTint[c]+=0.1f*torchFlame*torchColor()[c];
         selectFogLights(camera);
         if(profile.skip&I_RENDER3D_SKIP_MIST) {mistVertices.clear();shaftVertices.clear();}
         if(profile.skip&I_RENDER3D_SKIP_FOG) {fogLights={};camera.materials[2]=0;}
@@ -325,10 +396,18 @@ std::vector<std::array<float,4>> sectorInfo() {
             sectors[i].ceilingpic==skyflatnum?packOutdoor(&sectors[i]):0.0f};
     return info;
 }
-bool renderCheckDue() {return M_CheckParm((char*)"-rendercheck")&&worldPending&&gametic>10;}
+// -rendercheck <png> saves the first 3D frame after tic 10 (or -rendertic N)
+// and quits; -rendersettings opens the F4 panel for that frame first.
+bool renderCheckDue() {
+    int tic=M_CheckParm((char*)"-rendertic");
+    int after=tic&&tic+1<myargc?atoi(myargv[tic+1]):10;
+    bool due=M_CheckParm((char*)"-rendercheck")&&worldPending&&gametic>after;
+    if(due&&M_CheckParm((char*)"-rendersettings")&&!I_Render3DSettingsOpen()) {I_Render3DSettingsMenu();return false;}
+    return due;
+}
 void saveScreenshot(const void *bgra,int width,int height,int stride) {
     SDL_CreateDirectory("Screenshots");
-    char path[256];snprintf(path,sizeof(path),"Screenshots/DOOM-%llu.png",(unsigned long long)SDL_GetTicksNS());
+    char path[256];snprintf(path,sizeof(path),"Screenshots/%s-%llu.png",Game_Title(),(unsigned long long)SDL_GetTicksNS());
     int test=M_CheckParm((char*)"-rendercheck");
     const char *output=test&&test+1<myargc?myargv[test+1]:profile.screenshotPath?profile.screenshotPath:path;
     profile.screenshotPath=nullptr;
@@ -344,8 +423,9 @@ void updateTitle(int width,int height,const char *renderer) {
     if(now-titleTime>1000000000) {
         fps=frameCount*1e9/(now-titleTime);frameCount=0;titleTime=now;
         char rate[32]="";if(settings.fps)snprintf(rate,sizeof(rate)," · %.0f fps",fps);
-        char title[256];snprintf(title,sizeof(title),"DOOM · %s · %dx%d%s · F: flashlight · F4: graphics · F7: screenshot · Esc: menu",
-            settings.accelerated?renderer:"Classic",width,height,rate);
+        char title[256];snprintf(title,sizeof(title),"%s · %s · %dx%d%s%s · F4: graphics · F7: screenshot · Esc: menu",
+            Game_Title(),settings.accelerated?renderer:"Classic",width,height,rate,
+            Game_HasEffect(GAME_EFFECT_FLASHLIGHT)?" · F: flashlight":"");
         SDL_SetWindowTitle(gameWindow,title);
     }
 }
@@ -356,8 +436,13 @@ void updateTitle(int width,int height,const char *renderer) {
 using namespace doom3d;
 void I_Render3DStartFrame(void) {worldPending=false;v_overlayactive=false;}
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
-void I_Render3DLook(float delta) {if(settings.look&&settings.accelerated&&!demoplayback)pitch=std::clamp(pitch-delta*0.002f,-1.2f,1.2f);}
-void I_Render3DToggleFlashlight(void) {if(settings.accelerated)flashlightOn=!flashlightOn;}
+void I_Render3DLook(float delta) {
+    if(!settings.look||!settings.accelerated||demoplayback)return;
+    float gameLook;
+    if(Game_LookPitch(&gameLook))Game_Look(-delta*0.002f);
+    else pitch=std::clamp(pitch-delta*0.002f,-1.2f,1.2f);
+}
+void I_Render3DToggleFlashlight(void) {if(settings.accelerated&&Game_HasEffect(GAME_EFFECT_FLASHLIGHT))flashlightOn=!flashlightOn;}
 void I_Render3DScreenshot(void) {screenshotPending=true;}
 const I_Render3DFrameProfile *I_Render3DLastFrame(void) {return &profile.frame;}
 void I_Render3DProfileTeleported(void) {surfaceSelection.clear();surfaceLightTime=0;}

@@ -13,6 +13,7 @@
 #include <set>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <ctime>
 #include <functional>
@@ -35,7 +36,7 @@ extern "C" {
 #include "m_bbox.h"
 extern int viewwindowx, viewwindowy;
 extern boolean menuactive, automapactive, paused;
-extern int numflats;
+extern int numflats, numtextures;
 extern float tourpitch;
 extern boolean freeaim;
 extern fixed_t aimslope;
@@ -43,6 +44,8 @@ int P_PicAnimationNext(boolean istexture,int pic,int *next);
 }
 #include <SDL3/SDL.h>
 #include "../i_render3d.h"
+#include "../game_profile.h"
+#include "../game_materials.h"
 #include "../scene3d.h"
 #include "../emissive.h"
 #include "../screen_glass.h"
@@ -127,6 +130,13 @@ std::vector<byte> spriteNormals(int w,int h,const byte *pixels);
 
 // map.cpp
 void mapShutdown();
+// How a liquid flat looks at its shores (shore ripples) and how much of its
+// contrast remains far away (0: not a liquid).
+enum { LIQUID_LOOK_NONE,LIQUID_LOOK_WATER,LIQUID_LOOK_THICK,LIQUID_LOOK_BLOOD,LIQUID_LOOK_HOT };
+int liquidLook(int pic);
+// Ice floors (Game_IceFlat): deep grooves, glassy highlights and a sheen.
+bool iceFlat(int pic);
+float liquidDetailFloor(int pic);
 extern std::vector<std::vector<Point>> floors;
 extern std::vector<std::vector<int>> sectorFloors;
 extern std::vector<std::array<float,4>> floorBounds;
@@ -148,7 +158,21 @@ void causticsShutdown();
 extern std::vector<int> causticFrames;
 extern int causticSpeed;
 void buildCaustics();
+
+// liquid_edges.cpp
+// A glowing liquid's edge strip, from its edge texture (height 0: none):
+// per row up from the foot, 64 texels of palette index, paint and glow.
+struct EdgeStrip { int kind=0,height=0,texture=-1; std::vector<byte> index,paint,glow; };
+const EdgeStrip &edgeStrip(int kind);
+int liquidGlowKind(int sector);
+const EdgeStrip *levelEdgeStrip();
 void buildShore();
+// Liquid edges from buildShore: a to b, the liquid sector, and the unit
+// normal pointing into the liquid. shoreDistance: signed distance per map
+// cell (into the liquid positive), as the shore texture holds it.
+struct ShoreEdge { float ax,ay,bx,by,nx,ny; int sector; };
+extern std::vector<ShoreEdge> shoreEdges;
+float shoreDistanceAt(float x,float y);
 
 // bake_atlas.cpp
 void bakeAtlasNewLevel();
@@ -176,6 +200,13 @@ extern float sunDirection[3];
 // The sun drawn in the sky: yaw of the baked direction, and its strength
 // from how bright the sky texture is around it (a dark sky shows only a hint).
 extern float sunYaw,sunGlow;
+extern float sunElevation,sunDiscElevation,sunShade,sunGain;
+std::array<float,3> skyHorizon();
+std::array<float,3> torchColor();
+// Light through stained glass, baked with the static lights (glass_light.cpp).
+void findGlassWindows();
+void addGlassLight(const BakeMap &map,int sector,float x,float y,float z,const float normal[3],float out[3]);
+void glassLightShutdown();
 extern std::vector<SunShaft> sunShafts;
 // Sectors whose air sunbeams and sunlit dust show in (bakeShafts): under a
 // ceiling, or in a sky opening that is enclosed and at most 400x400 units in
@@ -340,6 +371,8 @@ void buildShafts(const Uniforms &camera);
 void buildMist(const Uniforms &camera);
 void buildHeat(const Uniforms &camera);
 void buildDust(const Uniforms &camera);
+// embers.cpp
+void buildEmbers(const Uniforms &camera);
 
 // impacts.cpp
 void dropOldLevelImpacts();
@@ -348,7 +381,10 @@ extern std::vector<FlatDecal> flatDecals;
 extern std::vector<Debris> debris;
 extern std::minstd_rand impactRandom;
 void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting=false,
-                const std::array<float,3> *albedo=nullptr);
+                const std::array<float,3> *albedo=nullptr,bool palette=true,std::unordered_set<uint64_t> *taken=nullptr);
+// Doom-pixel cells on screen already holding a liquid crest this frame:
+// crests brighten what is under them, so overlapping ones would compound.
+extern std::unordered_set<uint64_t> crestCells;
 bool wallSpan(const line_t &line,int side,int section,WallSpan &span);
 void wallImpact(line_t *line,int side,fixed_t fx,fixed_t fy,fixed_t fz);
 void barrelBlast(const mobj_t &thing,float x,float y,float z);

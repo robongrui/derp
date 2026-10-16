@@ -82,9 +82,9 @@ jobs:
           sh scripts/package-release.sh ${{ matrix.platform }} build/release freedoom dist
           cd dist
           if [ ${{ matrix.platform }} = windows ]; then
-            7z a -tzip DuctTapeDOOM-windows.zip DuctTapeDOOM-windows
+            7z a -tzip DERP-windows.zip DERP-windows
           else
-            tar czf DuctTapeDOOM-linux.tar.gz DuctTapeDOOM-linux
+            tar czf DERP-linux.tar.gz DERP-linux
           fi
 
       # The complete corresponding source: this commit plus the SDL and Nuked
@@ -93,7 +93,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sh scripts/package-source.sh build/release dist
-          tar czf dist/DuctTapeDOOM-source.tar.gz -C dist DuctTapeDOOM-source
+          tar czf dist/DERP-source.tar.gz -C dist DERP-source
 
       - name: Package, sign and notarize the Mac app
         if: matrix.platform == 'mac'
@@ -134,11 +134,11 @@ jobs:
           else
             echo "No signing secrets set; the Mac app is signed ad hoc and not notarized."
           fi
-          ditto -c -k --keepParent "$app" dist/DuctTapeDOOM-mac.zip
+          ditto -c -k --keepParent "$app" dist/DERP-mac.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DuctTapeDOOM-${{ matrix.platform }}
+          name: DERP-${{ matrix.platform }}
           path: |
             dist/*.zip
             dist/*.tar.gz
@@ -177,4 +177,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create "$GITHUB_REF_NAME" dist/* --prerelease
-          --title "Duct-Tape DOOM $GITHUB_REF_NAME" --notes-file release-notes.md
+          --title "DERP $GITHUB_REF_NAME" --notes-file release-notes.md

@@ -181,7 +181,7 @@ void main() {
         over(result,saturate(shade),streak*(0.3+0.22*grazing));
     }
     if(vTint.z>0.5&&c.sun.w>0.0) {
-        vec3 sun=vec3(cos(c.fx2.z)*0.76604,sin(c.fx2.z)*0.76604,0.64279);
+        vec3 sun=vec3(cos(c.fx2.z)*cos(c.outdoor.w),sin(c.fx2.z)*cos(c.outdoor.w),sin(c.outdoor.w));
         specular+=c.sun.rgb*c.sun.w*pow(saturate(dot(mirrored,sun)),400.0)*gloss*1.5;
     }
     specular=saturate(specular);
