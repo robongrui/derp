@@ -1,12 +1,12 @@
 # Duct-Tape DOOM
 
-##A few thoughts:
+## A few thoughts: 
 
 This has grown into more than I initially had in mind. The basic idea is described further down and still holds, but during development I realised how much I enjoy thinking about what these environments were supposed to look and feel like, and what the technical constraints of the time kept them from doing.
 
 My work on Doom, Doom II and now Heretic is certainly opinionated, but I try not to add anything that wasn't already suggested by the original maps, artwork or game logic. The goal is to take those hints seriously and give them room to become what they seem to have been pointing toward.
 
-##Original Text
+## Original Text 
 An idea of how DOOM could have looked if id had kept iterating on this engine,
 and if we still played on CRTs. It tries to look newer without looking modern:
 light comes from lamps and windows, monsters are lit as rounded bodies, water
