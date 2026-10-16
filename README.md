@@ -112,7 +112,7 @@ turn the music down or off in **Options → Sound Volume**.
 <img src="screens/blue-corridor.jpg" width="49%" alt="A blue-lit corridor with a green room at the end" />
 </p>
 
-## How the graphics cheat
+## What the graphics do
 
 ### Light comes from things that look like lights
 
@@ -286,7 +286,7 @@ floors and other map geometry block this light.
 
 See [`platform/flash_lighting.h`](platform/flash_lighting.h).
 
-### The flashlight sits at the shoulder
+### The flashlight
 
 The flashlight is mounted at the player's right shoulder, a little behind the
 eyes as in Doom 3. It lights the floor ahead from above, and wall edges, door
@@ -578,7 +578,7 @@ palette, including lighting, fog and bloom.
 Animated walls and flats crossfade between their frames. Doors, lifts, sprites
 and the camera are interpolated between DOOM's 35 Hz game tics.
 
-## How the sound cheats
+## How the sound works
 
 Sound gets the same treatment as the graphics, and it is as big a part of the
 project. The WAD's own effects still play as crunchy 8-bit samples, and
@@ -600,7 +600,7 @@ where is read from the map's textures.
 The target is a late-90s A3D or EAX sound card, with a fairly short and lo-fi
 reverb. The settings are in the **Sound** tab of the F4 panel.
 
-### Quiet by design, so turn the music down
+### Quiet by design, so turn the music down if you want to experience it
 
 The soundscape is quiet on purpose. A lamp's buzz, distant bubbling and wind
 coming through a broken window are meant to be heard under the gunfire, and
