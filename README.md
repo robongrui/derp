@@ -7,6 +7,10 @@ This has grown into more than I initially had in mind. The basic idea is describ
 
 My work on Doom, Doom II and now Heretic is certainly opinionated, but I try not to add anything that wasn't already suggested by the original maps, artwork or game logic. The goal is to take those hints seriously and give them room to become what they seem to have been pointing toward.
 
+This project is a creative undertaking, not a programming exercise or a demonstration of my coding skills. Code is one of the tools I use to build it.
+
+Feedback about whether it works, whether it’s enjoyable, and whether it achieves its creative goals is welcome. But judging it by how much code I personally wrote measures something I’m not claiming to demonstrate.
+
 ## Original Text 
 An idea of how DOOM could have looked if id had kept iterating on this engine,
 and if we still played on CRTs. It tries to look newer without looking modern:
