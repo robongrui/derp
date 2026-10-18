@@ -4,6 +4,7 @@
    the glass, shots and sight pass as in vanilla, and every level starts
    with whole panes. */
 #include "internal.h"
+#include "../glass_fracture.h"
 extern "C" {
 #include "../audio/impact_synth.h"
 #include "../audio/sound_options.h"
@@ -19,10 +20,39 @@ unsigned glassProbeSerial=0,settingsSerial=0;
 // A pane fills the opening of one line between a window's frame sector and
 // the sector it looks out on (outer); inner is the room on the other side.
 // The panes of one frame break together. probe: the reflection probe on
-// the outer and inner side (-1: none).
-struct GlassPane { int line,frame,outer,inner; float ax,ay,bx,by; uint32_t seed; bool broken=false; int probe[2]={-1,-1}; };
-// A shard moves at the tic rate (units per tic), from (px,py,pz) last tic.
-struct Shard { float x,y,z,px,py,pz,vx,vy,vz,size,tall; int pane,die; uint32_t seed; bool landed=false; };
+// the outer and inner side (-1: none). The pane stands halfway through the
+// frame, in the middle of the sill: (ax,ay)-(bx,by) is the line moved inward
+// by shift.
+struct GlassPane { int line,frame,outer,inner; float ax,ay,bx,by; uint32_t seed; bool broken=false; int probe[2]={-1,-1}; float shift=0; };
+// Actual pieces of the pane, in local coordinates about their center. Their
+// yaw, tilt and in-plane roll tumble independently, interpolated between tics.
+struct Shard {
+    float x,y,z,px,py,pz,vx,vy,vz;
+    doom_glass::Raster pixels;
+    std::array<float,3> angle,previous,spin;
+    int pane,die;
+    uint32_t seed;
+    bool landed=false;
+};
+struct ShardAxes { std::array<float,3> u,v,normal; };
+static ShardAxes shardAxes(const std::array<float,3> &a) {
+    float cy=std::cos(a[0]),sy=std::sin(a[0]),ct=std::cos(a[1]),st=std::sin(a[1]);
+    float cr=std::cos(a[2]),sr=std::sin(a[2]);
+    std::array<float,3> u={cy,sy,0},v={-sy*st,cy*st,ct};
+    ShardAxes axes;
+    for(int i=0;i<3;++i) {axes.u[i]=u[i]*cr+v[i]*sr;axes.v[i]=v[i]*cr-u[i]*sr;}
+    axes.normal={sy*ct,-cy*ct,st};
+    return axes;
+}
+static void shardHeights(const Shard &s,const ShardAxes &axes,float &low,float &high) {
+    low=high=0;
+    for(const auto &band:s.pixels.bands) {
+        float a=axes.u[2]*band.left,b=axes.u[2]*band.right;
+        float c=axes.v[2]*band.bottom,d=axes.v[2]*band.top;
+        low=std::min(low,std::min(a,b)+std::min(c,d));
+        high=std::max(high,std::max(a,b)+std::max(c,d));
+    }
+}
 struct MissileWatch { float x,y,z; bool missile,seen; int type; };
 static std::vector<GlassPane> panes;
 static std::vector<int> paneOfLine;
@@ -71,7 +101,7 @@ static void findProbes() {
             auto found=made.find(key);
             if(found!=made.end()) {p.probe[side]=found->second;continue;}
             if(glassProbes.size()>=maxGlassProbes)continue;
-            float out=side==0?32:-(depth+24),cx=(p.ax+p.bx)/2+nx*out,cy=(p.ay+p.by)/2+ny*out;
+            float out=side==0?32+p.shift:-(depth-p.shift+24),cx=(p.ax+p.bx)/2+nx*out,cy=(p.ay+p.by)/2+ny*out;
             const sector_t &s=sectors[room];
             auto box=sectorBox(s);
             GlassProbe probe={{cx,cy,(bottom+top)/2},
@@ -90,7 +120,8 @@ static void findProbes() {
 // recesses like E1M2's side windows, sectors 50 and 57, are 72; deeper ones
 // are alcoves). Sectors that move or
 // that line specials act on are left alone: a lift is not a window. The
-// glass goes on the side facing the sky, or else the larger room.
+// glass goes on the line facing the sky, or else the larger room, moved
+// halfway across the frame (its farthest corner from that line).
 static void findWindows() {
     panes.clear();paneOfLine.assign(numlines,-1);nearLines.clear();
     std::set<int> tags;
@@ -136,7 +167,18 @@ static void findWindows() {
             if(other-sectors!=outer||paneOfLine[line-lines]>=0)continue;
             int index=int(line-lines);
             paneOfLine[index]=(int)panes.size();
-            panes.push_back({index,s,outer,inner,units(line->v1->x),units(line->v1->y),units(line->v2->x),units(line->v2->y),hash32((uint32_t)index*2654435761u+7)});
+            GlassPane pane={index,s,outer,inner,units(line->v1->x),units(line->v1->y),units(line->v2->x),units(line->v2->y),hash32((uint32_t)index*2654435761u+7)};
+            float ex=pane.bx-pane.ax,ey=pane.by-pane.ay,len=std::hypot(ex,ey);
+            if(len>=1) {
+                float nx=ey/len,ny=-ex/len; // Toward the line's front side...
+                if(line->frontsector==&sectors[outer]) {nx=-nx;ny=-ny;} // ...turned into the frame.
+                float across=0;
+                for(int k=0;k<frame.linecount;++k)for(const vertex_t *v:{frame.lines[k]->v1,frame.lines[k]->v2})
+                    across=std::max(across,(units(v->x)-pane.ax)*nx+(units(v->y)-pane.ay)*ny);
+                pane.shift=std::min(across,thin)/2;
+                pane.ax+=nx*pane.shift;pane.ay+=ny*pane.shift;pane.bx+=nx*pane.shift;pane.by+=ny*pane.shift;
+            }
+            panes.push_back(pane);
         }
     }
     findProbes();
@@ -153,9 +195,10 @@ static void findWindows() {
     }
     fprintf(stderr,"3D glass: %zu window panes.\n",panes.size());
 }
+// Inside the frame the opening runs from its sill to its lintel.
 static void paneHeights(const GlassPane &p,float &bottom,float &top) {
-    const sector_t *frame=&sectors[p.frame],*outer=&sectors[p.outer];
-    bottom=std::max(floorZ(frame),floorZ(outer));top=std::min(ceilZ(frame),ceilZ(outer));
+    const sector_t *frame=&sectors[p.frame];
+    bottom=floorZ(frame);top=ceilZ(frame);
 }
 // Breaks every pane of a window. Shards scatter from all over the glass:
 // fast along the shot near where it went through, slower further away, a few
@@ -174,19 +217,26 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy) {
         ex/=len;ey/=len;
         // A blast in the glass's own plane pushes straight through it.
         if(length<=1e-4f) {dx=ey;dy=-ex;}
-        int count=std::clamp((int)(len*(top-bottom)/36),16,160);
-        if(shards.size()+count>900)shards.erase(shards.begin(),shards.begin()+std::min(shards.size(),shards.size()+count-900));
-        for(int n=0;n<count;++n) {
-            float along=randomRange(0,len),z=randomRange(bottom+1,top-1);
-            float x=p.ax+ex*along,y=p.ay+ey*along;
-            float near=1-0.65f*std::min(1.0f,std::hypot(std::hypot(x-hx,y-hy),z-hz)/96);
-            float push=randomRange(0,1)<0.18f?-randomRange(0.3f,1.0f):randomRange(1.0f,3.6f)*near;
-            float slide=randomRange(-0.8f,0.8f);
-            Shard s={x+dx*0.5f,y+dy*0.5f,z,0,0,0,dx*push+ex*slide,dy*push+ey*slide,randomRange(-0.4f,1.6f),
-                     randomRange(0.7f,2.1f),randomRange(1.0f,2.6f),int(&p-panes.data()),leveltime+(int)randomRange(14*TICRATE,24*TICRATE),
-                     (uint32_t)impactRandom()};
+        float hitAlong=(hx-p.ax)*ex+(hy-p.ay)*ey;
+        auto fragments=doom_glass::fracture(len,top-bottom,hitAlong,hz-bottom,p.seed);
+        size_t count=fragments.size();
+        if(shards.size()+count>600)shards.erase(shards.begin(),shards.begin()+std::min(shards.size(),shards.size()+count-600));
+        for(auto &piece:fragments) {
+            Shard s={};
+            s.x=p.ax+ex*piece.center.x;s.y=p.ay+ey*piece.center.x;s.z=bottom+piece.center.y;
+            float rx=piece.center.x-hitAlong,rz=s.z-hz,apart=std::hypot(rx,rz);
+            float near=std::exp(-apart/90),mass=std::clamp(18/std::sqrt(piece.area),0.65f,1.6f);
+            float push=randomRange(2.5f,5.5f)*(0.35f+0.65f*near)*mass;
+            if(randomRange(0,1)<0.12f)push*=-0.35f;
+            float slide=randomRange(-0.45f,0.45f)+rx/std::max(apart,12.0f)*near*1.3f;
+            s.vx=dx*push+ex*slide;s.vy=dy*push+ey*slide;
+            s.vz=randomRange(-0.3f,1.1f)+rz/std::max(apart,12.0f)*near;
             s.px=s.x;s.py=s.y;s.pz=s.z;
-            shards.push_back(s);
+            s.angle={std::atan2(ey,ex),0,0};s.previous=s.angle;
+            s.spin={randomRange(-0.10f,0.10f),randomRange(-0.22f,0.22f),randomRange(-0.14f,0.14f)};
+            s.pixels=doom_glass::raster(piece.points);
+            s.pane=int(&p-panes.data());s.die=leveltime+(int)randomRange(14*TICRATE,24*TICRATE);s.seed=(uint32_t)impactRandom();
+            shards.push_back(std::move(s));
         }
     }
     // One sound for the window: the big one past about 96 by 64 units of glass.
@@ -226,23 +276,39 @@ static bool crosses(float ax,float ay,float bx,float by,const line_t &line,float
 }
 static void stepShards() {
     for(Shard &s:shards) {
-        s.px=s.x;s.py=s.y;s.pz=s.z;
+        s.px=s.x;s.py=s.y;s.pz=s.z;s.previous=s.angle;
         if(s.landed)continue;
+        for(int i=0;i<3;++i) {s.angle[i]+=s.spin[i];s.spin[i]*=0.985f;}
         float nx=s.x+s.vx,ny=s.y+s.vy,nz=s.z+s.vz;
         s.vz-=0.8f;
         float t;
         auto near=nearLines.find(panes[s.pane].frame);
         if(near!=nearLines.end())for(int i:near->second)
-            if(crosses(s.x,s.y,nx,ny,lines[i],t)&&stopsShard(lines[i],s.z+(nz-s.z)*t)) {nx=s.x;ny=s.y;s.vx=s.vy=0;break;}
+            if(crosses(s.x,s.y,nx,ny,lines[i],t)&&stopsShard(lines[i],s.z+(nz-s.z)*t)) {nx=s.x;ny=s.y;s.vx*=-0.18f;s.vy*=-0.18f;break;}
         const sector_t *sector=R_PointInSubsector((fixed_t)(nx*FRACUNIT),(fixed_t)(ny*FRACUNIT))->sector;
         float floor=rawFloor(sector),ceiling=rawCeiling(sector);
-        if(nz>ceiling-1) {nz=ceiling-1;s.vz=std::min(s.vz,0.0f);}
-        if(nz<=floor) {
+        ShardAxes axes=shardAxes(s.angle);
+        float low,high;shardHeights(s,axes,low,high);
+        // A broad piece can turn taller than a shallow window opening.
+        // Lay it through the gap instead of applying conflicting contacts.
+        if(high-low>ceiling-floor-0.4f) {
+            s.angle[1]=doomPi/2+std::round((s.angle[1]-doomPi/2)/doomPi)*doomPi;
+            s.spin[1]*=0.5f;low=high=0;
+        }
+        if(nz+high>ceiling-0.2f) {nz=ceiling-high-0.2f;s.vz=std::min(s.vz,0.0f);}
+        if(nz+low<=floor+0.2f) {
             size_t index=sector-sectors;
             if(index<sectorMist.size()&&sectorMist[index].liquid) {s.die=leveltime;continue;} // Sinks.
-            nz=floor;
-            if(s.vz<-2.5f) {s.vz=-s.vz*0.3f;s.vx*=0.5f;s.vy*=0.5f;}
-            else {s.vz=0;s.vx=s.vy=0;s.landed=true;}
+            nz=floor-low+0.2f;
+            if(s.vz<-2.5f) {
+                s.vz=-s.vz*0.25f;s.vx*=0.6f;s.vy*=0.6f;
+                for(float &spin:s.spin)spin*=0.55f;
+            }
+            else {
+                s.vz=0;s.vx=s.vy=0;s.landed=true;
+                s.angle[1]=doomPi/2+std::round((s.angle[1]-doomPi/2)/doomPi)*doomPi;
+                nz=floor+0.2f;
+            }
         }
         s.x=nx;s.y=ny;s.z=nz;
     }
@@ -371,6 +437,12 @@ bool planGlassCaptures(const Uniforms &camera) {
 void buildGlass(const Uniforms &camera) {
     glassVertices.clear();glassMirrorActive=false;
     if(!settings.windowGlass||glassLevelSerial!=r_levelserial)return;
+    struct Draw {size_t first,count;float depth;};
+    std::vector<Draw> draws;
+    auto record=[&](size_t first,float x,float y,float z) {
+        draws.push_back({first,glassVertices.size()-first,(x-camera.eye[0])*camera.forward[0]+
+            (y-camera.eye[1])*camera.forward[1]+(z-camera.eye[2])*camera.forward[2]});
+    };
     chooseMirror(camera);
     for(const GlassPane &p:panes) {
         float bottom,top;paneHeights(p,bottom,top);
@@ -397,22 +469,71 @@ void buildGlass(const Uniforms &camera) {
             v.red=nx;v.green=ny;v.blue=outside&&skySector(&sectors[p.outer])?1.0f:0.0f;
             v.sunU=len;v.sunV=top-bottom;v.statics=statics;return v;
         };
+        size_t first=glassVertices.size();
         quad(glassVertices,vertex(a,0,top),vertex(b,len,top),vertex(b,len,bottom),vertex(a,0,bottom));
+        record(first,(a.x+b.x)/2,(a.y+b.y)/2,(bottom+top)/2);
     }
-    // Shards: palette-colored pixels of pale glass in the light where they
-    // are, each catching a glint for a tic now and then (often while they
-    // tumble, rarely once they lie still).
+    // Large pieces keep their shape and tumble, but their silhouettes are
+    // cut from whole texels like the broken glass left in the window frame.
     for(const Shard &s:shards) {
         float f=renderFraction,x=s.px+(s.x-s.px)*f,y=s.py+(s.y-s.py)*f,z=s.pz+(s.z-s.pz)*f;
         const sector_t *sector=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
         float light=camera.effects[2]!=0?1:lighting(sector);
-        bool glint=s.landed?hash32(s.seed+(uint32_t)leveltime/5)%29==0:hash32(s.seed+(uint32_t)leveltime/2)%4==0;
-        static const std::array<float,3> glass={0.58f,0.72f,0.74f};
-        std::array<float,3> color;
-        for(int c=0;c<3;++c)color[c]=glint?std::min(1.0f,0.35f+light):glass[c]*light;
-        float size=leveltime>s.die-3*TICRATE?s.size*0.5f:s.size;
-        pixelBlock(particleVertices,camera,x,y,z,size,s.landed?0.5f:s.tall,color,s.landed,&glass);
+        std::array<float,3> angle;
+        for(int i=0;i<3;++i)angle[i]=s.previous[i]+(s.angle[i]-s.previous[i])*f;
+        ShardAxes axes=shardAxes(angle);
+        float low,high;shardHeights(s,axes,low,high);
+        if(high-low>rawCeiling(sector)-rawFloor(sector)-0.4f) {
+            angle[1]=doomPi/2+std::round((angle[1]-doomPi/2)/doomPi)*doomPi;
+            axes=shardAxes(angle);low=high=0;
+        }
+        // Rotation changes the lowest corner nonlinearly. Keep interpolated
+        // faces above the floor while a last bounce settles them flat.
+        z=std::max(z,rawFloor(sector)-low+0.2f);
+        z=std::min(z,rawCeiling(sector)-high-0.2f);
+        const GlassPane &p=panes[s.pane];
+        float side=(camera.eye[0]-p.ax)*(p.by-p.ay)-(camera.eye[1]-p.ay)*(p.bx-p.ax);
+        bool outside=(side>0?lines[p.line].frontsector:lines[p.line].backsector)==&sectors[p.outer];
+        int probe=p.probe[outside?0:1];
+        unsigned probeId=!s.landed&&probe>=0&&(size_t)probe<captured.size()&&captured[probe]?(unsigned)probe+1:0;
+        float fade=std::clamp((s.die-leveltime-f)/(float)TICRATE,0.0f,1.0f);
+        float cell=s.pixels.cell;
+        // Neighbour row limits let the shader paint the exposed pixel edge
+        // without drawing a fine straight outline around the original mesh.
+        auto encoded=[&](float value) {return (unsigned)std::clamp((int)std::lround(value/cell)+128,0,255);};
+        unsigned neighbours=0,row=0;
+        auto vertex=[&](float u,float v) {
+            Vertex result={x+axes.u[0]*u+axes.v[0]*v,y+axes.u[1]*u+axes.v[1]*v,
+                           z+axes.u[2]*u+axes.v[2]*v,u,v,light,MODE_GLASS_SHARD|(s.landed?MODE_GROUNDED:0u)};
+            result.red=axes.normal[0];result.green=axes.normal[1];result.blue=axes.normal[2];
+            result.lightMask[0]=neighbours;result.lightMask[1]=row|(sector->ceilingpic==skyflatnum?1u:0u);
+            result.sunU=cell;result.sunV=fade;result.statics=s.seed;result.lampTint=probeId;return result;
+        };
+        size_t first=glassVertices.size();
+        const auto &bands=s.pixels.bands;
+        for(size_t i=0;i<bands.size();++i) {
+            const auto &band=bands[i];
+            unsigned belowLeft=128,belowRight=128,aboveLeft=128,aboveRight=128;
+            if(i>0&&std::abs(bands[i-1].top-band.bottom)<0.01f) {
+                belowLeft=encoded(bands[i-1].left);belowRight=encoded(bands[i-1].right);
+            }
+            if(i+1<bands.size()&&std::abs(bands[i+1].bottom-band.top)<0.01f) {
+                aboveLeft=encoded(bands[i+1].left);aboveRight=encoded(bands[i+1].right);
+            }
+            neighbours=belowLeft|(belowRight<<8)|(aboveLeft<<16)|(aboveRight<<24);
+            row=(encoded(band.left)<<8)|(encoded(band.right)<<16);
+            quad(glassVertices,vertex(band.left,band.top),vertex(band.right,band.top),
+                 vertex(band.right,band.bottom),vertex(band.left,band.bottom));
+        }
+        record(first,x,y,z);
     }
+    // Transparent faces must blend from far to near, including unbroken
+    // windows behind or in front of the flying pieces.
+    std::sort(draws.begin(),draws.end(),[](const Draw &a,const Draw &b){return a.depth>b.depth;});
+    static std::vector<Vertex> ordered;
+    ordered.clear();ordered.reserve(glassVertices.size());
+    for(const Draw &draw:draws)ordered.insert(ordered.end(),glassVertices.begin()+draw.first,glassVertices.begin()+draw.first+draw.count);
+    glassVertices.swap(ordered);
 }
 void glassShutdown() {glassProbes.clear();glassCaptures.clear();captured.clear();captureKey=-1;panes.clear();paneOfLine.clear();nearLines.clear();shards.clear();missileWatch.clear();glassVertices.clear();glassLevelSerial=~0u;}
 } // namespace doom3d

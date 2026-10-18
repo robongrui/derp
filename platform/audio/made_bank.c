@@ -10,14 +10,14 @@
 
 #define LOOP_FADE_SECONDS 0.5f
 
-static made_sample_t impacts[IMPACT_KINDS][MADE_VARIANTS];
+static made_sample_t impacts[IMPACT_KINDS][MADE_STEP_VARIANTS];
 static made_sample_t loops[AMBIENT_KINDS][AMBIENCE_LAYERS];
 static made_sample_t strikes[MADE_VARIANTS];
 
-static made_sample_t keep(float *buffer, int length)
+static made_sample_t keep(float *buffer, int length, int rate)
 {
     unsigned char *data = malloc((size_t)length);
-    made_sample_t sample = { data, data ? length : 0, MADE_RATE };
+    made_sample_t sample = { data, data ? length : 0, rate };
     if (data) Impact_To8Bit(buffer, data, length);
     free(buffer);
     return sample;
@@ -39,7 +39,7 @@ static made_sample_t loop(int kind, int layer)
         float x = (n + 0.5f) / fade;
         buffer[n] = buffer[n] * sinf(0.5f * SYNTH_PI * x) + buffer[length + n] * cosf(0.5f * SYNTH_PI * x);
     }
-    return keep(buffer, length);
+    return keep(buffer, length, MADE_RATE);
 }
 
 static made_sample_t strike(unsigned seed)
@@ -50,23 +50,29 @@ static made_sample_t strike(unsigned seed)
     rng_t r = rng_seed(seed);
     add_click(buffer, length, 0, MADE_RATE, &r, 0.6f, 1500, 4000);
     add_crackle(buffer, length, MADE_RATE, &r, 0, 0.04f, 400, 0.01f, 0.45f, 1500, 4500);
-    return keep(buffer, length);
+    return keep(buffer, length, MADE_RATE);
 }
 
 void MadeBank_Build(void)
 {
     for (int kind = 0; kind < IMPACT_KINDS; ++kind)
-        for (int v = 0; v < MADE_VARIANTS; ++v)
+        for (int v = 0; v < MadeBank_Variants(kind); ++v)
         {
-            int length = Impact_Length(kind, MADE_RATE);
+            int rate = Impact_Rate(kind), length = Impact_Length(kind, rate);
             float *buffer = calloc((size_t)length, sizeof(float));
             if (!buffer) continue;
-            Impact_Render(kind, 0x9e3779b1u * (unsigned)(kind * MADE_VARIANTS + v + 1), MADE_RATE, buffer, length);
-            impacts[kind][v] = keep(buffer, length);
+            Impact_Render(kind, 0x9e3779b1u * (unsigned)(kind * MADE_STEP_VARIANTS + v + 1), rate, buffer, length);
+            impacts[kind][v] = keep(buffer, length, rate);
         }
     for (int kind = 0; kind < AMBIENT_KINDS; ++kind)
         for (int layer = 0; layer < AMBIENCE_LAYERS; ++layer) loops[kind][layer] = loop(kind, layer);
     for (int v = 0; v < MADE_VARIANTS; ++v) strikes[v] = strike(0x2545f491u * (unsigned)(v + 1));
+}
+
+int MadeBank_Variants(int kind)
+{
+    return (kind >= IMPACT_STEP_STONE && kind <= IMPACT_SPLASH_THICK) || (kind >= IMPACT_RUN_STONE && kind <= IMPACT_GEAR_ARMOR_RUN)
+        ? MADE_STEP_VARIANTS : MADE_VARIANTS;
 }
 
 static const made_sample_t *ready(const made_sample_t *sample) { return sample->data ? sample : NULL; }
@@ -74,7 +80,7 @@ static const made_sample_t *ready(const made_sample_t *sample) { return sample->
 const made_sample_t *MadeBank_Impact(int kind, int variant)
 {
     if (kind < 0 || kind >= IMPACT_KINDS) return NULL;
-    return ready(&impacts[kind][(unsigned)variant % MADE_VARIANTS]);
+    return ready(&impacts[kind][(unsigned)variant % (unsigned)MadeBank_Variants(kind)]);
 }
 const made_sample_t *MadeBank_Loop(int kind, int layer)
 {

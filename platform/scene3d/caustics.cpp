@@ -169,7 +169,7 @@ void buildCaustics() {
 // width however coarse the cells are. g and b's low 6 bits hold that edge's
 // liquid sector, b's top bit marks cells with an edge in range, its next one
 // edges that take the level's glowing edge strip (a glowing liquid against a
-// wall not already painted with a glowing texture), a its tint in 3-3-2 bits
+// wall that does not paint its own, paintsOwnEdge), a its tint in 3-3-2 bits
 // like causticMap. Lava and other hot liquids have a tint of 0: they ripple
 // at their shores but leave no damp.
 constexpr float shoreRange=16;
@@ -217,12 +217,8 @@ void buildShore() {
             bool glows=strip&&liquidGlowKind(s)==strip->kind;
             if(glows&&line.sidenum[side]>=0) {
                 const side_t &wall=sides[line.sidenum[side]];
-                for(short texture:{wall.bottomtexture,wall.midtexture}) {
-                    char name[9];
-                    if(texture<=0)continue;
-                    R_TextureName(texture,name);
-                    if(Game_GlowKind(name,0)==strip->kind)glows=false;
-                }
+                for(short texture:{wall.bottomtexture,wall.midtexture})
+                    if(texture>0&&paintsOwnEdge(texture,strip->kind))glows=false;
             }
             // Doom's front side is on the line's right: negative cross product.
             float wetSign=side?1.0f:-1.0f,length=std::sqrt(length2);

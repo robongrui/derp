@@ -10,32 +10,47 @@ namespace doom3d {
 // the foot, holds its palette indices, how much each texel is the liquid's
 // paint (the glowing texels, and the duller ones in its hue that fade into
 // the rock) and its glow.
+// How a texture glows in a liquid's kind, row by row.
+struct GlowProfile {
+    int w=0,h=0,rows=0; // rows: glowing rows up from the foot.
+    float foot=0; bool topDark=false; float hue[3]={};
+    std::vector<byte> pixels,glow; std::vector<float> coverage;
+};
+static GlowProfile glowProfile(int t,int kind) {
+    GlowProfile p;
+    R_TextureDimensions(t,&p.w,&p.h);
+    if(p.w<8||p.h<8||p.w>1024||p.h>1024)return p;
+    int w=p.w,h=p.h;
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    p.pixels.resize((size_t)w*h*2);R_CopyIndexedTexture(t,p.pixels.data());
+    p.coverage.assign(h,0);p.glow.resize((size_t)w*h);
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
+        size_t i=(size_t)y*w+x;const byte *c=palette+p.pixels[2*i]*3;
+        p.glow[i]=doom_emissive_pixel(kind,c,p.pixels[2*i+1]);
+        if(!p.glow[i])continue;
+        p.coverage[y]+=1.0f/w;
+        for(int k=0;k<3;++k)p.hue[k]+=c[k];
+    }
+    p.foot=(p.coverage[h-1]+p.coverage[h-2]+p.coverage[h-3]+p.coverage[h-4])/4;
+    p.topDark=true;
+    for(int y=0;y<h/4;++y)p.topDark&=p.coverage[y]<0.02f;
+    while(p.rows<h&&p.coverage[h-1-p.rows]>=0.02f)++p.rows;
+    return p;
+}
+// Glowing along the foot only, in a strip that ends in the lower half under
+// dark rock: an edge texture (solid foot) or a thin one (E1M2's NUKESLAD);
+// not a wall of drips or falls.
+static bool footOnly(const GlowProfile &p) {return p.h>0&&p.topDark&&p.rows*2<=p.h+8;}
 static EdgeStrip findStrip(int kind) {
     EdgeStrip best;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     for(int t=0;t<numtextures;++t) {
         char name[9];R_TextureName(t,name);
         if(Game_GlowKind(name,0)!=kind)continue;
-        int w,h;R_TextureDimensions(t,&w,&h);
-        if(w<8||h<8||w>1024||h>1024)continue;
-        std::vector<byte> pixels((size_t)w*h*2);R_CopyIndexedTexture(t,pixels.data());
-        std::vector<float> coverage(h,0);float hue[3]={};
-        std::vector<byte> glow((size_t)w*h);
-        for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
-            size_t i=(size_t)y*w+x;const byte *c=palette+pixels[2*i]*3;
-            glow[i]=doom_emissive_pixel(kind,c,pixels[2*i+1]);
-            if(!glow[i])continue;
-            coverage[y]+=1.0f/w;
-            for(int k=0;k<3;++k)hue[k]+=c[k];
-        }
-        // Solidly lit along the foot, and the strip ends in the lower half
-        // with dark rock over the top quarter: not a wall of drips or falls.
-        if((coverage[h-1]+coverage[h-2]+coverage[h-3]+coverage[h-4])/4<0.9f)continue;
-        bool topDark=true;
-        for(int y=0;y<h/4;++y)topDark&=coverage[y]<0.02f;
-        int rows=0;
-        while(rows<h&&coverage[h-1-rows]>=0.02f)++rows;
-        if(!topDark||rows*2>h+8)continue;
+        GlowProfile p=glowProfile(t,kind);
+        if(!footOnly(p)||p.foot<0.9f)continue;
+        int w=p.w,h=p.h,rows=p.rows;
+        const auto &pixels=p.pixels;const auto &glow=p.glow;const float *hue=p.hue;
         // The paint fades a few rows past the last glowing one.
         rows=std::min({rows+rows/2+1,h-h/4,63});
         if(rows<=best.height)continue;
@@ -51,6 +66,22 @@ static EdgeStrip findStrip(int kind) {
         }
     }
     return best;
+}
+// Whether a wall texture already paints the liquid's edge itself (NUKE24,
+// NUKEDGE1) or glows up its face (SLADRIP vents, SFALL falls), so the strip
+// stays off it. Walls with only a thin painted foot, or none, take the strip.
+bool paintsOwnEdge(int texture,int kind) {
+    static std::map<std::pair<int,int>,bool> known;
+    auto key=std::make_pair(texture,kind);
+    auto found=known.find(key);
+    if(found!=known.end())return found->second;
+    char name[9];R_TextureName(texture,name);
+    bool own=false;
+    if(Game_GlowKind(name,0)==kind) {
+        GlowProfile p=glowProfile(texture,kind);
+        own=p.h>0&&p.coverage[p.h-1]>=0.02f&&(!footOnly(p)||p.foot>=0.9f);
+    }
+    return known[key]=own;
 }
 const EdgeStrip &edgeStrip(int kind) {
     static std::map<int,EdgeStrip> strips;

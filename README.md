@@ -59,8 +59,8 @@ graphics panel with **F4**.
 
 - **Accelerated 3D renderer:** SDL_gpu, using Metal on macOS and Vulkan on
   Linux and Windows.
-- **Native resolution and any aspect ratio,** with mouse look, interpolated
-  movement and optional MSAA.
+- **Native resolution and any aspect ratio,** with mouse look and free aim,
+  interpolated movement and optional MSAA.
 - **Classic renderer:** the original 320×200 software view is one keypress
   away.
 - **No asset pack:** the WAD's own textures, flats, sprites and palettes are
@@ -78,9 +78,13 @@ graphics panel with **F4**.
   blast, and the room goes dark with them.
 - **Blinking lights:** lamps in flickering sectors blink, strobe and pulse with
   DOOM's light effects, and the baked light they throw follows them.
+- **Wounds and deaths:** bullets leave see-through holes that follow the
+  monster's animation, and every death is drawn anew: pushed by the blow,
+  retimed, and for monsters on two legs a procedural fall chosen by where the
+  hit landed. See [Monsters die differently every time](#monsters-die-differently-every-time).
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
-  finding their way round corners, through doors and windows, and dulled by
-  distance.
+  finding their way round corners, through doors and windows, and fading
+  with distance as they do in air.
 - **Sounds DOOM never had, synthesized:** sparks, dying lamps, breaking
   glass, footsteps, and the hum, bubble and wind of the map around you. None
   of them is a recording; small synths written for each sound generate them
@@ -414,6 +418,8 @@ Walls running straight into nukage, slime or lava take the glowing strip the
 game paints at the foot of its own edge textures (DOOM's NUKE24 steps, for
 example). The strip is found in the WAD when the level loads, so every wall
 meeting the liquid gets it, not only the ones a mapper textured that way.
+Walls that already paint the edge themselves, or glow up their whole face
+like dripping vents and falls, are left as they are.
 Along the shore, thin ripple lines run out from the walls like the splash
 rings: quick and fine on water, slow and broad on nukage and slime, slow and
 glowing on lava, a still dark line on blood.
@@ -455,9 +461,11 @@ The game code doesn't know the glass is there. Shots, sight and movement pass
 through exactly as in vanilla, so the renderer watches for anything crossing a
 window. A render-only hook reports hitscan shots crossing a line, and
 projectiles and explosions are checked every tic. The first thing through
-shatters the window into palette-colored shards that fall, bounce and lie on
-the floor for a while, leaving a jagged rim in the frame. Monster shots count
-too, so a fight across a window breaks it. Once it is broken, the wind and
+shatters the pane into large, irregular pieces, with smaller pieces near the
+hit and stepped pixel edges like the glass left in the frame. They tumble,
+catch reflections while flying, bounce and become matte once settled. They
+lie flat on the floor for a while, leaving a jagged rim in the frame. Monster
+shots count too, so a fight across a window breaks it. Once it is broken, the wind and
 other sounds from outside come through it clearly (see the sound section).
 
 <p>
@@ -540,7 +548,9 @@ Getting them back took several pieces:
 - **Reading the swing.** Each flickering sector's light thinker says how far
   its level swings. Lamps in that sector follow where the level sits within it.
   Blinking and strobing sectors switch their lamps off in the lower half of the
-  swing. Glowing and fire-flickering sectors fade them up and down.
+  swing. Glowing and fire-flickering sectors fade them up and down. The swing
+  belongs to the lamps, not to the room's power, so screens beside them stay
+  on. Only where screens are a sector's only glowing textures do they flicker.
 - **Keeping the light baked.** One live light per lamp would cost frame time
   and lose the bake's soft, stepped shadows. A first try with live lights cast
   razor-sharp ones. Instead, each flickering sector's lamps get a flicker
@@ -554,9 +564,11 @@ Getting them back took several pieces:
   and switching after left blocks of lamp light glowing on when the lamp was
   out. Each cell is now switched by its own group before the blend, and the
   bounce light switches with it.
-- **The shot-out look.** A switched-off tube is drawn exactly like one that's
-  been shot out: grey and dead. A glowing sector fades its lamp's glowing pixels
-  instead.
+- **The shot-out look.** A switched-off tube is drawn like one that's been shot
+  out: grey and dead. A screen switched off this way keeps its glass whole,
+  since nothing broke it. A glowing sector fades its lamp's glowing pixels
+  instead, and a lamp shot out in a glowing sector stays dead rather than
+  pulsing along.
 - **DOOM's level with the lamps out.** Rooms whose light comes mostly from
   their lamps get part of their sector light taken away, so the lamps can put
   it back with direction. That used to count flickering lamps too, so a room
@@ -608,6 +620,106 @@ surface they hit.
 See [`platform/scene3d/blood.cpp`](platform/scene3d/blood.cpp) and
 [`platform/scene3d/impacts.cpp`](platform/scene3d/impacts.cpp).
 
+### Shots go through monsters
+
+Where a bullet or pellet strikes a monster, its sprite is shot through. The
+hole is cut from the texels the shot crossed, with a ragged edge in the
+blood sprite's reds, a dark torn rim and a short smear, all in the WAD's own
+palette. It is drawn only: the game's hit test, damage and blood are as in
+vanilla.
+
+DOOM's sprites have no skeleton and no shared texture coordinates, so a hole
+has to find its place again on every frame. It remembers the texel it struck
+on the drawing showing at the moment of the hit, before the pain or death
+frame takes over. Every later frame looks for that patch of artwork: a first
+guess from where it sits among the drawing's rows, then a small search for
+the nearest match in palette colour and coverage. Matching always goes back
+to the original hit, never from frame to frame, so the hole doesn't drift.
+It runs along the shot through the body in the monster's own coordinates, so
+a hole shot from the front closes when the monster turns side-on. Close hits
+open it wider, hits next to each other merge, and the holes stay on the
+corpse.
+
+Where a bullet lands depends on the aim. With mouse look on, bullets go where
+you look: a shot at the head hits the head, and a shot over a shoulder
+misses. **Classic aim** in F4 brings DOOM's autoaim back for bullets: they
+find the monster in front of you and strike the middle of its height, and
+that is where the hole goes. Rockets, plasma and the BFG aim as in DOOM
+either way, and demos and netgames always aim as in vanilla.
+
+See [`platform/scene3d/wounds.cpp`](platform/scene3d/wounds.cpp) and
+[`platform/wound_attachment.h`](platform/wound_attachment.h).
+
+### Monsters die differently every time
+
+DOOM draws each monster's death once, from one angle, and plays it the same
+way every time. Here the drawing takes over at the killing blow and works out
+a death of its own from how the hit landed. The game's states, timing and
+corpse are untouched, and the variation comes from hashes, never from DOOM's
+random table, so demos stay in sync.
+
+- **Hits push.** Every hit leans a monster with the push the game gives it,
+  the upper body lagging behind, and it springs back. The killing blow jolts
+  hardest: a high hit throws the body back, a low one knocks the legs out,
+  the chainsaw crumples it, a gib hops it and fliers sway as they fall. The
+  bend is drawn in whole-pixel rows over the game's own frames and is gone by
+  the corpse frame.
+- **Every death keeps its own time.** The death frames keep their order, but
+  the time is shared out afresh between the reaction, the collapse and the
+  settle for each kill: one body snaps down, another hesitates and then
+  drops, another slumps. Monsters killed by one rocket take contrasting
+  timings on purpose, so a group doesn't fall in step. Now and then a hit
+  well off a monster's middle turns it on its own rotated frames before it
+  falls, a hard push steps it back on its walking frames, and a chainsaw kill
+  holds the pain frame a moment. The frames are mirrored so the body falls
+  away from the blow, and the frame it lands on flattens briefly as it
+  settles. Optionally, a monster killed facing away turns toward you before
+  its death frames, which are drawn facing the viewer, instead of snapping
+  round.
+- **Procedural falls.** Monsters standing on two legs can fall in ways their
+  drawings never show. Each gets a rig: hips, knees and ankles, where the
+  legs part, and the gun that hangs below the hips but moves with the torso.
+  The zombieman, shotgun guy and chaingunner are rigged by hand. For other
+  artwork the joints are found in the drawing itself, by following the two
+  legs up from the floor to where they meet. Every texel is then drawn as its
+  own small quad moved by the rig, bending smoothly over a few rows at each
+  joint, so the body stays in one piece and the pixels stay sharp. The hit
+  chooses the fall:
+  - A low or weak hit **sweeps the legs**. The knee on the hit's side gives,
+    the pelvis drops, and the torso balances, then goes over, toward the
+    weapon or away from it. The fall is simulated for each kill from the
+    hit. Partway down, the game's own lying drawing takes over where the two
+    silhouettes match best, and it lands under gravity.
+  - A hard hit is a **chest blast**. The shoulders snap back on the hit
+    drawing's rig while the legs hold, and a body thrown off its feet flies
+    in an arc before it lands, sooner and farther the harder the hit.
+  - A killing shot through the head **cuts the strings**. Both knees go at
+    once, the head snaps, and the body crumples nearly where it stood.
+
+Hand rigs hold only for the original artwork. Each is keyed to a hash of the
+sprite's pixels, so replaced art falls back to the joint finder, and a
+monster without two clear legs keeps its drawn death.
+
+The rigs and falls were worked out in a small lab outside the game: Python
+scripts in [`tests/`](tests/) that read a WAD and draw the poses side by side
+(`death_lab.py`, `death_pose.py`, `death_sim.py`, and `joint_finder.py`,
+which scores the joints it finds against the hand rigs). Related research on
+learning how a hand-drawn character deforms from its animation frames,
+[Neural Puppet: Generative Layered Cartoon Characters](https://arxiv.org/abs/1910.02060),
+helped inform these experiments. Nothing here is learned, though: the rigs
+are placed by hand or found by a fixed rule.
+
+All of it is drawing only. Hitboxes, damage, where the corpse lies and what
+monsters see are as in vanilla. Each piece has its own switch in F4's
+**Combat** section, and **Procedural falls** also offers each fall on its
+own, for judging them one at a time.
+
+See [`platform/scene3d/body_motion.cpp`](platform/scene3d/body_motion.cpp),
+[`platform/scene3d/death_director.cpp`](platform/scene3d/death_director.cpp),
+[`platform/scene3d/death_falls.cpp`](platform/scene3d/death_falls.cpp),
+[`platform/death_joints.h`](platform/death_joints.h) and
+[`platform/death_rigs_stock.h`](platform/death_rigs_stock.h).
+
 ### Pixel art stays sharp
 
 The renderer draws at the display's native resolution and can keep the
@@ -637,9 +749,9 @@ the game generates them. Each one is a small synth that models how the thing
 makes its sound: a ballast buzzing at twice the mains frequency, bubbles
 rising in pitch as they near the surface, a crack front branching through a
 pane, shards falling under DOOM's own gravity and ticking where they land.
-At startup, in a fraction of a second, they are all rendered in the same
-8-bit, 11 kHz form as DOOM's own effects, so they sit in the mix as if they had
-always been there. They are the same in every WAD, and which of them plays
+At startup they are rendered as 8-bit samples, like DOOM's own effects.
+Most use 11 kHz; glass uses 22 kHz to retain the bright collision detail
+above 5.5 kHz. They are the same in every WAD, and which of them plays
 where is read from the map's textures.
 
 The target is a late-90s A3D or EAX sound card, with a fairly short and lo-fi
@@ -684,8 +796,23 @@ moves.
   of glass on the way dulls it further.
 - **Sealed off:** with no way through at all, it is muffled heavily.
 
-Muffling only changes the tone. Volume is the same as in vanilla DOOM, so you
-can locate monsters by ear as well as before.
+Muffling only changes the tone, never the volume, so you can locate monsters
+by ear as well as before.
+
+### Sound fades as it does in air
+
+DOOM fades a sound in a straight line, from full strength at 160 units to
+nothing at 1200, so a monster across a big room sounds almost as near as one
+beside you. **Natural distance falloff**, on by default, fades it the way air
+does instead: half as strong each time the distance doubles, easing out to
+nothing at the same 1200 units. Gunshots and explosions are the exception.
+They carry two and a half times as far, faint and dull by then, and a
+breaking window twice as far, so a firefight in the next courtyard is heard
+as one. When every channel is busy, the faintest sound gives way rather than
+the oldest.
+
+DOOM's boss maps, which play every sound at full volume, stay as they are,
+and Heretic keeps its own curve.
 
 ### Rooms are measured with rays
 
@@ -702,19 +829,38 @@ dry.
 
 WADs have no material data, so materials are guessed from texture names.
 `STARTAN`, `COMP` and `METAL` ring like metal, `WOOD` and the panel textures
-sound dull, and flesh, liquids and dirt each absorb sound differently. Anything
-else counts as stone.
+sound dull, and flesh, liquids, dirt and carpet each absorb sound differently.
+A switch counts as the wall it is set into (`SW1STON1` is stone, `SW1WOOD`
+wood), and a short list of single textures corrects what the names get wrong,
+picked by ear and eye in the maps. Anything else counts as stone. Footsteps
+use the same materials, so the floor underfoot and the room's echo can't
+disagree.
+
+Each material also has a roughness, as surfaces do for light. Smooth panels
+send an echo back clean and keep a room ringing; rough stone and dirt scatter
+it, and the room goes flat. A texture's own artwork can add to that: the share
+of its texels lying in painted seams, joints, ribs and cracks, read the first
+time a ray meets it. Ribbed metal then rings less than sheet metal, and rubble
+less than plain blocks. The reading only roughens a material and never decides
+it, because against a hand-judged list of DOOM's surfaces it agrees only
+moderately.
 
 ### Echoes and a reverb tail
 
 The rays are grouped into eight directions around the player. Each group makes
 one echo, delayed by the round trip to its walls and panned by where they are
 relative to the way the player faces. A ninth echo comes off the ceiling.
+Each echo loses the treble its walls take, a wooden wall's duller than
+steel's, and off rough walls it is smeared into a short cluster spread a
+little around its direction.
 
 A small feedback delay network makes the late tail: eight damped delay lines
 mixed through a Householder matrix. Metal rooms keep their treble and wooden
-ones lose it. When the room changes, the echoes crossfade and the tail glides
-over a third of a second, so walking through a door doesn't click.
+ones lose it. In a rough room a chain of allpass filters sprays every sound
+into a dense wash before it enters the network, and one in each delay line
+keeps scattering it, so a stone castle goes flat while a steel tech room
+rings. When the room changes, the echoes crossfade and the tail glides over a
+third of a second, so walking through a door doesn't click.
 
 Far sounds send more to the reverb relative to the dry mix, so they sound
 further away as well as quieter.
@@ -753,22 +899,38 @@ moment, and a fixture that is shot out goes quiet for the rest of the level.
 ### Sounds DOOM never had
 
 The rest of the made-up sounds are effects that answer what happens in the
-fight. Each comes in six variations, and the same one never plays twice in a
-row.
+fight. Each comes in six variations, footsteps in sixteen, and neither of the
+last two takes plays again.
 
 - **Sparks:** tech walls crackle, fizz or zap after the gunshot that hit them.
 - **Dying lights:** a lamp's hum sputters into a pop and a few bits of tube; a
   screen bursts into static and thumps off.
-- **Breaking glass:** each shard falls from its place in the pane under DOOM's
-  gravity and ticks where it lands, with a longer break for big windows.
+- **Breaking glass:** each shard retains its own short, irregular resonances
+  as it catches the frame, falls under DOOM's gravity, rebounds and tips
+  across its edges. Fresh collisions keep the crash going, with a longer
+  break for big windows.
   **Breaking glass** picks how the break itself sounds: **Shatter**, a hard
-  crack and a rush of splinters, or **Fracture**, a crack front branching
-  through the pane as hundreds of tiny clicks, with no noise in it at all.
-- **Footsteps:** the player's steps sound by what the floor is, stone, metal,
-  wood or something soft like grass and carpet, about twice a second walking
-  and three times running. Water splashes, nukage, slime, blood and lava gloop,
-  and monsters wading through liquids splash too. Monsters on dry floors stay
-  as silent as ever, so hearing tells no more about where they are than before.
+  crack followed by the clatter of larger pieces, or **Fracture**, a crack front
+  branching through the pane as hundreds of tiny clicks. Both continue into
+  the same model of falling pieces. The [synthesis notes](platform/audio/glass_synthesis.md)
+  describe the reference measurements and contact model.
+- **Footsteps:** the player is heavy and wears combat boots. Each step is a
+  dense, driven impact with the body's weight in it and the sole settling a
+  moment later, coloured by the floor: grit on stone, a deck plate's ringing
+  modes on metal, a knock on wood, a crunch on grass and dirt, muffled on
+  carpet. Running lands harder, on the ball of the foot, and pushes off with a
+  scrape, and a landing is harder the faster the fall. Just after each step
+  the kit settles: buckles and pouches with a light weapon, a long gun
+  knocking on its sling, the rocket launcher or BFG thudding with its rounds
+  rattling, and the click of armour when you wear it. Steps come about twice a
+  second walking and three times running. Water splashes, nukage, slime, blood
+  and lava gloop, and monsters wading through liquids splash too. Monsters on
+  dry floors stay as silent as ever, so hearing tells no more about where they
+  are than before.
+- **Near misses:** an enemy's bullet from far off that passes close by
+  without hitting you whizzes past your head, a fluttering whistle. Real
+  bullets wouldn't sound like that, but it tells you you're under fire when
+  the shooter is too far away to hear well.
 
 `doom-sfx-render` writes all of them to WAV files, dry and in rooms, for
 listening outside the game:
@@ -836,11 +998,13 @@ See
 [`platform/audio/acoustic_graph.c`](platform/audio/acoustic_graph.c),
 [`platform/audio/occlusion.c`](platform/audio/occlusion.c),
 [`platform/audio/room.c`](platform/audio/room.c),
+[`platform/audio/relief.c`](platform/audio/relief.c),
 [`platform/audio/reverb.c`](platform/audio/reverb.c),
 [`platform/audio/ambience_map.c`](platform/audio/ambience_map.c),
 [`platform/audio/ambience.c`](platform/audio/ambience.c),
 [`platform/audio/made_bank.c`](platform/audio/made_bank.c),
 [`platform/audio/steps.c`](platform/audio/steps.c),
+[`platform/audio/flyby.c`](platform/audio/flyby.c),
 the synths in [`platform/audio/`](platform/audio/) (`*_synth.c`),
 [`platform/audio/resample.c`](platform/audio/resample.c),
 [`platform/audio/treble.c`](platform/audio/treble.c),

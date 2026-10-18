@@ -27,11 +27,14 @@ Option slider(const char *key,const char *title,float *number,double low,double 
 }
 bool hasGlass(const Settings&) {return Game_HasEffect(GAME_EFFECT_WINDOW_GLASS)!=0;}
 bool hasFlashlight(const Settings&) {return Game_HasEffect(GAME_EFFECT_FLASHLIGHT)!=0;}
+bool hasFalloff(const Settings&) {return Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF)!=0;}
+bool hasFreeAim(const Settings &s) {return s.look&&Game_HasEffect(GAME_EFFECT_FREE_AIM)!=0;}
 }
 
 void fitGame(Settings &s) {
     if(!Game_HasEffect(GAME_EFFECT_WINDOW_GLASS))s.windowGlass=0;
     if(!Game_HasEffect(GAME_EFFECT_SHOOTABLE_LIGHTS))s.shootableLights=0;
+    if(!Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF))s.naturalFalloff=0;
 }
 
 std::vector<OptionTab> optionTabs(Settings &s) {
@@ -49,7 +52,11 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 slider("fov","Field of view",&s.fov,60,120,5,"Measured against the classic 4:3 view."),
                 check("widescreen","Widescreen",&s.widescreen,"Show more world at the sides rather than stretching it.")}},
             {"View",{
-                check("look","Mouse look",&s.look,"Mouse look tilts the camera; combat keeps DOOM's automatic aiming."),
+                check("look","Mouse look",&s.look,"Mouse look tilts the camera, and your bullets go where you look."),
+                check("classic_aim","Classic aim",&s.classicAim,
+                    "Bullets aim themselves at a monster in front of you, as in DOOM, and hit it in the middle; with none in front "
+                    "they follow the view. Off: they go exactly where you look, so you can miss, and where you hit is where the "
+                    "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way.",hasFreeAim),
                 check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view."),
                 check("fps","Show FPS in window title",&s.fps,"Frames per second and the GPU driver in the window title.")}},
             {"Retro look",{
@@ -90,7 +97,7 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("window_glass","Window glass",&s.windowGlass,
                     "Windows found in the map's geometry get a pane of glass: grimy at the edges, streaked with highlights that "
                     "slide as you move, reflecting the sky from outside. The first shot, projectile or blast through it shatters "
-                    "it into shards; shots and sight pass exactly as in vanilla.",hasGlass),
+                    "it into large, reflective shards that tumble and bounce; shots and sight pass exactly as in vanilla.",hasGlass),
                 check("glass_reflections","Glass reflections",&s.glassReflections,
                     "Experimental: the window filling most of the view mirrors the room in front of it, monsters and shots "
                     "included, drawn a second time like the liquid reflections and at their resolution. Costs about as much as they do.",
@@ -175,8 +182,35 @@ std::vector<OptionTab> optionTabs(Settings &s) {
             {"Combat",{
                 check("blood","Blood splats and pools",&s.blood,
                     "Hitscan hits leave splats on floors and nearby walls; corpses grow a pool. Colors come from the WAD's blood sprite."),
-                check("blood_shine","Wet blood shine",&s.bloodShine,"Fresh blood on the floor glints in a brighter palette red under dynamic lights, then dries matte.",
-                    [](const Settings &d){return d.blood!=0;}),
+                check("blood_shine","Wet blood shine",&s.bloodShine,"Fresh floor blood and wound edges glint under lights. Floor blood dries matte over time.",
+                    [](const Settings &d){return d.blood!=0||d.wounds!=0;}),
+                check("wounds","Wound holes",&s.wounds,
+                    "Bullets and pellets leave holes with ragged bloody edges, dark torn rims and short blood smears. "
+                    "The marks follow the monster's animation. Close hits widen a hole; seen from the side it closes. "
+                    "Drawing only: the monster is hit as always."),
+                check("varied_deaths","Varied deaths",&s.deathDirector,
+                    "No two monsters die alike: the death frames keep their order but take new timing each kill (a snap, a "
+                    "hesitation then a drop, a slump), monsters dropped by one blast differ on purpose, and the body settles "
+                    "as it lands. Now and then a hit off the middle turns it, or a hard push steps it back. Drawing only."),
+                choice("death_falls","Procedural falls",&s.deathFalls,{"Off","By the hit","Legs swept","Chest blast","Head shot"},{0,1,2,3,4},
+                    "Monsters standing on two legs fall a way their drawings never show, on joints placed by hand or found in their "
+                    "own art. A weak or low hit buckles the knee on its side and the body goes over, toward its weapon or away; a "
+                    "hard hit snaps the shoulders back and knocks the body down, sooner and farther the harder the hit; a killing "
+                    "shot through the head cuts the strings and the body crumples. Drawing only: damage is the game's own. The "
+                    "fixed choices are for judging each one.",
+                    [](const Settings &d){return d.deathDirector!=0;}),
+                check("death_face_viewer","Dying turn to face you",&s.deathFaceViewer,
+                    "A monster killed facing away turns toward you before its death frames, which are drawn facing the viewer, "
+                    "instead of snapping round.",
+                    [](const Settings &d){return d.deathDirector!=0;}),
+                check("death_motion","Death reactions",&s.deathMotion,
+                    "Dying monsters jolt with the killing blow: thrown back by high hits, legs knocked out by low ones, crumpling "
+                    "under the chainsaw, hopping when gibbed, swaying as fliers fall. Drawn in whole-pixel rows over the game's own "
+                    "death frames, and gone by the corpse frame."),
+                check("hit_flinch","Hit flinches",&s.hitFlinch,"Monsters lean with the push of every hit and spring back. Drawing only: the game sees no difference."),
+                slider("body_motion_strength","Reaction strength",&s.bodyMotionStrength,0.5,3,0.25,
+                    "How far death reactions and hit flinches throw, bend and buckle the body.",
+                    [](const Settings &d){return d.deathMotion!=0||d.hitFlinch!=0;}),
                 check("soft_effects","Soft effect sprites",&s.softSprites,"Explosions, puffs and teleport fog stop slicing into walls and dissolve on a dither at floors."),
                 check("shootable_lights","Shootable lights",&s.shootableLights,
                     "Computer panels and tech walls throw blue sparks when shot. A shot or fireball into the glowing part "
@@ -281,9 +315,13 @@ std::vector<OptionTab> optionTabs(Settings &s) {
             {"Hearing",{
                 check("muffle_walls","Muffled behind walls",&s.muffleWalls,
                     "Sounds you can't see come through muffled, the more the longer their way round through the map's openings, "
-                    "more through closed doors and window glass, most through solid walls. Their loudness stays as in vanilla DOOM."),
+                    "more through closed doors and window glass, most through solid walls. Walls take their treble, not their loudness."),
                 check("muffle_distance","Duller with distance",&s.muffleDistance,
-                    "Far sounds lose their treble, the way they do through air.")}}}},
+                    "Far sounds lose their treble, the way they do through air."),
+                check("natural_falloff","Natural distance falloff",&s.naturalFalloff,
+                    "Far sounds fade the way they do in air, losing half their strength each time the distance doubles, "
+                    "so a monster across the room sounds across the room. Gunfire and blasts carry farther, faint and dull. "
+                    "Off: DOOM's straight fade, still loud at mid range.",hasFalloff)}}}},
         {"Performance",{
             {"Cheaper light work",{
                 check("bake_only_lights","Bake-only static lights",&s.bakeOnlyLights,

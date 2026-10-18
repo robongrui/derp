@@ -606,14 +606,25 @@ A_FirePlasma
 // the height of the intended target
 //
 fixed_t		bulletslope;
-// With nothing to autoaim at, a mouselook shot follows the view instead of
-// flying level. Demos and netgames keep vanilla aiming.
+// Mouselook shots follow the view even with a target in front of the player;
+// with classicaim they autoaim first and follow the view only with nothing
+// to aim at. Demos and netgames keep vanilla aiming.
 static boolean	bulletfree;
 
 
 void P_BulletSlope (mobj_t*	mo)
 {
     angle_t	an;
+    boolean	look = freeaim && mo->player
+	&& !demoplayback && !demorecording && !netgame;
+
+    bulletfree = look && !classicaim;
+    if (bulletfree)
+    {
+	bulletslope = (fixed_t)(tan (tourpitch)*FRACUNIT);
+	linetarget = NULL;
+	return;
+    }
     
     // see which target is to be aimed at
     an = mo->angle;
@@ -629,8 +640,7 @@ void P_BulletSlope (mobj_t*	mo)
 	    bulletslope = P_AimLineAttack (mo, an, 16*64*FRACUNIT);
 	}
     }
-    bulletfree = !linetarget && freeaim && mo->player
-	&& !demoplayback && !demorecording && !netgame;
+    bulletfree = look && !linetarget;
     if (bulletfree)
 	bulletslope = (fixed_t)(tan (tourpitch)*FRACUNIT);
 }

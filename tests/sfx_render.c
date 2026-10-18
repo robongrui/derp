@@ -1,7 +1,8 @@
 /* Renders the made-up effects to WAV files without the game, for listening:
 
-     doom-sfx-render <iwad> [-kind name|impacts|ambient|all] [-room dry|room|hall|all]
-                     [-rate 11025] [-level L] [-gun on|off] [-out dir]
+     doom-sfx-render <iwad> [-kind name|impacts|ambient|walk|all] [-room dry|room|hall|stone|all]
+                     [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-out dir]
+   With no -rate, use each effect's native game-bank rate.
 
    Each file plays the WAD's pistol three times, each shot with the effect
    it would set off (a new seed every time, so the variation shows), through
@@ -16,7 +17,13 @@
    a level of 0.35 times the kind's own (lamps play lower) unless -level says
    otherwise, with one pistol shot at six
    seconds to judge them against. The lamp also plays under DOOM's light
-   specials: lamp-flicker (a broken light), lamp-strobe and lamp-glow. */
+   specials: lamp-flicker (a broken light), lamp-strobe and lamp-glow.
+
+   -kind walk renders footsteps per floor (walk-stone, walk-metal, ...):
+   six walking, ten running and a landing, as the game layers them, with
+   the kit -armor (0 none, 1 green, 2 blue) and -heft (0 fist or pistol,
+   1 a slung gun, 2 rockets or BFG) say. -ring scales how much the kit's
+   metal rings (0 leaves the noise alone). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,10 +88,14 @@ static sample_t load_pistol (const char *path)
     return (sample_t){0};
 }
 
-/* Two rooms as room.c measures them: a 256-unit tech room, and a big hall. */
-static room_t room_preset (int hall)
+/* Rooms as room.c measures them: 1 a 256-unit tech room, mostly smooth
+   panels; 2 a big hall, half rough; 3 the tech room's shape built all of
+   stone (room.c's stone: absorbs 0.1, dark 0.45, scatter 0.65; Sabine gives
+   its decay). */
+static room_t room_preset (int kind)
 {
     room_t room = {0};
+    int hall = kind == 2, stone = kind == 3;
     static const float room_walls[8] = { 128, 160, 200, 140, 128, 170, 210, 150 };
     static const float hall_walls[8] = { 420, 560, 700, 480, 400, 620, 680, 520 };
     const float *walls = hall ? hall_walls : room_walls;
@@ -96,10 +107,12 @@ static room_t room_preset (int hall)
     }
     float above = hall ? 215 : 87;
     room.delay[8] = 2 * above / 10700.0f;
-    room.gain[8] = 0.7f * 0.25f / (1 + above / 320);
-    room.decay = hall ? 1.8f : 0.7f;
-    room.damping = hall ? 0.25f : 0.35f;
-    room.late = hall ? 0.9f : 0.56f;
+    room.gain[8] = (stone ? 0.9f : 0.7f) * 0.25f / (1 + above / 320);
+    room.decay = hall ? 1.8f : stone ? 0.87f : 0.7f;
+    room.damping = hall ? 0.25f : stone ? 0.45f : 0.35f;
+    room.late = hall ? 0.9f : stone ? 0.57f : 0.56f;
+    room.scatter = hall ? 0.4f : stone ? 0.65f : 0.15f;
+    for (int k = 0; k < ROOM_TAPS; ++k) room.spread[k] = room.scatter, room.dark[k] = room.damping;
     return room;
 }
 
@@ -152,12 +165,12 @@ static void write_wav (const char *path, const float *stereo, long frames)
     fclose (f);
 }
 
-/* The room's reverb, the mixer's limiter, and the file. Room 0 dry, 1 room, 2 hall. */
+/* The room's reverb, the mixer's limiter, and the file. Room 0 dry, else room_preset's. */
 static void finish (float *stereo, float *send, long frames, int room, const char *name, const char *out)
 {
     if (room)
     {
-	room_t preset = room_preset (room == 2);
+	room_t preset = room_preset (room);
 	Reverb_Init (RATE);
 	Reverb_SetRoom (&preset);
 	for (long n = 0; n < frames; n += 512)
@@ -173,7 +186,7 @@ static void finish (float *stereo, float *send, long frames, int room, const cha
 	if (p * gain > LIMIT) gain = LIMIT / p;
 	stereo[2 * n] *= gain; stereo[2 * n + 1] *= gain;
     }
-    static const char *const rooms[] = { "dry", "room", "hall" };
+    static const char *const rooms[] = { "dry", "room", "hall", "stone" };
     char path[1024];
     snprintf (path, sizeof(path), "%s/%s-%s.wav", out, name, rooms[room]);
     write_wav (path, stereo, frames);
@@ -242,7 +255,7 @@ static void render_ambient (const sample_t *pistol, int kind, int pattern, const
     free (data); free (light);
 }
 
-/* kind -1 is the pistol alone; room 0 dry, 1 room, 2 hall. */
+/* kind -1 is the pistol alone; room 0 dry, 1 room, 2 hall, 3 stone. */
 static void render (const sample_t *pistol, int kind, int room, int rate, float level, const char *out)
 {
     int dies = kind == IMPACT_LAMP_DIES || kind == IMPACT_SCREEN_DIES;
@@ -274,39 +287,78 @@ static void render (const sample_t *pistol, int kind, int room, int rate, float 
     for (int i = 0; i < SHOTS * 2; ++i) free (made[i]);
 }
 
+/* Footsteps on a floor kind: six walking, ten running, a landing; the
+   pistol once after the walk to judge them against. */
+static void render_walk (const sample_t *pistol, int floor, int armor, int heft, int room, int rate, const char *out)
+{
+    long frames = (long)(9.0f * RATE);
+    float *stereo = calloc ((size_t)frames * 2, sizeof(float)), *send = calloc ((size_t)frames, sizeof(float));
+    if (!stereo || !send) fail ("Out of memory%s", "");
+    float t = 0.3f;
+    for (int s = 0; s < 17; ++s)
+    {
+	float force = s < 6 ? 0 : s < 16 ? 1 : 1.8f;
+	if (s == 16) t += 0.8f;
+	impact_layer_t layers[4];
+	int count = Step_Layers (floor, force, armor, heft, layers);
+	for (int l = 0; l < count; ++l)
+	{
+	    int length;
+	    unsigned char *data = render_8bit (layers[l].kind, 7717u * (unsigned)s + 31u * (unsigned)l + 5, rate, &length, 0);
+	    voice_t v = { { data, length, rate }, (long)(t * RATE), frames, SFX_GAIN * layers[l].level, SFX_GAIN * sqrtf (layers[l].level) };
+	    mix (&v, stereo, send, frames);
+	    free (data);
+	}
+	t += s < 5 ? 0.5f : 0.33f;
+	if (s == 5)
+	{
+	    voice_t gun = { *pistol, (long)((t + 0.1f) * RATE), frames, SFX_GAIN, SFX_GAIN };
+	    if (gun_on) mix (&gun, stereo, send, frames);
+	    t += 0.8f;
+	}
+    }
+    char name[64];
+    static const char *const kit[3] = { "light", "slung", "heavy" };
+    snprintf (name, sizeof(name), "walk-%s-%s-armor%d", Impact_Name (floor) + 5, kit[heft], armor);
+    finish (stereo, send, frames, room, name, out);
+}
+
 int main (int argc, char **argv)
 {
     const char *kind = "all", *room = "all", *out = ".";
-    int rate = 11025;
+    int rate = 0, rate_given = 0, armor = 0, heft = 0;
     float level = -1;
     if (argc < 2)
     {
-	fprintf (stderr, "usage: %s <iwad> [-kind name|pistol|impacts|ambient|all] [-room dry|room|hall|all] [-rate 11025] [-level L] [-gun on|off] [-out dir]\n", argv[0]);
+	fprintf (stderr, "usage: %s <iwad> [-kind name|pistol|impacts|ambient|walk|all] [-room dry|room|hall|stone|all] [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-out dir]\nWithout -rate, use each effect's native game-bank rate.\n", argv[0]);
 	return 2;
     }
     for (int i = 2; i + 1 < argc; i += 2)
     {
 	if (!strcmp (argv[i], "-kind")) kind = argv[i + 1];
 	else if (!strcmp (argv[i], "-room")) room = argv[i + 1];
-	else if (!strcmp (argv[i], "-rate")) rate = atoi (argv[i + 1]);
+	else if (!strcmp (argv[i], "-rate")) { rate = atoi (argv[i + 1]); rate_given = 1; }
 	else if (!strcmp (argv[i], "-level")) level = (float)atof (argv[i + 1]);
 	else if (!strcmp (argv[i], "-out")) out = argv[i + 1];
+	else if (!strcmp (argv[i], "-armor")) armor = atoi (argv[i + 1]);
+	else if (!strcmp (argv[i], "-heft")) heft = atoi (argv[i + 1]);
+	else if (!strcmp (argv[i], "-ring")) Step_SetGearRing ((float)atof (argv[i + 1]));
 	else if (!strcmp (argv[i], "-gun")) gun_on = strcmp (argv[i + 1], "off") != 0;
 	else fail ("Unknown option %s", argv[i]);
     }
-    if (rate < 4000 || rate > 48000) fail ("Rate %s is out of range", "");
+    if (rate_given && (rate < 4000 || rate > 48000)) fail ("Rate %s is out of range", "");
     sample_t pistol = load_pistol (argv[1]);
     Resample_Init ();
-    static const char *const rooms[] = { "dry", "room", "hall" };
+    static const char *const rooms[] = { "dry", "room", "hall", "stone" };
     int found = 0;
     int all = !strcmp (kind, "all");
     for (int k = -1; k < IMPACT_KINDS; ++k)
     {
 	const char *name = k < 0 ? "pistol" : Impact_Name (k);
 	if (!all && strcmp (kind, "impacts") && strcmp (kind, name)) continue;
-	for (int r = 0; r < 3; ++r)
+	for (int r = 0; r < 4; ++r)
 	    if (!strcmp (room, "all") || !strcmp (room, rooms[r]))
-		render (&pistol, k, r, rate, level < 0 ? 0.6f : level, out), found = 1;
+		render (&pistol, k, r, rate ? rate : Impact_Rate(k), level < 0 ? 0.6f : level, out), found = 1;
     }
     static const struct { int kind, pattern; const char *name; } lamps[] = {
 	{ AMBIENT_LAMP, FLICKER, "lamp-flicker" }, { AMBIENT_LAMP, STROBE, "lamp-strobe" },
@@ -319,10 +371,17 @@ int main (int argc, char **argv)
 	int pattern = k < AMBIENT_KINDS ? STEADY : lamps[k - AMBIENT_KINDS].pattern;
 	const char *name = k < AMBIENT_KINDS ? Ambient_Name (k) : lamps[k - AMBIENT_KINDS].name;
 	if (!all && strcmp (kind, "ambient") && strcmp (kind, name)) continue;
-	for (int r = 0; r < 3; ++r)
+	for (int r = 0; r < 4; ++r)
 	    if (!strcmp (room, "all") || !strcmp (room, rooms[r]))
-		render_ambient (&pistol, ambient_kind, pattern, name, r, rate,
+		render_ambient (&pistol, ambient_kind, pattern, name, r, rate ? rate : 11025,
 				level < 0 ? HUM_LEVEL * Ambient_Level (ambient_kind) : level, out), found = 1;
+    }
+    for (int floor = IMPACT_STEP_STONE; floor <= IMPACT_STEP_SOFT; ++floor)
+    {
+	if (strcmp (kind, "walk")) break;
+	for (int r = 0; r < 4; ++r)
+	    if (!strcmp (room, "all") || !strcmp (room, rooms[r]))
+		render_walk (&pistol, floor, armor, heft, r, rate ? rate : 11025, out), found = 1;
     }
     if (!found) fail ("No kind or room called %s", kind);
     return 0;

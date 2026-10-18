@@ -3,8 +3,9 @@
 #define DOOM_AUDIO_SOUND_OPTIONS_H
 
 /* acoustics: room echoes and tail, at amount (0-2). walls: muffle sounds out
-   of sight. distance: dull far sounds. */
-void I_SetSoundOptions(int acoustics, float amount, int walls, int distance);
+   of sight. distance: dull far sounds. falloff: far sounds fade as in air,
+   not in DOOM's straight line (where the game allows it). */
+void I_SetSoundOptions(int acoustics, float amount, int walls, int distance, int falloff);
 /* How effects are read between their samples: 0 held as in the original,
    1 a cubic, 2 a windowed sinc (see audio/resample.h). Past held samples,
    treble (0-2) is how much made-up treble goes above them (audio/treble.h). */

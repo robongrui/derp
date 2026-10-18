@@ -50,6 +50,10 @@ int Game_BlastFrame(const struct mobj_s *thing);
    shooter's own frame). */
 void Game_MuzzleFlash(int weapon, float *radius, float *strength, int *flashstate);
 
+/* How much a weapon rattles on the player's back as they walk: 0 a light
+   one (fist, pistol), 1 a long gun on a sling, 2 a heavy one. */
+int Game_WeaponHeft(int weapon);
+
 /* The game's own look up and down, if it has one (Heretic's lookdir, which
    its aiming follows): the view pitch in radians, positive up, and mouselook
    turning it. Game_LookPitch returns 0 when the game has none and the
@@ -73,7 +77,9 @@ typedef enum {
     GAME_EFFECT_WINDOW_GLASS,     /* panes in windows, shattering */
     GAME_EFFECT_SHOOTABLE_LIGHTS, /* lamps and screens shot out, machinery sparks */
     GAME_EFFECT_FLASHLIGHT,       /* the F key's flashlight */
-    GAME_EFFECT_WIND              /* made-up wind under the sky and through openings */
+    GAME_EFFECT_WIND,             /* made-up wind under the sky and through openings */
+    GAME_EFFECT_NATURAL_FALLOFF,  /* sounds fading with distance as in air, in place of the game's own curve */
+    GAME_EFFECT_FREE_AIM          /* mouselook bullets going where the view points (else the game's own aiming) */
 } game_effect;
 int Game_HasEffect(game_effect effect);
 
@@ -123,6 +129,17 @@ game_decoration Game_Decoration(int sprite);
 /* Sound effects: I_GetSfxLumpNum (i_sound.h) is the game's, since lump
    names differ; Game_SfxLoaded tells the game where an effect's data sits. */
 void Game_SfxLoaded(int id, void *data);
+/* How much farther than the game's usual range an effect carries: 1 for
+   most, more for the loud ones (gunfire, explosions), heard far off under
+   the natural falloff. */
+float Game_SoundCarry(int id);
+/* Hitscan shots: traced is told of each, from the shooter's muzzle to where
+   it stopped, in map units, and what it hit (NULL: a wall, floor or the end
+   of its range), for sounds that follow the bullet. NULL stops telling. A
+   game without hitscan tracing ignores it. */
+typedef void (*game_shot_traced)(const struct mobj_s *shooter, const struct mobj_s *hit,
+                                 float x1, float y1, float z1, float x2, float y2, float z2);
+void Game_TraceShots(game_shot_traced traced);
 
 /* The F4 panel's font: the WAD lump of character c ('!' to '_'), or -1,
    and how many pixels to add after each glyph (the art's own spacing). */

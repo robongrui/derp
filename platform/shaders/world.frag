@@ -91,6 +91,7 @@ vec3 lampLight=vec3(0);
 #include "world/surface_light.glsl"
 void main() {
     bool sprite=(vMode&MODE_SPRITE)!=0u;
+    bool wound=sprite&&(vMode&MODE_WOUND)!=0u;
     vec3 dp1=dFdx(vWorld),dp2=dFdy(vWorld);vec2 duv1=dFdx(vUV),duv2=dFdy(vUV);
     float footprint=max(length(duv1),length(duv2));
     // Mip level from the shorter axis, allowing 2:1 stretch along the longer
@@ -110,15 +111,16 @@ void main() {
     // enlarges the picture's middle slightly (edges still meet the rim).
     bool glassy=!sprite&&!blood&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&isGlass(vUV);
     vec3 screenNormal=normal;vec2 screen=vec2(0),uv=vUV;
-    bool dead=(vMode&MODE_DEAD_GLOW)!=0u;
+    bool dead=!sprite&&(vMode&MODE_DEAD_GLOW)!=0u;
     float crack=0.0;
     if(glassy) {
         vec2 origin,extent;screen=glassScreen(vUV,origin,extent);
         vec3 tangent,bitangent;textureFrame(normal,dp1,dp2,duv1,duv2,tangent,bitangent);
-        if(dead) {
+        if(dead&&(vMode&MODE_LAMP_OFF)==0u) {
             // MODE_DEAD_GLOW: a shot-out screen's glass lies broken, no
             // longer a lens: cracked into shards that each lean their own
-            // way and so catch light apart.
+            // way and so catch light apart. One its blinking sector only
+            // switched off (MODE_LAMP_OFF) goes dark behind whole glass.
             uint shard,seed=vStatic*0x9e3779b9u^(vMode>>MODE_SECTOR_SHIFT);
             crack=glassCracks(vUV,origin,extent,seed,shard);
             uint h=tileHash(ivec2(int(shard),1),seed);
@@ -162,15 +164,24 @@ void main() {
     // Depth comes from the rasterizer, per sample like the shading pass.
     outColor=color;return;
 #endif
+    // Wounds keep the sprite's coverage and silhouette normals, but their
+    // blood has its own palette color even over dark clothing. A thin outer
+    // stain blends into the artwork; the torn rim replaces it.
+    if(wound) {
+        uint index=(vMode>>MODE_WOUND_PALETTE_SHIFT)&255u;
+        vec3 paint=texelFetch(palette,ivec2(int(index),0),0).rgb;
+        color.rgb=(vMode&MODE_WOUND_STAIN)!=0u?mix(color.rgb,paint,0.7):paint;
+    }
     if(blood) color.rgb*=vTint.g;
     // The thick rim of the glass shades the picture's edges, in light steps.
     if(glassy) color.rgb*=round((1.0-0.5*smoothstep(0.7,1.0,max(abs(screen.x),abs(screen.y))))*16.0)/16.0;
     // A dead screen shows nothing but the dark tube behind the glass, and its
     // cracks catching the light.
     if(glassy&&dead) color.rgb=mix(color.rgb*0.08,vec3(0.45),crack);
-    // Map surfaces carry sector+1 in mode bits 12+; 0 means no sector.
+    // Map surfaces carry sector+1 above the mode flags; sprite wounds use
+    // the same bits for their palette paint and never decode a sector.
     bool mapped=(vMode>>MODE_SECTOR_SHIFT)>0u&&!sprite&&c.effects.z==0.0;
-    uint sector=(vMode>>MODE_SECTOR_SHIFT)-1u;
+    uint sector=mapped?(vMode>>MODE_SECTOR_SHIFT)-1u:0u;
     SectorLit lit=sectorLighting(normal,mapped,sector,bakeFlags);
     float light=lit.light;
     // Grounding: things resting on the floor darken over their lowest 24
@@ -227,7 +238,7 @@ void main() {
     float emission=0.0;
     // MODE_GLOWING_EYES: a monster's painted eyes shine a little past full
     // brightness whatever light falls on it.
-    if(sprite&&(vMode&MODE_GLOWING_EYES)!=0u&&c.effects.z==0.0) {
+    if(sprite&&!wound&&(vMode&MODE_GLOWING_EYES)!=0u&&c.effects.z==0.0) {
         emission=eyeGlow(image,uv);
         illumination=max(illumination,vec3(emission*1.2));
     }
@@ -236,14 +247,16 @@ void main() {
         vec2 at=c.effects.x==2.0?sharpen(uv,texelPixel+c.texFilter.x):uv;
         emission=maskAt(image,at,c.effects.x>0.0);
         if(blend>0.0) emission=mix(emission,maskAt(nextImage,at,c.effects.x>0.0),blend);
-        // A glowing or fire-flickering sector's lamps fade with it (vLampTint alpha, lampGlow).
-        emission*=unpackUnorm4x8(vLampTint).a;
         // MODE_DEAD_GLOW: a shot-out lamp or screen. What glowed is a dead,
-        // dark tube or screen; the housing around it keeps its shading.
+        // dark tube or screen; the housing around it keeps its shading. By
+        // the whole mask, before the sector's pulse below, so a dead lamp
+        // in a glowing sector stays dead instead of pulsing.
         if(dead) {
             if(!glassy) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114))*0.15),emission);
             emission=0.0;
         }
+        // A glowing or fire-flickering sector's lamps fade with it (vLampTint alpha, lampGlow).
+        emission*=unpackUnorm4x8(vLampTint).a;
         emission=max(emission,edgeGlow);
         illumination=max(illumination,vec3(emission));
     }
@@ -295,7 +308,7 @@ void main() {
     if((vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
     // Outdoor haze (c.haze, Game_Sun): surfaces under open sky fade toward
     // the sky's horizon color with distance, so far walls meet the sky.
-    if(c.haze.w>0.0&&c.effects.z==0.0&&(vMode&MODE_SCREEN)==0u&&(vMode>>MODE_SECTOR_SHIFT)>0u&&sectorInfo[sector].w>0.0) {
+    if(mapped&&c.haze.w>0.0&&(vMode&MODE_SCREEN)==0u&&sectorInfo[sector].w>0.0) {
         float open=1.0-outdoorShape(sector).x;
         color.rgb=mix(color.rgb,c.haze.rgb*c.fx.x,open*c.haze.w*0.6*(1.0-exp(-max(vDistance-256.0,0.0)/1400.0)));
     }
@@ -317,7 +330,7 @@ void main() {
     // ceiling, and their depth is pulled toward the eye by vSun.x so walls
     // they stand against no longer slice the billboard.
     float depth=gl_FragCoord.z;
-    if((vMode&MODE_SOFT)!=0u) {
+    if((vMode&MODE_SOFT)!=0u&&!wound) {
         vec4 info=sectorInfo[(vMode>>MODE_SECTOR_SHIFT)-1u];
         float room=min(vWorld.z-info.y,info.w>0.0?1e4:info.z-vWorld.z);
         if(saturate(room/12.0)<bayer4(ivec2(floor(gl_FragCoord.xy/max(c.fx2.x,1.0))))) discard;

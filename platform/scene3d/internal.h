@@ -38,7 +38,7 @@ extern int viewwindowx, viewwindowy;
 extern boolean menuactive, automapactive, paused;
 extern int numflats, numtextures;
 extern float tourpitch;
-extern boolean freeaim;
+extern boolean freeaim, classicaim;
 extern fixed_t aimslope;
 int P_PicAnimationNext(boolean istexture,int pic,int *next);
 }
@@ -165,6 +165,7 @@ void buildCaustics();
 struct EdgeStrip { int kind=0,height=0,texture=-1; std::vector<byte> index,paint,glow; };
 const EdgeStrip &edgeStrip(int kind);
 int liquidGlowKind(int sector);
+bool paintsOwnEdge(int texture,int kind);
 const EdgeStrip *levelEdgeStrip();
 void buildShore();
 // Liquid edges from buildShore: a to b, the liquid sector, and the unit
@@ -346,16 +347,18 @@ void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float t
 SurfaceLightKey surfaceCellOf(const SurfaceLight &tile);
 // Lamps of a sector whose light flickers follow it: how far on this tic
 // (0-1), and whether switched off (blinking and strobing sectors only).
+// With an image: whether that texture follows (screens stay on beside lamps).
 bool lampFlickers(int sector);
+bool lampFlickers(int sector,const Image &image);
 float lampShine(int sector);
-bool lampOut(int sector);
+bool lampOut(int sector,const Image &image);
 // A sector's light level as drawn: one whose lamps flicker by group keeps
 // its low, the lamps' light carrying the swing.
 int lampLightLevel(const sector_t *sector);
 bool lampGroupSector(int sector); // Its lamps hold a bake flicker group.
 // Vertices from first on carry a fading sector's lamp glow for their
 // glowing texels (Vertex::lampTint alpha on walls and flats).
-void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector);
+void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector,const Image &image);
 
 // geometry.cpp
 void quad(std::vector<Vertex> &out,Vertex a,Vertex b,Vertex c,Vertex d);
@@ -417,8 +420,71 @@ bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,con
 
 // blood.cpp
 void bloodShutdown();
-void bloodHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,int damage);
+// Opaque blood-sprite palette indices, ordered from dark to bright.
+const std::vector<byte> &bloodPalette();
+void bloodHit(mobj_t *target,mobj_t *shooter,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,fixed_t slope,int damage);
 void buildBlood(const Uniforms &camera);
+
+// body_motion.cpp
+// A monster's drawn pose from the blows it took: lean and upper-body whip
+// as world-space vectors (radians, toward the push), legs squashed by that
+// share, lifted this many units; fliers pivot about their middle.
+// flatten: the whole body shortened by that share (a landing's settle, from the death director).
+struct BodyPose { float lean[2],whip[2],squash,lift,flatten;bool flier; };
+void bodyHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,int damage);
+void bodyDamaged(mobj_t *target,mobj_t *inflictor,mobj_t *source,int damage);
+void watchBodies();
+void bodyMotionShutdown();
+bool bodyPose(const mobj_t &thing,float fraction,BodyPose &pose);
+void bodyQuads(std::vector<Vertex> &out,const BodyPose &pose,const Vertex &base,float x,float y,float feet,float rx,float ry,
+               float left,float right,int imageTop,int rows,float u0,float u1,const std::vector<byte> *holes=nullptr);
+
+// death_director.cpp
+// How a dying monster is drawn this frame: the sprite and frame (with its
+// full-bright bit), the facing its rotations are picked by, and whether
+// the frames are mirrored.
+// A procedural fall's drawing this frame (death_falls.cpp): rigged (rig set:
+// legs' hip drops, sideways shift, torso turn, legs' swing about the pelvis,
+// sink, all in units and radians, + turning left) or a drawing set down by
+// ground units, lifted, pressed flat by a share. Front view (rotation 1).
+struct FallRig;
+struct FallPose { const FallRig *rig=nullptr;float drops[2]={},shift=0,torso=0,legs=0,sink=0,head=0,ground=0,lift=0,flatten=0;bool active=false; };
+// bend: how much of the death jolt (body_motion.cpp) the pictured body
+// still takes, 1 before the collapse, 0 once it lies; settle: a landing's
+// brief flattening; fall: a procedural fall, which draws instead.
+struct DeathView { int sprite,frame;angle_t facing;bool mirror;float bend,settle;FallPose fall; };
+void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,float high,bool gib,const mobj_t *attack,float hitZ=-1,float hitU=0);
+void forgetDeath(const mobj_t *thing);
+void deathsShutdown();
+bool deathView(const mobj_t &thing,float fraction,DeathView &view);
+
+// death_falls.cpp
+// hitZ, hitU: where the killing blow struck, units above the feet and right of the middle as the
+// shooter sees it (hitZ < 0: not known, as for a missile).
+bool startFall(const mobj_t &thing,float speed,float high,float side,float hitZ,float hitU);
+void forgetFall(const mobj_t *thing);
+void fallsShutdown();
+void prepareFalls();      // at level load: rigs for every killable monster's pain and first death drawing
+bool fallView(const mobj_t &thing,float fraction,DeathView &view);
+void fallQuads(std::vector<Vertex> &out,const Vertex &base,const FallPose &pose,float x,float y,float feet,float rx,float ry,bool flip,
+               const std::vector<byte> *holes=nullptr);
+
+// wounds.cpp
+// Holes shot through monsters' sprites. woundMask: per texel of a drawn frame,
+// 0 body, 1 hole, 2 dark rim, 3 red rim, 4 bright lip, 5 stain (false when none show).
+void woundHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,fixed_t slope,int damage,const mobj_t *shooter=nullptr);
+// Remember the main view so impacts can intersect the artwork after flinch,
+// lifting, interpolation and liquid clipping, before damage changes its frame.
+void woundView(const mobj_t *thing,const mobj_t *viewer,const Image &image,bool flipped,float x,float y,float feet,
+               float top,float bottom,float rx,float ry,const BodyPose *pose=nullptr);
+void forgetWounds(const mobj_t *thing);
+void woundsShutdown();
+bool woundMask(const mobj_t &thing,const Image &image,bool flipped,float rx,float ry,std::vector<byte> &mask);
+void woundVertex(Vertex &vertex,byte state);
+void maskedRow(std::vector<Vertex> &out,const std::vector<byte> &mask,int width,int r,bool flip,
+               const std::function<Vertex(int,bool)> &corner);
+void woundedQuads(std::vector<Vertex> &out,const Vertex &base,const Image &image,const std::vector<byte> &mask,
+                  float x,float y,float top,float rx,float ry,bool flip,float rowHeight=1);
 
 // liquids.cpp
 void splashesShutdown();

@@ -67,6 +67,7 @@ static void beforeTic() {
     for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
         oldThings.emplace(thing,std::array<float,3>{units(thing->x),units(thing->y),units(thing->z)});
     watchSplashes();
+    watchBodies();
     watchGlass();
     watchShotLights();
 }
@@ -85,14 +86,16 @@ void applySettings() {
     R_MuzzleFlash=settings.accelerated?muzzleFlash:nullptr;
     R_WallImpact=settings.accelerated?wallImpact:nullptr;
     R_BloodHit=settings.accelerated?bloodHit:nullptr;
+    R_DamageHit=settings.accelerated?bodyDamaged:nullptr;
     R_PlaneImpact=settings.accelerated?planeImpact:nullptr;
     R_ShotPassed=settings.accelerated?glassShot:nullptr;
     freeaim=settings.accelerated&&settings.look;
+    classicaim=settings.classicAim!=0;
     if(!settings.accelerated) clearFlashPulses();
     r_uncapped=settings.accelerated;
     if(!settings.look) pitch=0;
     R_SetViewSize(10,0);
-    I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance);
+    I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance,settings.naturalFalloff);
     I_SetSfxPlayback(settings.sfxResampling,settings.sfxTreble);
     I_SetMadeSounds(settings.madeImpacts,settings.glassSound,settings.ambience,settings.ambienceAmount,settings.footsteps);
     I_AmbienceShowGlass(settings.accelerated&&settings.windowGlass);
@@ -116,13 +119,13 @@ void sceneInit(SDL_Window *window) {
 }
 void sceneShutdown() {
     stopRelight();
-    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
+    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_DamageHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     batches.clear();shadowBatches.clear();decalBatches.clear();mirrorBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
     imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();glassLightShutdown();exposureShutdown();
     bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
-    impactsShutdown();bloodShutdown();splashesShutdown();glassShutdown();shotLightsShutdown();
+    impactsShutdown();bloodShutdown();splashesShutdown();bodyMotionShutdown();glassShutdown();shotLightsShutdown();
 }
 // A new level, or the first after shutdown: each part forgets the last
 // level, then the map and what is built from it at level load.
@@ -137,6 +140,7 @@ static void startLevel() {
     buildShore();
     layoutBake();
     findDoors();
+    prepareFalls();
     levelSerial=r_levelserial;
 }
 static bool levelPending() {return levelSerial!=r_levelserial||floors.empty();}
@@ -159,8 +163,9 @@ static void planStages(bool level) {
 }
 // What frameMean's alpha tells surfaceLight about a texture's material:
 // 0 DOOM's palette ramps, 1 ice (iceFlat); with Game_SurfaceGloss, 2 a
-// sprite (judged by colour alone), else 3 + its game_surface.
-static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2&&GAME_SURFACE_FLESH==3&&GAME_SURFACE_SOIL==4&&GAME_SURFACE_LIQUID==5,
+// sprite (judged by colour alone), else 3 + its game_surface; fabric (9)
+// takes materialGloss's matte default.
+static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2&&GAME_SURFACE_FLESH==3&&GAME_SURFACE_SOIL==4&&GAME_SURFACE_LIQUID==5&&GAME_SURFACE_FABRIC==6,
               "materialGloss in world/surface.glsl numbers the surfaces");
 static float surfaceMaterial(int key,int pic,bool flat) {
     if(flat&&iceFlat(pic))return 1;

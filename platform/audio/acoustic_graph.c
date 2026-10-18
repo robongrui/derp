@@ -35,6 +35,7 @@ static unsigned char *glass;
 static int glass_lines;
 static unsigned glass_serial = ~0u;
 static int glass_shown = 1;
+static int follow_dirty = 1;
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
 
@@ -255,10 +256,11 @@ void Acoustic_Follow(void)
     if (gamestate != GS_LEVEL || !listener || !listener->subsector) return;
     float lx = units(listener->x), ly = units(listener->y);
     int here = (int)(listener->subsector->sector - sectors);
-    if (level == r_levelserial && at == here && fabsf(lx - x) + fabsf(ly - y) <= FOLLOW_MOVED &&
+    if (!follow_dirty && level == r_levelserial && at == here && fabsf(lx - x) + fabsf(ly - y) <= FOLLOW_MOVED &&
         gametic >= tic && gametic - tic < FOLLOW_TICS) return;
     Acoustic_Listen(lx, ly, here, FOLLOW_REACH);
     x = lx; y = ly; tic = gametic; at = here; level = r_levelserial;
+    follow_dirty = 0;
 }
 
 void Acoustic_Glass(int line, int whole)
@@ -270,6 +272,17 @@ void Acoustic_Glass(int line, int whole)
         glass_lines = glass ? numlines : 0;
         glass_serial = r_levelserial;
     }
-    if (line >= 0 && line < glass_lines) glass[line] = whole ? 1 : 2;
+    if (line >= 0 && line < glass_lines && glass[line] != (whole ? 1 : 2))
+    {
+        glass[line] = whole ? 1 : 2;
+        /* The break sound starts now: it must not inherit the intact pane's
+           muffling from the enemy's gunshot earlier in this same tic. */
+        follow_dirty = 1;
+    }
 }
-void Acoustic_ShowGlass(int shown) { glass_shown = shown != 0; }
+void Acoustic_ShowGlass(int shown)
+{
+    if (glass_shown == (shown != 0)) return;
+    glass_shown = shown != 0;
+    follow_dirty = 1;
+}

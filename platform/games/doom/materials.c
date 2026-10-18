@@ -5,7 +5,6 @@
 #include "../../emissive.h"
 #include "../../screen_glass.h"
 #include "../../audio/ambient_synth.h"
-#include "../../audio/impact_synth.h"
 #include "../../game_materials.h"
 
 static int starts(const char *name, const char *prefix) { return !strncmp(name, prefix, strlen(prefix)); }
@@ -44,51 +43,83 @@ int Game_DamagingFloor(int special)
     return special == 4 || special == 5 || special == 7 || special == 11 || special == 16;
 }
 
-/* SLIME13 on are metal in DOOM II, only the first eight are sludge. */
-int Game_FloorStep(const char *name)
+/* Single textures whose family says otherwise, checked first: checked by
+   ear and eye in the maps, or plain in rendered views of them. Where a
+   texture could be read as stone or metal it stays stone: metal rings, and
+   on big floors that tires the ear. */
+typedef struct { const char *name; game_surface surface; } named_surface;
+
+static int named(const char *name, const named_surface *list, game_surface *surface)
 {
-    static const char *const metals[] = { "FLOOR4", "FLOOR5", "FLAT20", "FLAT22", "FLAT23", "CEIL3", "COMP",
-        "GATE", "STEP", "TLITE", "CONS1", NULL };
-    static const char *const woods[] = { "FLAT5_1", "FLAT5_2", "CEIL1_1", "CRATOP", NULL };
-    static const char *const soils[] = { "GRASS", "RROCK19", "RROCK20", "MFLR8_3", "FLAT10", NULL };
-    int kind = IMPACT_STEP_STONE;
-    int sludge = starts(name, "SLIME") && name[5] == '0' && name[6] >= '1' && name[6] <= '8';
-    if (starts(name, "FWATER") || starts(name, "SWATER") || starts(name, "WATER")) kind = IMPACT_SPLASH_WATER;
-    else if (starts(name, "NUKAGE") || starts(name, "BLOOD") || starts(name, "LAVA") || sludge) kind = IMPACT_SPLASH_THICK;
-    else
-    {
-        for (int k = 0; metals[k]; ++k) if (starts(name, metals[k])) kind = IMPACT_STEP_METAL;
-        for (int k = 0; woods[k]; ++k) if (starts(name, woods[k])) kind = IMPACT_STEP_WOOD;
-        for (int k = 0; soils[k]; ++k) if (starts(name, soils[k])) kind = IMPACT_STEP_SOFT;
-    }
-    return kind;
+    for (; list->name; ++list)
+        if (!strcmp(name, list->name)) { *surface = list->surface; return 1; }
+    return 0;
 }
 
 /* The IWADs' texture families; PWAD names that match none sound like stone. */
 game_surface Game_WallSurface(const char *name)
 {
+    static const named_surface singles[] = {
+        {"STEP5", GAME_SURFACE_STONE}, {"STEP6", GAME_SURFACE_STONE}, {"DOORRED2", GAME_SURFACE_STONE},
+        {"DOORYEL2", GAME_SURFACE_STONE}, {"DOORBLU2", GAME_SURFACE_STONE},
+        {"BIGDOOR5", GAME_SURFACE_WOOD}, {"BIGDOOR6", GAME_SURFACE_WOOD}, {"BIGDOOR7", GAME_SURFACE_WOOD},
+        {"ZZWOLF5", GAME_SURFACE_WOOD}, {"ZZWOLF6", GAME_SURFACE_WOOD}, {"ZZWOLF7", GAME_SURFACE_WOOD},
+        {"ZZWOLF10", GAME_SURFACE_METAL}, {"ZDOORF1", GAME_SURFACE_METAL}, {"ZDOORB1", GAME_SURFACE_METAL},
+        {"MIDSPACE", GAME_SURFACE_METAL}, {"MIDBRONZ", GAME_SURFACE_METAL}, {NULL, GAME_SURFACE_STONE}};
     static const char *const metals[] = {"STARTAN", "STARG", "STARBR", "COMP", "METAL", "SUPPORT",
         "SHAWN", "DOOR", "BIGDOOR", "EXITDOOR", "LITE", "PIPE", "PLAT", "TEKWALL", "TEKGREN", "TEKLITE",
-        "SLADWALL", "SILVER", "BRONZE", "SPACEW", "NUKE", "SW1", "SW2", "STEP", "MIDGRATE", "MIDBARS",
-        "ICKDOOR", "ICKWALL", "TEKBRON", "BROWNPIP", NULL};
+        "SLADWALL", "SILVER", "BRONZE", "SPACEW", "NUKE", "STEP", "MIDGRATE", "MIDBARS",
+        "ICKDOOR", "TEKBRON", "BROWNPIP", "SPCDOOR", NULL};
     static const char *const woods[] = {"WOOD", "PANEL", "PANBOOK", "PANBORD", "PANCASE", NULL};
-    static const char *const fleshes[] = {"SKIN", "SKSNAKE", "SKSPINE", "SP_FACE", "FLESH", "SLOPPY", "SPCDOOR", NULL};
+    static const char *const fleshes[] = {"SKIN", "SKSNAKE", "SKSPINE", "SP_FACE", "FLESH", "SLOPPY", "DBRAIN", NULL};
+    /* A switch is a plate set into a wall the rest of its name tells:
+       SW1STON1 is stone, SW1WOOD and SW1PANEL wood, SW1COMP metal. */
+    static const char *const stone_switches[] = {"STON", "GSTON", "ROCK", "CMT", "MARB", "BRIK", "GARG",
+        "LION", "SATYR", "VINE", "ZIM", "DIRT", NULL};
+    game_surface surface;
+    if (named(name, singles, &surface)) return surface;
+    if (starts(name, "SW1") || starts(name, "SW2"))
+    {
+        if (prefixed(name + 3, stone_switches)) return GAME_SURFACE_STONE;
+        if (starts(name + 3, "WOOD") || starts(name + 3, "PANEL")) return GAME_SURFACE_WOOD;
+        if (starts(name + 3, "SKIN")) return GAME_SURFACE_FLESH;
+        return GAME_SURFACE_METAL;
+    }
     if (prefixed(name, woods)) return GAME_SURFACE_WOOD;
     if (prefixed(name, fleshes)) return GAME_SURFACE_FLESH;
     if (prefixed(name, metals)) return GAME_SURFACE_METAL;
     return GAME_SURFACE_STONE;
 }
 
+/* Only SLIME01-08 are sludge: DOOM II's SLIME09-12 are cracked hot rock and
+   SLIME13-16 metal plates. FLAT14 is the blue carpet of E1M1 and E1M2;
+   the brown hexes (E1M1's main floor among them), the E1M5 stair tiles
+   and the brick paving are stone, the slatted slabs metal, the light
+   panels metal housings. */
 game_surface Game_FlatSurface(const char *name)
 {
-    static const char *const liquids[] = {"NUKAGE", "FWATER", "SWATER", "SLIME", "BLOOD", "LAVA", "WATER", NULL};
+    static const named_surface singles[] = {
+        {"FLOOR5_2", GAME_SURFACE_STONE}, {"FLOOR5_3", GAME_SURFACE_STONE}, {"FLOOR4_6", GAME_SURFACE_STONE},
+        {"FLOOR4_8", GAME_SURFACE_STONE},
+        {"FLOOR5_4", GAME_SURFACE_STONE}, {"FLAT20", GAME_SURFACE_STONE}, {"FLAT5_3", GAME_SURFACE_WOOD},
+        {"CEIL5_2", GAME_SURFACE_METAL}, {"CEIL1_2", GAME_SURFACE_METAL}, {"CEIL1_3", GAME_SURFACE_METAL},
+        {"FLAT2", GAME_SURFACE_METAL}, {"FLAT17", GAME_SURFACE_METAL}, {"FLOOR1_7", GAME_SURFACE_METAL},
+        {"GRNLITE1", GAME_SURFACE_METAL}, {NULL, GAME_SURFACE_STONE}};
+    static const char *const liquids[] = {"NUKAGE", "FWATER", "SWATER", "BLOOD", "LAVA", "WATER", NULL};
     static const char *const soils[] = {"GRASS", "RROCK19", "RROCK20", "MFLR8_3", "FLAT10", NULL};
     static const char *const woods[] = {"FLAT5_1", "FLAT5_2", "CEIL1_1", "CRATOP", NULL};
-    static const char *const metals[] = {"FLOOR4", "FLOOR5", "FLAT14", "FLAT20", "FLAT22", "FLAT23",
-        "CEIL3", "COMP", "GATE", "STEP", "TLITE", "SLIME13", "CONS1", NULL};
-    if (prefixed(name, liquids)) return GAME_SURFACE_LIQUID;
+    static const char *const fleshes[] = {"SFLR", NULL};
+    static const char *const fabrics[] = {"FLAT14", NULL};
+    static const char *const metals[] = {"FLOOR4", "FLOOR5", "FLAT20", "FLAT22", "FLAT23",
+        "CEIL3", "COMP", "GATE", "STEP", "TLITE", "SLIME13", "SLIME14", "SLIME15", "SLIME16", "CONS1", NULL};
+    game_surface surface;
+    if (named(name, singles, &surface)) return surface;
+    if ((starts(name, "SLIME0") && name[6] >= '1' && name[6] <= '8') || prefixed(name, liquids))
+        return GAME_SURFACE_LIQUID;
     if (prefixed(name, soils)) return GAME_SURFACE_SOIL;
     if (prefixed(name, woods)) return GAME_SURFACE_WOOD;
+    if (prefixed(name, fleshes)) return GAME_SURFACE_FLESH;
+    if (prefixed(name, fabrics)) return GAME_SURFACE_FABRIC;
     if (prefixed(name, metals)) return GAME_SURFACE_METAL;
     return GAME_SURFACE_STONE;
 }

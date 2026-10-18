@@ -73,6 +73,13 @@ void Game_MuzzleFlash(int weapon, float *radius, float *strength, int *flashstat
     *flashstate = weapon >= 0 && weapon < NUMWEAPONS ? (int)weaponinfo[weapon].flashstate : -1;
 }
 
+int Game_WeaponHeft(int weapon)
+{
+    if (weapon == wp_missile || weapon == wp_bfg) return 2;
+    if (weapon == wp_shotgun || weapon == wp_supershotgun || weapon == wp_chaingun || weapon == wp_plasma) return 1;
+    return 0;
+}
+
 int Game_LookPitch(float *pitch) { (void)pitch; return 0; }
 void Game_Look(float delta) { (void)delta; }
 
@@ -129,6 +136,33 @@ int I_GetSfxLumpNum(sfxinfo_t *sfx)
 void Game_SfxLoaded(int id, void *data)
 {
     S_sfx[id].data = data;
+}
+
+/* Gunshots and blasts: a gunshot is a deafening crack up close and carries
+   across a courtyard and beyond. The monsters' guns are the player's. */
+float Game_SoundCarry(int id)
+{
+    switch (id)
+    {
+    case sfx_pistol: case sfx_shotgn: case sfx_dshtgn: case sfx_chgun: case sfx_plasma: case sfx_bfg:
+    case sfx_rlaunc: case sfx_barexp: case sfx_rxplod: case sfx_firxpl:
+        return 2.5f;
+    default:
+        return 1;
+    }
+}
+
+static game_shot_traced shot_listener;
+static void shot_traced(mobj_t *shooter, mobj_t *hit, fixed_t x1, fixed_t y1, fixed_t z1,
+                        fixed_t x2, fixed_t y2, fixed_t z2)
+{
+    const float unit = 1.0f / FRACUNIT;
+    shot_listener(shooter, hit, x1 * unit, y1 * unit, z1 * unit, x2 * unit, y2 * unit, z2 * unit);
+}
+void Game_TraceShots(game_shot_traced traced)
+{
+    shot_listener = traced;
+    P_ShotTraced = traced ? shot_traced : NULL;
 }
 
 int Game_FontLump(int c)

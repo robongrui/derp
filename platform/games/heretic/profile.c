@@ -69,6 +69,13 @@ void Game_MuzzleFlash(int weapon, float *radius, float *strength, int *flashstat
         ? wpnlev1info[weapon].flashstate : -1;
 }
 
+int Game_WeaponHeft(int weapon)
+{
+    if (weapon == wp_phoenixrod || weapon == wp_mace) return 2;
+    if (weapon == wp_crossbow || weapon == wp_blaster || weapon == wp_skullrod) return 1;
+    return 0;
+}
+
 /* lookdir 173 aims at slope 1 (P_SpawnPlayerMissile); -110 to 90 as the
    look keys allow. Mouselook adds to it, keeping the fraction for next time. */
 int Game_LookPitch(float *pitch)
@@ -106,13 +113,14 @@ int Game_Sprite(game_sprite_role role)
 /* No glass in the windows, nothing to shoot out (torches and gems aren't
    bulbs), and no flashlight: the Torch item is Heretic's light. No made-up
    wind either: Heretic places its own wind sounds (MT_SOUNDWIND), and what
-   the game has itself wins. */
+   the game has itself wins. Its aiming is its own too: autoaim, else the
+   lookdir. */
 int Game_HasEffect(game_effect effect)
 {
     switch (effect)
     {
     case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT:
-    case GAME_EFFECT_WIND: return 0;
+    case GAME_EFFECT_WIND: case GAME_EFFECT_NATURAL_FALLOFF: case GAME_EFFECT_FREE_AIM: return 0;
     }
     return 1;
 }
@@ -194,6 +202,11 @@ void Game_SfxLoaded(int id, void *data)
 {
     S_sfx[id].snd_ptr = data;
 }
+
+float Game_SoundCarry(int id) { (void)id; return 1; }
+
+/* Heretic's traces aren't hooked yet: no near misses. */
+void Game_TraceShots(game_shot_traced traced) { (void)traced; }
 
 /* FONTA, the menus' small font: FONTA_S, then '!' onward. Heretic draws
    it one pixel tighter than the patches are wide (MN_DrTextA). */

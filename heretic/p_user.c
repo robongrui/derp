@@ -531,6 +531,7 @@ boolean P_UndoPlayerChicken(player_t *player)
 // DERP: see p_local.h.
 float tourpitch;
 boolean freeaim;
+boolean classicaim;
 boolean debugfly, debugnoclip, debuggod, debugnomonsters, debugnotarget;
 
 boolean P_DebugAllowed(void)

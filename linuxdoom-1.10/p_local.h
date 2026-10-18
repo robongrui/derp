@@ -96,12 +96,20 @@ void P_SetCheat (player_t* player, boolean* setting, boolean on);
 void P_SetTour (player_t* player, boolean on);
 // View pitch in radians, written by the 3D renderer; flight follows it.
 extern float tourpitch;
-// Mouselook is on (3D renderer): a player's shot with nothing to autoaim at
-// follows tourpitch (P_BulletSlope).
+// Mouselook is on (3D renderer): a player's shot follows tourpitch
+// (P_BulletSlope).
 extern boolean freeaim;
+// With freeaim: a shot autoaims at a monster in front as in vanilla, and
+// follows tourpitch only with none.
+extern boolean classicaim;
 // The next P_LineAttack is such a shot: it starts at the eye and also stops
 // on floors and ceilings. P_LineAttack clears it.
 extern boolean la_freeaim;
+// Where each hitscan shot went: from the shooter to where it stopped, and
+// what it hit (NULL for walls, floors, the sky or the end of its range).
+// For sounds that follow the bullet, such as a near miss whizzing past.
+extern void (*P_ShotTraced)(mobj_t *shooter, mobj_t *hit, fixed_t x1, fixed_t y1, fixed_t z1,
+                            fixed_t x2, fixed_t y2, fixed_t z2);
 
 
 //

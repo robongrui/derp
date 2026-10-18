@@ -30,3 +30,6 @@
 
 # Written by the portability test, like portability.cfg and .wad
 /portability.deh
+
+# Python bytecode from the lab tools in tests/
+__pycache__/

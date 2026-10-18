@@ -58,6 +58,7 @@ struct FogLights { unsigned count=0,indices[4]={},padding[3]={}; };
 static_assert(sizeof(FogLights)==32,"Fog shader layout");
 struct Settings {
     int accelerated=1, widescreen=1, crosshair=1, look=1, retro=0, fps=1, scale=100;
+    int classicAim=0; // With mouse look: bullets autoaim at a monster in front as in DOOM, following the view only with none.
     float msaa=0; // Geometry edge anti-aliasing: 0 off, then 2x, 4x and 8x MSAA (capped by gpuMaxSamples).
     // Walls and floors: 0 crisp pixels, 1 smooth (bilinear), 2 sharp bilinear
     // (flat texels, edges blended over sharpSoftness texels plus a pixel).
@@ -87,6 +88,13 @@ struct Settings {
     // Experimental effects, each separately switchable.
     int blood=1; // Splats on floors and walls from hitscan hits; pools under corpses.
     int bloodShine=1; // Fresh blood glints under dynamic lights, then dries matte.
+    int deathMotion=1; // Deaths jolt with the killing blow's push and height before the game's corpse frame.
+    int wounds=1; // Hitscan hits shoot holes through monsters' sprites, rimmed with blood; drawing only.
+    int deathFalls=1; // Rigged monsters (hand rigs, else joints found in the art) fall procedurally: 0 off, 1 by the hit, 2 always legs swept, 3 always chest blast, 4 always head shot.
+    int deathFaceViewer=0; // With deathDirector: a monster killed facing away turns toward the eye before its death frames.
+    int deathDirector=1; // Each death drawn its own way: staggers and turns from the monster's own frames, retimed, mirrored to fall away from the blow.
+    int hitFlinch=1; // Living monsters flinch from hits, leaning with the push.
+    float bodyMotionStrength=1; // How far death reactions and flinches throw the body (0.5-3).
     int flashlightShadows=1; // Things in the flashlight beam cast their silhouette on the wall behind.
     int classicFlashlight=1; // A shorter, warmer beam that raises light in steps to a little past full brightness, never further.
     int stippledShadows=1; // The flashlight's shadow edges, from walls and things, break into an ordered-dither stipple instead of a clean line.
@@ -132,6 +140,7 @@ struct Settings {
     float reverbAmount=1; // How loud the echoes and tail are (0-2).
     int muffleWalls=1; // Sounds out of sight are muffled, more behind closed doors.
     int muffleDistance=1; // Far sounds lose their treble.
+    int naturalFalloff=1; // Far sounds fade as in air (half as strong per doubled distance), not in DOOM's straight line.
     int madeImpacts=1; // Made-up sounds for sparks, lamps and screens dying, and glass breaking (audio/made_bank.h).
     int glassSound=0; // Which breaking glass: 0 the shatter, 1 the fracture (a branching crack front).
     int ambience=1; // Lamps, machines, liquids, fire and wind sound where the map's textures show them.

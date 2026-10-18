@@ -1349,10 +1349,11 @@ hitline:
 		if(!(in->d.thing->flags&MF_NOBLOOD) && P_Random() < 192)
 		{
 			P_BloodSplatter(x, y, z, in->d.thing);
-			// DERP: blood on walls and floors in the accelerated renderer.
-			if (R_BloodHit)
-				R_BloodHit (th, x, y, z, trace.dx, trace.dy, la_damage);
 		}
+		// Every bloody hit attaches wounds, independently of the cosmetic
+		// splatter roll above.
+		if (!(th->flags&MF_NOBLOOD) && R_BloodHit)
+			R_BloodHit (th, shootthing, x, y, z, trace.dx, trace.dy, aimslope, la_damage);
 		P_DamageMobj(th, shootthing, shootthing, la_damage);
 	}
 	return(false); // don't go any farther

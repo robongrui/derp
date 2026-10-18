@@ -913,6 +913,12 @@ PTR_AimTraverse (intercept_t* in)
 boolean		la_freeaim;
 static sector_t* la_sector;
 
+// Where the shot stopped, as a fraction of attackrange, and what it hit.
+void (*P_ShotTraced)(mobj_t *shooter, mobj_t *hit, fixed_t x1, fixed_t y1, fixed_t z1,
+                     fixed_t x2, fixed_t y2, fixed_t z2);
+static fixed_t	la_endfrac;
+static mobj_t*	la_hit;
+
 static boolean PTR_ShootPlane (fixed_t frac)
 {
     fixed_t	z = shootz + FixedMul (aimslope, FixedMul (frac, attackrange));
@@ -941,6 +947,7 @@ static boolean PTR_ShootPlane (fixed_t frac)
     x = trace.x + FixedMul (trace.dx, frac);
     y = trace.y + FixedMul (trace.dy, frac);
     z = ceiling ? plane - 4*FRACUNIT : plane;
+    la_endfrac = frac;
 
     if (!R_PlaneImpact || !R_PlaneImpact (la_sector, ceiling, x, y, z))
 	P_SpawnPuff (x, y, z);
@@ -969,6 +976,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
 		
     if (la_freeaim && !PTR_ShootPlane (in->frac))
 	return false;
+    la_endfrac = in->frac;
 
     if (in->isaline)
     {
@@ -1062,6 +1070,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
     // hit thing
     // position a bit closer
     frac = in->frac - FixedDiv (10*FRACUNIT,attackrange);
+    la_hit = th;
 
     x = trace.x + FixedMul (trace.dx, frac);
     y = trace.y + FixedMul (trace.dy, frac);
@@ -1075,7 +1084,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
     {
 	P_SpawnBlood (x,y,z, la_damage);
 	if (R_BloodHit)
-	    R_BloodHit (th, x, y, z, trace.dx, trace.dy, la_damage);
+	    R_BloodHit (th, shootthing, x, y, z, trace.dx, trace.dy, aimslope, la_damage);
     }
 
     if (la_damage)
@@ -1155,14 +1164,23 @@ P_LineAttack
 	shootz = t1->player->viewz;
 	la_sector = t1->subsector->sector;
     }
+    la_hit = NULL;
 		
     if (P_PathTraverse ( t1->x, t1->y,
 			 x2, y2,
 			 PT_ADDLINES|PT_ADDTHINGS,
-			 PTR_ShootTraverse )
-	&& la_freeaim)
-	PTR_ShootPlane (FRACUNIT);
+			 PTR_ShootTraverse ))
+    {
+	la_endfrac = FRACUNIT;
+	if (la_freeaim)
+	    PTR_ShootPlane (FRACUNIT);
+    }
     la_freeaim = false;
+    if (P_ShotTraced && damage)
+	P_ShotTraced (t1, la_hit, t1->x, t1->y, shootz,
+		      t1->x + FixedMul (x2 - t1->x, la_endfrac),
+		      t1->y + FixedMul (y2 - t1->y, la_endfrac),
+		      shootz + FixedMul (aimslope, FixedMul (la_endfrac, attackrange)));
 }
  
 

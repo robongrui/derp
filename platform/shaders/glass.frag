@@ -11,6 +11,9 @@
 // Vertex: vUV the point on the pane in units, vSun its size, vTint the face
 // normal (xy) and whether the face is outdoors (z), vLight that side's light,
 // vStatic the pane's seed with the top bit set once broken.
+// MODE_GLASS_SHARD: vTint is the rotating normal, vSun is the pixel size and
+// fade. lightMask packs neighbour/current row limits as biased bytes; its
+// second word's low bit says outdoors. MODE_GROUNDED makes settled shards matte.
 layout(set=2,binding=0) uniform sampler2D sky;
 layout(set=2,binding=1) uniform sampler2D palette;
 // Glass reflections: the world drawn again mirrored in the chosen pane
@@ -81,7 +84,59 @@ vec3 probeAlong(uint probe,vec3 point,vec3 ray) {
 }
 // Premultiplied layering, front layer last.
 void over(inout vec4 result,vec3 color,float alpha) {result=vec4(color*alpha+result.rgb*(1.0-alpha),alpha+result.a*(1.0-alpha));}
+// The moving pieces are cut from square texels like the broken frame glass.
+// Reflections and lighting stay on the face, with chunky edge pixels instead
+// of a fine vector outline. Settled pieces keep only simple lit glass color.
+void shard() {
+    vec3 toEye=c.eye.xyz-vWorld;
+    float distance=length(toEye);
+    vec3 view=toEye/max(distance,1e-3),normal=normalize(vTint);
+    if(dot(normal,view)<0.0)normal=-normal;
+    bool resting=(vMode&MODE_GROUNDED)!=0u;
+    float grazing=resting?0.0:pow(1.0-saturate(dot(normal,view)),3.0);
+    bool outdoors=(vLightMask.y&1u)!=0u;
+    float light=vLight;
+    if(c.effects.z==0.0)light*=clamp(1.0-vDistance/3200.0,0.35,1.0);
+    vec3 lit=vec3(light),specular=vec3(0),ray=reflect(-view,normal);
+    vec4 result=vec4(0);
+    over(result,vec3(0.36,0.49,0.51)*light,0.24+0.3*grazing);
+    if(!resting&&vLampTint>0u) {
+        vec3 reflected=probeAlong(vLampTint-1u,vWorld,ray);
+        over(result,reflected,0.32+0.45*grazing);
+    }
+    else if(!resting&&outdoors)over(result,skyAlong(ray)*max(light,0.5),0.25+0.5*grazing);
+    float stipple=flashStipple(vWorld,normal);
+    for(uint i=0u;i<flashCount;++i) {
+        float amount=flashAt(vWorld,normal,i,stipple);
+        if(amount<=0.0)continue;
+        vec3 toLight=normalize(lights[i].position.xyz-vWorld);
+        float front=saturate(dot(normal,toLight));
+        lit+=lights[i].color.rgb*amount*front;
+        if(!resting)specular+=lights[i].color.rgb*amount*pow(saturate(dot(normal,normalize(toLight+view))),96.0)*2.2;
+    }
+    if(!resting&&outdoors&&c.sun.w>0.0) {
+        vec3 sun=vec3(cos(c.fx2.z)*cos(c.outdoor.w),sin(c.fx2.z)*cos(c.outdoor.w),sin(c.outdoor.w));
+        specular+=c.sun.rgb*c.sun.w*pow(saturate(dot(ray,sun)),256.0)*2.0;
+    }
+    int column=int(floor(vUV.x/vSun.x));
+    ivec4 adjacent=ivec4(int(vLightMask.x&255u),int((vLightMask.x>>8u)&255u),
+                         int((vLightMask.x>>16u)&255u),int((vLightMask.x>>24u)&255u))-128;
+    ivec2 row=ivec2(int((vLightMask.y>>8u)&255u),int((vLightMask.y>>16u)&255u))-128;
+    column=clamp(column,row.x,row.y-1); // MSAA may shade a covered edge with its center just outside the row.
+    float edge=column==row.x||column==row.y-1||column<adjacent.x||column>=adjacent.y||
+               column<adjacent.z||column>=adjacent.w?1.0:0.0;
+    over(result,vec3(0.78,0.92,1.0)*min(lit,vec3(1.2)),edge*(0.52+0.25*grazing));
+    specular=saturate(specular);
+    float shine=max(specular.r,max(specular.g,specular.b));
+    if(shine>0.004)over(result,specular/shine,shine);
+    vec3 color=result.rgb/max(result.a,0.001)*c.fx.x;
+    result.a*=vSun.y;
+    if(c.materials.z>0.0&&c.effects.z==0.0)
+        result.a*=exp(-heightFogTau(c.eye.z,vWorld.z,distance,c.fog.x,c.fog.y,c.fog.z));
+    outColor=vec4(saturate(color),result.a);
+}
 void main() {
+    if((vMode&MODE_GLASS_SHARD)!=0u) {shard();return;}
     vec2 extent=vSun,texel=floor(vUV)+0.5;
     uint seed=vStatic&0x7fffffffu;
     bool broken=(vStatic&0x80000000u)!=0u;

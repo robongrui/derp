@@ -15,9 +15,12 @@
 typedef struct {
     float delay[ROOM_TAPS];  /* round trip to the wall, seconds */
     float gain[ROOM_TAPS];   /* echo level: distance and wall material */
+    float spread[ROOM_TAPS]; /* 0 a clean echo off smooth walls .. 1 smeared by rough ones */
+    float dark[ROOM_TAPS];   /* how much treble the echo's walls take: 0 metal .. 1 fabric */
     float pan[ROOM_TAPS];    /* -1 left .. 1 right, as the listener faces */
     float decay;             /* seconds for the late tail to fall 60 dB */
     float damping;           /* 0 bright (metal) .. 1 dark (wood, flesh) */
+    float scatter;           /* 0 smooth surfaces, a ringing tail .. 1 rough (stone, dirt), a flat wash */
     float late;              /* late tail level */
 } room_t;
 

@@ -1,6 +1,7 @@
 /* Footsteps. A step falls every stride walked on the ground, the stride
  * growing with speed, so walking steps about twice a second and running
- * three times. Landing from a fall is a step too. Monsters are followed only
+ * three times, harder. Landing from a fall is a step too, harder the faster
+ * the fall. Each step plays the footfall and the kit after it. Monsters are followed only
  * while they wade, for their splashes. See steps.h. */
 #include <ctype.h>
 #include <math.h>
@@ -21,7 +22,22 @@
 extern int numflats;
 
 
-/* What a floor flat sounds like underfoot (Game_FloorStep), named once per WAD. */
+/* What a floor is made of (Game_FlatSurface), as a step: the same class
+   the room's echo hears, so the two can't disagree. Water splashes light,
+   other liquids thick. */
+static int step_kind(const char *name)
+{
+    switch (Game_FlatSurface(name))
+    {
+    case GAME_SURFACE_LIQUID: return Game_LiquidFlat(name) == GAME_LIQUID_THICK ? IMPACT_SPLASH_THICK : IMPACT_SPLASH_WATER;
+    case GAME_SURFACE_METAL: return IMPACT_STEP_METAL;
+    case GAME_SURFACE_WOOD: return IMPACT_STEP_WOOD;
+    case GAME_SURFACE_FLESH: case GAME_SURFACE_SOIL: case GAME_SURFACE_FABRIC: return IMPACT_STEP_SOFT;
+    default: return IMPACT_STEP_STONE;
+    }
+}
+
+/* What a floor flat sounds like underfoot, named once per WAD. */
 static int floor_kind(int pic)
 {
     static signed char *kinds;
@@ -36,7 +52,7 @@ static int floor_kind(int pic)
             char name[9];
             for (int c = 0; c < 8; ++c) name[c] = (char)toupper((unsigned char)lumpinfo[firstflat + i].name[c]);
             name[8] = 0;
-            kinds[i] = (signed char)Game_FloorStep(name);
+            kinds[i] = (signed char)step_kind(name);
         }
     }
     return pic >= 0 && pic < known ? kinds[pic] : IMPACT_STEP_STONE;
@@ -51,7 +67,17 @@ static int emit(step_event_t *events, int count, int max, int kind, const mobj_t
     events[count] = (step_event_t){ kind, units(mo->x), units(mo->y), units(mo->z), level };
     return count + 1;
 }
-static float loudness(int kind) { return wet(kind) ? 0.55f : kind == IMPACT_STEP_METAL ? 0.38f : 0.35f; }
+/* A step of the player's: the footfall and the kit rattling after it
+   (Step_Layers), by how hard it lands and what they carry. */
+static int emit_step(step_event_t *events, int count, int max, int kind, const mobj_t *mo, float force)
+{
+    const player_t *player = mo->player;
+    impact_layer_t layers[3];
+    int layer_count = Step_Layers(kind, force, player ? player->armortype : 0,
+                                  player ? Game_WeaponHeft(player->readyweapon) : 0, layers);
+    for (int i = 0; i < layer_count; ++i) count = emit(events, count, max, layers[i].kind, mo, layers[i].level);
+    return count;
+}
 
 /* The player: a step every stride on the ground, and on landing. */
 static int player_steps(step_event_t *events, int count, int max)
@@ -67,7 +93,8 @@ static int player_steps(step_event_t *events, int count, int max)
     float moved = hypotf(x - last_x, y - last_y), fall = last_z - z;
     last_x = x; last_y = y; last_z = z;
     if (moved > 64) { walked = 0; was_grounded = ground; return count; }  /* teleported */
-    if (ground && !was_grounded && fall > 6) count = emit(events, count, max, kind, mo, 1.4f * loudness(kind));
+    /* Landing: harder the faster the fall (the last tic's drop). */
+    if (ground && !was_grounded && fall > 6) count = emit_step(events, count, max, kind, mo, 1 + fminf((fall - 6) / 14, 1));
     was_grounded = ground;
     if (!ground) return count;
     if (moved < 0.5f) { walked = 0; return count; }
@@ -75,7 +102,8 @@ static int player_steps(step_event_t *events, int count, int max)
     float stride = moved * TICRATE / (1.4f + 0.1f * moved);
     if (walked == 0) walked = 0.6f * stride;  /* the first comes soon after setting off */
     walked += moved;
-    if (walked >= stride) { walked -= stride; count = emit(events, count, max, kind, mo, loudness(kind)); }
+    /* Force: 0 at a walk (8 units a tic), 1 at a run (16). */
+    if (walked >= stride) { walked -= stride; count = emit_step(events, count, max, kind, mo, fminf(fmaxf((moved - 8) / 8, 0), 1)); }
     return count;
 }
 

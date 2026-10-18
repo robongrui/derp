@@ -105,6 +105,8 @@ void P_PlayerThink(player_t *player);
 // whether mouselook is on. Heretic's own look keys still use lookdir.
 extern float tourpitch;
 extern boolean freeaim;
+// Set by the shared renderer; Heretic's aiming is its own (autoaim, else lookdir).
+extern boolean classicaim;
 // DERP: level-checking cheats (F5 menu), as in the DOOM program. Flying
 // follows the look direction (E/Q rise and sink); god mode and flight also
 // ignore special sectors. They outlive map changes, unlike player->cheats.

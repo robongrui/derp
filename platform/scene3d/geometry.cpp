@@ -23,7 +23,7 @@ static void addWall(const line_t &line,int side,Point a,Point b,float bottom,flo
         for(int n=0;n<4;++n) {bakeWallCoordinates(line,side,n==1||n==2?len:0,corners[n],true);corners[n].statics=seed;}
         quad(out,corners[0],corners[1],corners[2],corners[3]);
     }
-    lampGlow(out,first,sides[line.sidenum[side]].sector);
+    lampGlow(out,first,sides[line.sidenum[side]].sector,wallImage(tex));
 }
 // The mirrored pass draws the world a second time, so it runs only while a
 // reflective floor can be on screen. Doom's own visibility answers that: the
@@ -190,7 +190,7 @@ static void flatGeometry(const std::vector<float> &skyTop) {
             if(!addBrokenFlat(out,i,int(sector-sectors),ceiling,lumpImage(lump,true),z,light,mirror|sectorMode(sector)))
                 for(size_t n=1;n+1<poly.size();++n) for(Point p:{poly[0],poly[n],poly[n+1]})
                     out.push_back({p.x,p.y,z,p.x,-p.y,light,mirror|sectorMode(sector)});
-            lampGlow(out,first,sector);
+            lampGlow(out,first,sector,lumpImage(lump,true));
         }
     }
 }
@@ -309,16 +309,32 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
                      const MirrorView *mirror=nullptr) {
     bool self=thing==players[displayplayer].mo;
     if((self&&!mirror)||thing->sprite<0||thing->sprite>=numsprites) return;
-    const auto &sprite=sprites[thing->sprite]; int frame=thing->frame&FF_FRAMEMASK;
+    // Varied deaths (death_director.cpp) pick a dying monster's frame, facing and mirroring.
+    DeathView death={thing->sprite,thing->frame,thing->angle,false,1,0,{}};
+    bool directed=!self&&settings.deathDirector&&deathView(*thing,fraction,death);
+    if(death.sprite<0||death.sprite>=numsprites) return;
+    const auto &sprite=sprites[death.sprite]; int frame=death.frame&FF_FRAMEMASK;
     if(frame>=sprite.numframes) return;
     const auto &sf=sprite.spriteframes[frame];
-    auto rotationFrom=[&](const float *eye){return sf.rotate?spriteRotation(units(thing->x)-eye[0],units(thing->y)-eye[1],thing->angle):0u;};
+    // A procedural fall is drawn from the front view (rotation 1), like the death frames.
+    auto rotationFrom=[&](const float *eye){return sf.rotate&&!death.fall.active?spriteRotation(units(thing->x)-eye[0],units(thing->y)-eye[1],death.facing):0u;};
+    auto flipped=[&](unsigned seen){return (bool)sf.flip[seen]!=death.mirror;};
     unsigned rotation=rotationFrom(camera.eye);
     int lump=firstspritelump+sf.lump[rotation]; Image &image=lumpImage(lump,false);
     float x,y,z;interpolatedPosition(*thing,fraction,x,y,z);
-    if(!self)addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera);
-    if(!self&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(thing->frame&FF_FULLBRIGHT))
-        casters.push_back({thing,&image,lump,(bool)sf.flip[rotation],x,y,z,std::hypot(x-camera.eye[0],y-camera.eye[1])});
+    // Hit flinches and death jolts (body_motion.cpp): drawn in strips, a hop lifts the body.
+    // A directed death scales the jolt by its phase and adds the landing's settle.
+    BodyPose pose;bool posed=!self&&!death.fall.active&&(thing->flags&MF_COUNTKILL)&&bodyPose(*thing,fraction,pose);
+    if(directed) {
+        if(!posed)pose={};
+        for(int k=0;k<2;++k){pose.lean[k]*=death.bend;pose.whip[k]*=death.bend;}
+        pose.squash*=death.bend;pose.flatten=death.settle;
+        posed=posed||death.settle>0;
+    }
+    if(posed)z+=pose.lift;
+    if(!self)addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera);
+    if(!self&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(death.frame&FF_FULLBRIGHT))
+        casters.push_back({thing,&image,lump,flipped(rotation),x,y,z,std::hypot(x-camera.eye[0],y-camera.eye[1])});
     std::array<float,3> pulse={},beamLight={};ShadowLight shadowLight={};
     float strongest=dynamicThingLight(thing,x,y,z,pulse,beamLight,shadowLight);
     // Static light at the thing's center; with bake-only lights or the
@@ -327,14 +343,14 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     auto baked=bakedLightAt(x,y,z+units(thing->height)*0.5f,&sectors[i],&statics);
     ShadowLight fixedLight;
     if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;shadowLight=fixedLight;}
-    if(!self&&strongest>0.025f) addEnemyShadow(*thing,image,lump,sf.flip[rotation],x,y,z,camera,&shadowLight);
-    float light=lighting(&sectors[i],thing->frame&FF_FULLBRIGHT); unsigned mode=MODE_SPRITE|(thing->flags&MF_SHADOW?MODE_FUZZ:0);
+    if(!self&&strongest>0.025f) addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera,&shadowLight);
+    float light=lighting(&sectors[i],death.frame&FF_FULLBRIGHT); unsigned mode=MODE_SPRITE|(thing->flags&MF_SHADOW?MODE_FUZZ:0);
     // Per-pixel lighting from silhouette normals (flipped with a mirrored frame, below).
-    if(settings.detail&&!(thing->frame&FF_FULLBRIGHT))mode|=MODE_RELIT;
+    if(settings.detail&&!(death.frame&FF_FULLBRIGHT))mode|=MODE_RELIT;
     // Airborne blood shines like the floor blood (needs the normals of MODE_RELIT).
     if(settings.bloodShine&&Game_ThingRole(thing->type)==GAME_THING_BLOOD&&(mode&MODE_RELIT))mode|=MODE_WET_SPRITE;
     if(settings.glowingEyes&&(thing->flags&MF_COUNTKILL)&&thing->health>0)mode|=MODE_GLOWING_EYES;
-    if(!(thing->frame&FF_FULLBRIGHT))light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
+    if(!(death.frame&FF_FULLBRIGHT))light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
     // MODE_SOFT: effect sprites (shots, puffs, fogs) dither out at floors
     // and ceilings and draw in front of walls within half their width.
     bool soft=settings.softSprites&&((thing->flags&MF_MISSILE)||((thing->flags&MF_NOBLOCKMAP)&&(thing->flags&MF_NOGRAVITY)));
@@ -358,24 +374,36 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         for(int c=0;c<3;++c)packedStatics|=(unsigned)std::lround((statics.towards[c]/towards*0.5f+0.5f)*255)<<(8*c);
         packedStatics|=(unsigned)std::lround(std::clamp(towards/statics.amount,0.0f,1.0f)*255)<<24;
     }
-    if(thing->frame&FF_FULLBRIGHT) pulse={};
-    unsigned tint=thing->frame&FF_FULLBRIGHT?0xFFFFFFFFu:packedLampTint(statics,light);
+    if(death.frame&FF_FULLBRIGHT) pulse={};
+    unsigned tint=death.frame&FF_FULLBRIGHT?0xFFFFFFFFu:packedLampTint(statics,light);
     // MODE_GROUNDED: grounding darkens the feet of things that rest on the floor.
     // Sprites have no sun map, so vSun carries strength and height above floor.
-    float lift=units(thing->z-thing->floorz),grounding=1-lift/32;
-    bool grounded=settings.detail&&grounding>0&&!(thing->frame&FF_FULLBRIGHT)&&!soft&&Game_ThingRole(thing->type)!=GAME_THING_BLOOD&&
+    float lift=units(thing->z-thing->floorz)+(posed?pose.lift:0),grounding=1-lift/32;
+    bool grounded=settings.detail&&grounding>0&&!(death.frame&FF_FULLBRIGHT)&&!soft&&Game_ThingRole(thing->type)!=GAME_THING_BLOOD&&
         !(thing->flags&(MF_SHADOW|MF_MISSILE|MF_SPAWNCEILING));
     // The quad for one view: that view's frame, facing along its right.
     auto emit=[&](std::map<int,std::vector<Vertex>> &out,unsigned seen,float rx,float ry,bool collar) {
         int lump=firstspritelump+sf.lump[seen]; Image &image=lumpImage(lump,false);
         float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
+        if(death.fall.active&&!death.fall.rig) {
+            // A fall's drawing set down on the floor, lifted, pressed flat.
+            float keep=1-death.fall.flatten;
+            top=z+(image.top-death.fall.ground)*keep+death.fall.lift;bottom=z+(image.top-image.height-death.fall.ground)*keep+death.fall.lift;
+        }
         float sink=sinkInLiquid(thing,i,image,x,y,camera,collar);top-=sink;bottom-=sink;
-        float u0=sf.flip[seen]?image.width:0,u1=sf.flip[seen]?0:image.width;
-        unsigned m=mode|((mode&MODE_RELIT)&&sf.flip[seen]?MODE_FLIPPED:0);
-        auto &vertices=out[-1-lump];
-        quad(vertices,{x+rx*left,y+ry*left,top,u0,0,light,m},{x+rx*right,y+ry*right,top,u1,0,light,m},
+        float u0=flipped(seen)?image.width:0,u1=flipped(seen)?0:image.width;
+        unsigned m=mode|((mode&MODE_RELIT)&&flipped(seen)?MODE_FLIPPED:0);
+        auto &vertices=out[-1-lump];size_t first=vertices.size();
+        if(collar&&!self)woundView(thing,players[displayplayer].mo,image,flipped(seen),x,y,z-sink,top,bottom,rx,ry,posed?&pose:nullptr);
+        // Wound holes (wounds.cpp): texels shot through, and their rims.
+        std::vector<byte> holes;bool wounded=!self&&woundMask(*thing,image,flipped(seen),rx,ry,holes);
+        const std::vector<byte> *cut=wounded?&holes:nullptr;
+        if(death.fall.rig)fallQuads(vertices,{0,0,0,0,0,light,m},death.fall,x,y,z-sink,rx,ry,flipped(seen),cut);
+        else if(posed)bodyQuads(vertices,pose,{0,0,0,0,0,light,m},x,y,z-sink,rx,ry,left,right,image.top,image.height,u0,u1,cut);
+        else if(wounded)woundedQuads(vertices,{0,0,0,0,0,light,m},image,holes,x,y,top,rx,ry,flipped(seen),(top-bottom)/image.height);
+        else quad(vertices,{x+rx*left,y+ry*left,top,u0,0,light,m},{x+rx*right,y+ry*right,top,u1,0,light,m},
             {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,m},{x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,m});
-        for(size_t n=vertices.size()-6;n<vertices.size();++n) {
+        for(size_t n=first;n<vertices.size();++n) {
             vertices[n].red=pulse[0];vertices[n].green=pulse[1];vertices[n].blue=pulse[2];vertices[n].statics=packedStatics;
             vertices[n].lampTint=tint;
             if(grounded) {vertices[n].mode|=MODE_GROUNDED;vertices[n].sunU=grounding;vertices[n].sunV=vertices[n].z-z+lift;}

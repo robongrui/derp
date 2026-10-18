@@ -455,13 +455,16 @@ void watchShotLights() {
 // texture repeats its sample stands for, and the outer ones reach the
 // piece's ends. Split along those edges, the piece's quads inside them get
 // MODE_DEAD_GLOW. A flickering sector's lamps go dark whole while they are
-// out (lampOut).
+// out (lampOut), marked MODE_LAMP_OFF too: switched off, not shot, so a
+// screen among them keeps its glass whole; its shot-out tiles stay broken.
 bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span,const Image &image,Point a,Point b,
                    float bottom,float top,float u,float anchor,float light,unsigned mode,unsigned seed) {
     int index=(int)(&line-lines);
     if(image.emissionWeight<=0)return false;
-    bool off=lampOut(int(sides[line.sidenum[side]].sector-sectors)); // A flickering sector's lamps, switched off.
-    if(!off&&(brokenPieces.empty()||!brokenPieces.count({0,index*2+side,span})))return false;
+    bool off=lampOut(int(sides[line.sidenum[side]].sector-sectors),image); // A flickering sector's lamps, switched off.
+    bool shot=!brokenPieces.empty()&&brokenPieces.count({0,index*2+side,span});
+    if(!off&&!shot)return false;
+    unsigned offMode=off?MODE_DEAD_GLOW|MODE_LAMP_OFF:0u;
     float len=std::hypot(b.x-a.x,b.y-a.y),w=(float)image.width,h=(float)image.height;
     if(len<=0)return false;
     auto vertex=[&](float along,float z,unsigned m) {
@@ -470,8 +473,8 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
         bakeWallCoordinates(line,side,along,v,true);v.statics=seed;
         return v;
     };
-    if(off||tileDark(wholePiece(index,side,span))) {
-        unsigned m=mode|MODE_DEAD_GLOW;
+    if(!shot||tileDark(wholePiece(index,side,span))) {
+        unsigned m=mode|(shot?MODE_DEAD_GLOW:offMode);
         quad(out,vertex(0,top,m),vertex(len,top,m),vertex(len,bottom,m),vertex(0,bottom,m));
         return true;
     }
@@ -486,7 +489,12 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
         a0=std::max(a0,0.0f);a1=std::min(a1,len);z0=std::max(z0,bottom);z1=std::min(z1,top);
         if(a1>a0&&z1>z0)dark.push_back({a0,a1,z0,z1});
     }
-    if(dark.empty())return false;
+    if(dark.empty()) {
+        if(!off)return false;
+        unsigned m=mode|offMode;
+        quad(out,vertex(0,top,m),vertex(len,top,m),vertex(len,bottom,m),vertex(0,bottom,m));
+        return true;
+    }
     std::vector<float> alongs={0,len},heights={bottom,top};
     for(const auto &r:dark) {alongs.push_back(r[0]);alongs.push_back(r[1]);heights.push_back(r[2]);heights.push_back(r[3]);}
     for(auto *cuts:{&alongs,&heights}) {std::sort(cuts->begin(),cuts->end());cuts->erase(std::unique(cuts->begin(),cuts->end()),cuts->end());}
@@ -494,7 +502,7 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
         float a0=alongs[i],a1=alongs[i+1],z0=heights[j],z1=heights[j+1];
         float ma=(a0+a1)*0.5f,mz=(z0+z1)*0.5f;
         bool dead=std::any_of(dark.begin(),dark.end(),[&](const std::array<float,4> &r){return ma>r[0]&&ma<r[1]&&mz>r[2]&&mz<r[3];});
-        unsigned m=mode|(dead?MODE_DEAD_GLOW:0u);
+        unsigned m=mode|(dead?MODE_DEAD_GLOW:offMode);
         quad(out,vertex(a0,z1,m),vertex(a1,z1,m),vertex(a1,z0,m),vertex(a0,z0,m));
     }
     return true;
@@ -505,13 +513,16 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
 // dark whole.
 bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,const Image &image,float z,float light,unsigned mode) {
     if(image.emissionWeight<=0)return false;
-    bool off=lampOut(sector);
-    if(!off&&(brokenPieces.empty()||!brokenPieces.count({1,sector,(int)ceiling})))return false;
-    if(off||tileDark(wholePlane(sector,ceiling))) {
+    bool off=lampOut(sector,image);
+    bool shot=!brokenPieces.empty()&&brokenPieces.count({1,sector,(int)ceiling});
+    if(!off&&!shot)return false;
+    unsigned offMode=off?MODE_DEAD_GLOW|MODE_LAMP_OFF:0u;
+    auto whole=[&](unsigned m) {
         const auto &poly=floors[leaf];
-        for(size_t n=1;n+1<poly.size();++n)for(Point p:{poly[0],poly[n],poly[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,mode|MODE_DEAD_GLOW});
+        for(size_t n=1;n+1<poly.size();++n)for(Point p:{poly[0],poly[n],poly[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,mode|m});
         return true;
-    }
+    };
+    if(!shot||tileDark(wholePlane(sector,ceiling)))return whole(shot?MODE_DEAD_GLOW:offMode);
     auto ours=[&](const SurfaceLightKey &k){return k[0]==0&&k[1]==sector&&k[2]==(int)ceiling;};
     std::set<std::pair<int,int>> tiles,dark;
     for(const auto &tile:surfaceLights)if(ours(tile.key))tiles.insert({tile.key[3],tile.key[4]});
@@ -529,7 +540,7 @@ bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,con
         std::array<float,4> s={u*w,-(v+1)*h,(u+1)*w,-v*h};
         if(s[0]<bounds[2]&&s[2]>bounds[0]&&s[1]<bounds[3]&&s[3]>bounds[1])squares.push_back(s);
     }
-    if(squares.empty())return false;
+    if(squares.empty())return off&&whole(offMode);
     std::vector<std::vector<Point>> pieces={floors[leaf]};
     auto split=[&](bool vertical,float at) {
         std::vector<std::vector<Point>> next;
@@ -548,7 +559,7 @@ bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,con
         Point mid={0,0};
         for(const Point &p:piece) {mid.x+=p.x/piece.size();mid.y+=p.y/piece.size();}
         bool dead=std::any_of(squares.begin(),squares.end(),[&](const std::array<float,4> &s){return mid.x>s[0]&&mid.x<s[2]&&mid.y>s[1]&&mid.y<s[3];});
-        unsigned m=mode|(dead?MODE_DEAD_GLOW:0u);
+        unsigned m=mode|(dead?MODE_DEAD_GLOW:offMode);
         for(size_t n=1;n+1<piece.size();++n)for(Point p:{piece[0],piece[n],piece[n+1]})out.push_back({p.x,p.y,z,p.x,-p.y,light,m});
     }
     return true;

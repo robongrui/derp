@@ -27,14 +27,13 @@ int Game_HotFlat(const char *name);
 /* Sector specials that hurt whoever stands there (toxic mist). */
 int Game_DamagingFloor(int special);
 
-/* Footsteps and splashes: an IMPACT_STEP_* or IMPACT_SPLASH_* kind
-   (audio/impact_synth.h) for a floor. */
-int Game_FloorStep(const char *name);
-
-/* Room acoustics: what walls and floors are made of. */
+/* What walls and floors are made of, for room acoustics, footsteps
+   (audio/steps.c: liquids splash, flesh, soil and fabric fall soft) and, in
+   games without DOOM's palette ramps, gloss. */
 typedef enum {
     GAME_SURFACE_STONE, GAME_SURFACE_METAL, GAME_SURFACE_WOOD,
-    GAME_SURFACE_FLESH, GAME_SURFACE_SOIL, GAME_SURFACE_LIQUID
+    GAME_SURFACE_FLESH, GAME_SURFACE_SOIL, GAME_SURFACE_LIQUID,
+    GAME_SURFACE_FABRIC
 } game_surface;
 game_surface Game_WallSurface(const char *name);
 game_surface Game_FlatSurface(const char *name);

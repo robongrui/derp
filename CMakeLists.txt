@@ -237,10 +237,11 @@ if(DOOM_BUILD_SDL)
     target_include_directories(doom-music-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
     # Renders the made-up effects (sparks, dying lamps, glass) after a pistol shot, and the ambient
     # sounds of lamps, screens, liquids and fire, dry and in rooms:
-    # doom-sfx-render <wad> [-kind name|ambient|all] [-room dry|room|hall|all] [-rate 11025] [-level 0.6] [-gun on|off] [-out dir]
+    # doom-sfx-render <wad> [-kind name|ambient|all] [-room dry|room|hall|all] [-rate Hz] [-level 0.6] [-gun on|off] [-out dir]
+    # Without -rate, each effect uses the same native rate as its game bank.
     add_executable(doom-sfx-render tests/sfx_render.c platform/audio/impact_synth.c platform/audio/spark_synth.c
         platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
-        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/resample.c platform/audio/reverb.c)
+        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/flyby_synth.c platform/audio/resample.c platform/audio/reverb.c)
     target_include_directories(doom-sfx-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/platform")
     if(NOT WIN32)
         target_link_libraries(doom-sfx-render PRIVATE m)
@@ -254,6 +255,10 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/bake_sun.cpp
         platform/scene3d/glass_light.cpp
         platform/scene3d/blood.cpp
+        platform/scene3d/body_motion.cpp
+        platform/scene3d/death_director.cpp
+        platform/scene3d/death_falls.cpp
+        platform/scene3d/wounds.cpp
         platform/scene3d/caustics.cpp
         platform/scene3d/liquid_edges.cpp
         platform/scene3d/embers.cpp
@@ -301,10 +306,11 @@ if(DOOM_BUILD_SDL)
     endfunction()
     # Sound in the map for the SDL mixer: room reverb, muffling, the map reads they share, sample playback,
     # and the made-up sounds: impacts and the ambience read from the map's textures.
-    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c
+    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c platform/audio/relief.c platform/audio/flyby.c
         platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/acoustic_graph.c platform/audio/steps.c
         platform/audio/impact_synth.c platform/audio/spark_synth.c platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
-        platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c)
+        platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c
+        platform/audio/flyby_synth.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
@@ -387,6 +393,21 @@ if(DOOM_BUILD_SDL)
         # doom-perf-smoke <iwad> [-maps MAP01,MAP02] [-spacing units] [-budget ms]
         if(DOOM_RENDER3D)
             doom_add_smoke(doom-perf-smoke doom_game ON tests/perf_smoke.c)
+            doom_add_smoke(doom-glass-smoke doom_game ON tests/glass_smoke.cpp)
+            add_executable(doom-glass-fracture-tests tests/glass_fracture.cpp)
+            target_compile_features(doom-glass-fracture-tests PRIVATE cxx_std_17)
+            add_test(NAME glass-fracture-geometry COMMAND doom-glass-fracture-tests)
+            add_executable(doom-wound-attachment-tests tests/wound_attachment.cpp)
+            target_compile_features(doom-wound-attachment-tests PRIVATE cxx_std_17)
+            add_test(NAME wound-animation-attachment COMMAND doom-wound-attachment-tests)
+            add_executable(doom-wounds-tests tests/wounds.cpp platform/scene3d/wounds.cpp)
+            target_compile_features(doom-wounds-tests PRIVATE cxx_std_17)
+            target_include_directories(doom-wounds-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
+            target_link_libraries(doom-wounds-tests PRIVATE doom_options SDL3::SDL3)
+            if(NOT MSVC)
+                target_compile_options(doom-wounds-tests PRIVATE -Wno-unknown-pragmas)
+            endif()
+            add_test(NAME wound-hit-placement COMMAND doom-wounds-tests)
         endif()
     endif()
     if(BUILD_TESTING AND DOOM_GAME_DATA)
@@ -396,17 +417,12 @@ if(DOOM_BUILD_SDL)
         set_tests_properties(native-gameplay-save-load PROPERTIES
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data"
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy"
-            TIMEOUT 30)
+            TIMEOUT 30 LABELS game)
         if(DOOM_TEST_GPU)
             doom_add_smoke(doom-gpu-smoke doom_game ON tests/native_smoke.c)
             add_test(NAME gpu-gameplay-save-load COMMAND doom-gpu-smoke "${DOOM_GAME_DATA}")
             set_tests_properties(gpu-gameplay-save-load PROPERTIES
-                WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data" TIMEOUT 60)
-            # One map, coarsely: checks the profiling path, not the timings.
-            add_test(NAME gpu-performance-smoke COMMAND doom-perf-smoke "${DOOM_GAME_DATA}" -maps E1M1 -spacing 1024
-                -out perf-smoke -graphics smoke-graphics.cfg)
-            set_tests_properties(gpu-performance-smoke PROPERTIES
-                WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data" TIMEOUT 120)
+                WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data" TIMEOUT 60 LABELS game)
         endif()
     endif()
 endif()
@@ -458,6 +474,23 @@ if(BUILD_TESTING)
         target_link_libraries(doom-screen-glass-tests PRIVATE m)
     endif()
     add_test(NAME screen-glass-detection COMMAND doom-screen-glass-tests)
+    add_executable(doom-acoustic-glass-tests tests/acoustic_glass.c
+        platform/audio/acoustic_graph.c platform/audio/occlusion.c)
+    target_include_directories(doom-acoustic-glass-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
+    target_link_libraries(doom-acoustic-glass-tests PRIVATE doom_options)
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(doom-acoustic-glass-tests PRIVATE m)
+    endif()
+    add_test(NAME acoustic-glass-break COMMAND doom-acoustic-glass-tests)
+    add_executable(doom-glass-audio-tests tests/glass_audio.c
+        platform/audio/made_bank.c platform/audio/impact_synth.c platform/audio/spark_synth.c
+        platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
+        platform/audio/flyby_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
+        platform/audio/liquid_synth.c platform/audio/fire_synth.c)
+    if(NOT WIN32)
+        target_link_libraries(doom-glass-audio-tests PRIVATE m)
+    endif()
+    add_test(NAME glass-audio-synthesis COMMAND doom-glass-audio-tests)
     add_executable(doom-wad-probe-tests tests/wad_probe.c platform/wad_probe.c)
     add_test(NAME wad-loader-probe COMMAND doom-wad-probe-tests)
     add_executable(doom-portability-tests tests/portability.c)

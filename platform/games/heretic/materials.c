@@ -3,7 +3,6 @@
 #include <string.h>
 #include "../../emissive.h"
 #include "../../audio/ambient_synth.h"
-#include "../../audio/impact_synth.h"
 #include "../../game_materials.h"
 
 static int starts(const char *name, const char *prefix) { return !strncmp(name, prefix, strlen(prefix)); }
@@ -56,20 +55,6 @@ static const char *const metalFlats[] = { "FLOOR08", "FLOOR28", "FLOOR29", "FLOO
 static const char *const woodFlats[] = { "FLOOR10", "FLOOR25", "FLAT508", 0 };
 static const char *const soilFlats[] = { "FLOOR01", "FLOOR05", "FLOOR17", "FLOOR19", "FLOOR27",
     "FLAT510", "FLAT512", "FLAT516", 0 };
-
-int Game_FloorStep(const char *name)
-{
-    switch (Game_LiquidFlat(name))
-    {
-    case GAME_LIQUID_WATER: return IMPACT_SPLASH_WATER;
-    case GAME_LIQUID_THICK: return IMPACT_SPLASH_THICK;
-    default: break;
-    }
-    if (any(name, metalFlats)) return IMPACT_STEP_METAL;
-    if (any(name, woodFlats)) return IMPACT_STEP_WOOD;
-    if (any(name, soilFlats)) return IMPACT_STEP_SOFT;
-    return IMPACT_STEP_STONE;
-}
 
 /* Riveted iron (METL, the switch plates, skull panels, the iron gates),
    timber (wooden doors and walls, half-timbered city walls, carved wood,
