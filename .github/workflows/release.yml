@@ -13,8 +13,6 @@ permissions:
   contents: write
 
 env:
-  # Bounds `cmake --build --parallel` (unlimited make jobs run out of memory).
-  CMAKE_BUILD_PARALLEL_LEVEL: 4
   FREEDOOM_URL: https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
   FREEDOOM_SHA256: 3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59
 
@@ -76,7 +74,7 @@ jobs:
           ${{ matrix.configure }}
 
       - name: Build
-        run: cmake --build build/release --config Release --parallel --target doom
+        run: cmake --build build/release --config Release --parallel 4 --target doom
 
       - name: Package Windows or Linux
         if: matrix.platform != 'mac'
