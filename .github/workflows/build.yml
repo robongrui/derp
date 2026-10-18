@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Bounds every `cmake --build --parallel`: without a number, make starts
+# unlimited jobs, and each smoke program compiles the whole renderer again,
+# which runs the 7 GB macOS arm64 runner out of memory.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   portable:
     strategy:
