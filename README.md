@@ -11,6 +11,10 @@ This project is a creative undertaking, not a programming exercise or a demonstr
 
 Feedback about whether it works, whether it’s enjoyable, and whether it achieves its creative goals is welcome. But judging it by how much code I personally wrote measures something I’m not claiming to demonstrate.
 
+A note on forks and contributions
+DERP is an ongoing creative project, and I welcome contributions that improve it. If you're primarily interested in fixing bugs, improving performance, or extending existing features, I'd appreciate a pull request rather than another distribution of essentially the same project.
+The GPL gives you every right to fork DERP, and I respect that. I simply believe that improvements to the existing project benefit everyone more when they're developed together.
+
 ## Original Text 
 An idea of how DOOM could have looked if id had kept iterating on this engine,
 and if we still played on CRTs. It tries to look newer without looking modern:
