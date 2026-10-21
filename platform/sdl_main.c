@@ -48,6 +48,42 @@ static char *companion_patch(const char *wad)
     return NULL;
 }
 
+static boolean is_absolute(const char *path)
+{
+    if (path[0] == '/' || path[0] == '\\') return true;
+#ifdef _WIN32
+    if (SDL_isalpha((unsigned char)path[0]) && path[1] == ':') return true;
+#endif
+    return false;
+}
+
+/* Launchers such as Doom Runner pass paths relative to the folder they start
+ * the game in, but the game then runs from its save folder: make them absolute
+ * while they still resolve. -file and -deh take every path up to the next option. */
+static void absolute_path_args(int argc, char **argv)
+{
+    static const char *single[] = { "-iwad", "-config", "-record", "-soundfont" };
+    static const char *lists[] = { "-file", "-deh", "-bex" };
+    char *folder = SDL_GetCurrentDirectory();
+    if (!folder) return;
+    for (int i = 1; i < argc; ++i)
+    {
+        boolean path = false, list = false;
+        for (size_t k = 0; k < SDL_arraysize(single); ++k)
+            if (!SDL_strcasecmp(argv[i], single[k])) path = true;
+        for (size_t k = 0; k < SDL_arraysize(lists); ++k)
+            if (!SDL_strcasecmp(argv[i], lists[k])) path = list = true;
+        while (path && i + 1 < argc && argv[i + 1][0] != '-')
+        {
+            char *full;
+            ++i;
+            if (!is_absolute(argv[i]) && SDL_asprintf(&full, "%s%s", folder, argv[i]) > 0) argv[i] = full;
+            path = list;
+        }
+    }
+    SDL_free(folder);
+}
+
 /* Each game has its own program, beside this one: DOOM's and Heretic's.
  * Hexen and the rest have none yet. */
 static const char *program_for(int game)
@@ -292,6 +328,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "Could not initialize SDL: %s\n", SDL_GetError());
         return 1;
     }
+    absolute_path_args(argc, argv);
     const char *base = SDL_GetBasePath();
     char bundled[4096];
     snprintf(bundled, sizeof(bundled), "%sdefault.wad", base ? base : "./");
