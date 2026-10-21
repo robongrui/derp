@@ -90,6 +90,8 @@ void I_InitGraphics(void)
     if (width < 320 || width > 8192 || height < 240 || height > 8192)
         I_Error("Window dimensions must be between 320x240 and 8192x8192");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    // Render checks draw off screen: no window comes up over the user's work
+    if (M_CheckParm("-rendercheck")) flags |= SDL_WINDOW_HIDDEN;
     char title[128];
     snprintf(title, sizeof(title), "%s — Esc: menu · F11: fullscreen · Cmd-Q: quit", Game_Title());
     window = SDL_CreateWindow(title, width, height, flags);

@@ -464,9 +464,13 @@ the flashlight.
 The game code doesn't know the glass is there. Shots, sight and movement pass
 through exactly as in vanilla, so the renderer watches for anything crossing a
 window. A render-only hook reports hitscan shots crossing a line, and
-projectiles and explosions are checked every tic. The first thing through
-shatters the pane into large, irregular pieces, with smaller pieces near the
-hit and stepped pixel edges like the glass left in the frame. They tumble,
+projectiles and explosions are checked every tic. The first two bullets leave
+small, jagged holes with chipped edges and branching, pixel-stepped cracks.
+The third bullet starts a fracture at its own impact: cracks spread outward
+across the flat pane, and pieces stay attached until the fracture reaches them.
+Projectiles and explosions break glass outright. The pane breaks into large,
+irregular pieces, with smaller pieces near the final hit and stepped pixel
+edges like the glass left in the frame. They tumble,
 catch reflections while flying, bounce and become matte once settled. They
 lie flat on the floor for a while, leaving a jagged rim in the frame. Monster
 shots count too, so a fight across a window breaks it. Once it is broken, the wind and
@@ -899,6 +903,15 @@ tone runs under it all.
 Only nearby sources are heard, loud effects push the ambience down for a
 moment, and a fixture that is shot out goes quiet for the rest of the level.
 **Ambience volume** sets how loud it is next to the effects.
+
+**Alternative computer sounds** in **F4 → Sound → Made-up sounds** replaces
+the computer bleeps with a contained machine hum, fine hard-drive seeks,
+occasional relay clacks and electrical chatter. It is off by default and
+switches smoothly while playing. One continuous body follows the audible
+computers, with three activity takes sharing their volume budget; longer,
+independently timed loops keep busy computer rooms varied. The sounds are
+synthesized at startup as mono 8-bit, 11 kHz samples and use the same distance,
+muffling and room acoustics as the original ambience.
 
 ### Sounds DOOM never had
 

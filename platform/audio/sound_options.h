@@ -16,6 +16,8 @@ void I_SetSfxPlayback(int mode, float treble);
    sounds of lamps, machines, liquids, fire and wind, at amount (0-2); steps:
    the player's footsteps and splashes, and monsters splashing. */
 void I_SetMadeSounds(int impacts, int glass, int ambient, float amount, int steps);
+/* Computer ambience: machine hum, hard-drive seeks and relay chatter instead of bleeps. */
+void I_SetAlternativeComputerSounds(int enabled);
 /* A made-up effect (an IMPACT_ kind of audio/impact_synth.h) at a map point. */
 void I_MadeSound(int kind, float x, float y, float z);
 /* Fixtures shot out around a map point: their ambient sound stops. */
@@ -24,6 +26,9 @@ void I_AmbienceSilence(float x, float y, float z, float radius);
 void I_AmbienceGlaze(int line, int whole);
 /* Whether window glass is shown; without it the wind blows through every window. */
 void I_AmbienceShowGlass(int shown);
+/* How hard it rains (0-1, scene3d/weather.cpp): the rain is heard where the wind is,
+   and on the window glass until it breaks. */
+void I_AmbienceRain(float amount);
 
 /* What plays the music; see platform/i_music.c. The system synthesizer
    is the Mac's own; elsewhere that choice plays the SoundFont. */

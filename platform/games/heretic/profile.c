@@ -120,7 +120,8 @@ int Game_HasEffect(game_effect effect)
     switch (effect)
     {
     case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT:
-    case GAME_EFFECT_WIND: case GAME_EFFECT_NATURAL_FALLOFF: case GAME_EFFECT_FREE_AIM: return 0;
+    case GAME_EFFECT_WIND: case GAME_EFFECT_NATURAL_FALLOFF: case GAME_EFFECT_FREE_AIM:
+    case GAME_EFFECT_AUTHORED_EPISODES: return 0;
     }
     return 1;
 }
@@ -141,6 +142,11 @@ int Game_Torch(float *flame)
    on the horizon), sunlit stone stands out from the shade, the light takes
    the sky's colour (grey, hell red, night blue), and distance fades into it. */
 void Game_Sun(game_sun *sun) { *sun = (game_sun){ 1, 0.4f, 0.3f, 0.6f, 1 }; }
+
+/* Heretic's maps keep the light they were made with. */
+/* No authored episodes: Heretic keeps its derived look. */
+void Game_Mood(int episode, int map, game_mood *mood) { (void)episode; (void)map; (void)mood; }
+int Game_BrokenWindows(int episode, int map, game_spot *spots, int max) { (void)episode; (void)map; (void)spots; (void)max; return 0; }
 
 /* Heretic's pools are clear and still: a fantasy mirror, not sewage. */
 float Game_WaterClarity(void) { return 1; }

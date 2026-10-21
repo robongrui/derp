@@ -62,7 +62,8 @@ layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // frameMean, cycleMean: a liquid flat's average color at this crossfade and
 // over its whole animation; cycleMean.a is the contrast it keeps far away,
 // 0 for everything that is not a liquid (surfaceBinding in scene3d/scene.cpp).
-// frameMean.a is 1 on ice floors (iceFlat): deep grooves, glassy shine.
+// frameMean.a is 1 on ice floors (iceFlat): deep grooves, glassy shine;
+// worn plates add 16 to it (wornPlate in scene3d/scene.cpp).
 layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 frameMean; vec4 cycleMean; };
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
@@ -77,6 +78,7 @@ layout(location=0) out vec4 outColor;
 #include "world/sector_light.glsl"
 #include "world/caustics.glsl"
 #include "world/shore.glsl"
+#include "world/wear.glsl"
 #include "world/weapon.glsl"
 #include "world/mirror.glsl"
 // The classic flashlight's light, gathered apart from pulse (classicBeam).
@@ -87,6 +89,8 @@ vec3 addedLight=vec3(0);
 // What the baked lamps and their bounce add to walls and flats, for the
 // saturation lift alone.
 vec3 lampLight=vec3(0);
+// A worn plate's grime at this texel (plateGrime), -1 on everything else.
+float plateWear=-1.0;
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
@@ -102,8 +106,9 @@ void main() {
     // normal; orient it toward the eye because either side may be drawn.
     vec3 normal=normalize(cross(dp1,dp2));
     if(dot(normal,c.eye.xyz-vWorld)<0.0) normal=-normal;
-    // MODE_BLOOD: blood decals. vTint carries wetness (shine) and how far the
-    // color has darkened while drying.
+    // MODE_BLOOD: blood decals. vTint carries wetness (shine), how far the
+    // color has darkened while drying, and the rain on it (blood.cpp
+    // rainWash): its pale step (0-4) times two plus how much is washed away.
     bool blood=(vMode&MODE_BLOOD)!=0u;
     uint bakeFlags=uint(c.flashlightTint.w);
     // FEATURE_GLOSSY_SCREENS: monitor glass in computer textures. Its curved CRT dome
@@ -143,6 +148,10 @@ void main() {
         screenNormal=normalize(normal+lean.x*tangent+lean.y*bitangent);
         glassy=true;
     }
+    // FEATURE_LIVE_READOUTS: LED readouts change their cells (readoutCell);
+    // a shot-out panel's stay dark and still.
+    if(!sprite&&!blood&&!glassy&&!dead&&(bakeFlags&FEATURE_LIVE_READOUTS)!=0u&&c.effects.z==0.0)
+        uv=readoutCell(uv,vStatic);
     vec4 color;
     if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0,false);
     else color=surfaceTexture(image,uv,texelPixel,lod);
@@ -160,6 +169,9 @@ void main() {
         color.rgb=max(cycleMean.rgb+(color.rgb-frameMean.rgb)*detail,vec3(0))*poolTone(vWorld.xy);
     }
     if(color.a<0.45) discard;
+    // Blood the rain washes away goes texel by texel.
+    float bloodStep=blood?floor(vTint.b*0.5+0.001):0.0,bloodPale=bloodStep*0.25,bloodWash=blood?max(vTint.b-bloodStep*2.0,0.0):0.0;
+    if(bloodWash>0.0&&float(tileHash(ivec2(floor(vUV)),0x2f6b9d1eu)&255u)/255.0<bloodWash) discard;
 #ifdef COVERAGE
     // Depth comes from the rasterizer, per sample like the shading pass.
     outColor=color;return;
@@ -172,7 +184,9 @@ void main() {
         vec3 paint=texelFetch(palette,ivec2(int(index),0),0).rgb;
         color.rgb=(vMode&MODE_WOUND_STAIN)!=0u?mix(color.rgb,paint,0.7):paint;
     }
-    if(blood) color.rgb*=vTint.g;
+    // Rained on, blood pales: its red fades toward a dull grey of its own
+    // brightness, never lighter (lighter reds would read pink).
+    if(blood) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114)))*vec3(1.0,0.92,0.86),bloodPale*0.6)*vTint.g;
     // The thick rim of the glass shades the picture's edges, in light steps.
     if(glassy) color.rgb*=round((1.0-0.5*smoothstep(0.7,1.0,max(abs(screen.x),abs(screen.y))))*16.0)/16.0;
     // A dead screen shows nothing but the dark tube behind the glass, and its
@@ -184,6 +198,11 @@ void main() {
     uint sector=mapped?(vMode>>MODE_SECTOR_SHIFT)-1u:0u;
     SectorLit lit=sectorLighting(normal,mapped,sector,bakeFlags);
     float light=lit.light;
+    // Weather and wear (world/wear.glsl): streaks and wet ground.
+    Wear wear=Wear(0.0,0.0,false,0.0,0.0);
+    if(mapped&&!blood&&!glassy&&cycleMean.a==0.0) wear=surfaceWear(vWorld,normal,sector,bakeFlags);
+    // Worn plates (frameMean.a 16 and up, wornPlate in scene3d/scene.cpp).
+    if(mapped&&!blood&&!glassy&&frameMean.a>=15.5) {wear.grime=plateGrime(vUV,vWorld,normal,sector,vStatic);plateWear=wear.grime;}
     // Grounding: things resting on the floor darken over their lowest 24
     // units in colormap-like 1/16 steps; vSun holds strength and height.
     float grounding=1.0;
@@ -267,6 +286,7 @@ void main() {
         float damp=shoreWet(vWorld,normal,sector,dot(color.rgb,vec3(0.299,0.587,0.114)),stain)*(1.0-emission);
         if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
     }
+    color.rgb=applyWear(color.rgb,wear,emission);
     vec3 albedo=color.rgb;
     color.rgb=color.rgb*illumination;
     // Light also spills toward its own color by how saturated the texel is,
@@ -281,11 +301,12 @@ void main() {
     // channels the texel lacks: light it already reflects (a blue lamp on
     // blue carpet) the multiply has counted.
     vec3 lacking=1.0-albedo/max(max(albedo.r,max(albedo.g,albedo.b)),0.001);
-    vec3 lampSpill=c.effects.z==0.0&&!sprite?lampLight*lacking*chroma*0.6*(1.0-emission):vec3(0);
+    // Blood keeps its own pure red: spilled light would pale it to pink.
+    vec3 lampSpill=c.effects.z==0.0&&!sprite&&!blood?lampLight*lacking*chroma*0.6*(1.0-emission):vec3(0);
     color.rgb+=lampSpill;
     if(c.effects.z==0.0&&!sprite&&any(greaterThan(addedLight,vec3(0)))) {
         // Dynamic light: the flashlight, shots, fireballs.
-        color.rgb+=addedLight*chroma*0.6*(1.0-emission);
+        if(!blood) color.rgb+=addedLight*chroma*0.6*(1.0-emission);
         // What it adds rolls off on bright texels, as an eye or camera keeps
         // a hotspot from blowing out: a bright wall in the beam no longer
         // jumps far ahead of the dark floor beside it. Dark texels and the

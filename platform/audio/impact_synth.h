@@ -37,6 +37,8 @@ enum {
     IMPACT_GEAR_HEAVY_RUN,
     IMPACT_GEAR_ARMOR_RUN,
     IMPACT_FLYBY,          /* a bullet whizzing past the player's head */
+    IMPACT_GORE_BURST,     /* a kill's wet burst, drops pattering down */
+    IMPACT_GORE_SLAP,      /* a body slapping into a floor or wall */
     IMPACT_KINDS
 };
 
@@ -61,6 +63,8 @@ void Fracture_Render(int kind, unsigned seed, int rate, float *out, int frames);
 void Step_Render(int kind, unsigned seed, int rate, float *out, int frames);
 /* In flyby_synth.c. */
 void Flyby_Render(unsigned seed, int rate, float *out, int frames);
+/* In gore_synth.c. */
+void Gore_Render(int kind, unsigned seed, int rate, float *out, int frames);
 /* What one step plays: the footfall on the floor kind (IMPACT_STEP_ or
    IMPACT_SPLASH_) and the kit rattling after it, each a kind at a level.
    force: 0 walking, 1 running, up to 2 a hard landing. armor 0-2 and heft

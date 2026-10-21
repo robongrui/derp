@@ -245,7 +245,7 @@ static void wallGeometry(const Uniforms &camera,const std::vector<float> &skyTop
         }
     }
 }
-struct Caster { const mobj_t *thing;const Image *image;int lump;bool flip;float x,y,z,distance; };
+struct Caster { const mobj_t *thing;const Image *image;int lump;bool flip;float x,y,z,distance;RagdollCard card{}; };
 // The rotation of a sprite seen from (dx,dy) away, for a thing facing angle.
 static unsigned spriteRotation(float dx,float dy,angle_t facing) {
     angle_t angle=(angle_t)(int64_t)(atan2(dy,dx)*(4294967296.0/(2*doomPi)));
@@ -280,8 +280,8 @@ static float dynamicThingLight(const mobj_t *thing,float x,float y,float z,std::
 // little), and thick liquids wrap a wobbling collar of goo around
 // them. Pools are often several sectors at one height, so every
 // liquid floor counts, not only pits. Returns how far the sprite sinks.
-static float sinkInLiquid(const mobj_t *thing,int i,const Image &image,float x,float y,const Uniforms &camera,bool collar=true) {
-    if(!settings.splashes||(size_t)i>=sectorMist.size()||!sectorMist[i].liquid||thing->z>sectors[i].floorheight||
+static float sinkInLiquid(const mobj_t *thing,int i,const Image &image,float x,float y,const Uniforms &camera,bool collar=true,bool down=false) {
+    if(!settings.splashes||(size_t)i>=sectorMist.size()||!sectorMist[i].liquid||(!down&&thing->z>sectors[i].floorheight)||
        (thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_FLOAT))||sectors[i].floorpic==skyflatnum)return 0;
     if(collar&&sectorMist[i].thick&&!(thing->flags&MF_SPECIAL)&&std::hypot(x-camera.eye[0],y-camera.eye[1])<1024) {
         float r=units(thing->radius)*0.55f;int tic=leveltime/4;
@@ -322,6 +322,13 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     unsigned rotation=rotationFrom(camera.eye);
     int lump=firstspritelump+sf.lump[rotation]; Image &image=lumpImage(lump,false);
     float x,y,z;interpolatedPosition(*thing,fraction,x,y,z);
+    // A ragdoll is lit, sunk and grounded where its body lies, not where the corpse slid to: thrown
+    // across a light's edge or down steps, it was lit as where it died.
+    bool dollDown=false;
+    if(death.ragdoll) {
+        dollDown=ragdollWhere(*death.ragdoll,fraction,x,y,z);
+        i=(int)(R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector-sectors);
+    }
     // Hit flinches and death jolts (body_motion.cpp): drawn in strips, a hop lifts the body.
     // A directed death scales the jolt by its phase and adds the landing's settle.
     BodyPose pose;bool posed=!self&&!death.fall.active&&(thing->flags&MF_COUNTKILL)&&bodyPose(*thing,fraction,pose);
@@ -332,8 +339,10 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         posed=posed||death.settle>0;
     }
     if(posed)z+=pose.lift;
-    if(!self)addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera);
-    if(!self&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(death.frame&FF_FULLBRIGHT))
+    // Ragdolls cast from their current card below, after its image has been drawn.
+    bool ragdoll=death.ragdoll!=nullptr;
+    if(!self&&!ragdoll)addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera);
+    if(!self&&!ragdoll&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(death.frame&FF_FULLBRIGHT))
         casters.push_back({thing,&image,lump,flipped(rotation),x,y,z,std::hypot(x-camera.eye[0],y-camera.eye[1])});
     std::array<float,3> pulse={},beamLight={};ShadowLight shadowLight={};
     float strongest=dynamicThingLight(thing,x,y,z,pulse,beamLight,shadowLight);
@@ -343,7 +352,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     auto baked=bakedLightAt(x,y,z+units(thing->height)*0.5f,&sectors[i],&statics);
     ShadowLight fixedLight;
     if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;shadowLight=fixedLight;}
-    if(!self&&strongest>0.025f) addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera,&shadowLight);
+    if(!self&&!ragdoll&&strongest>0.025f) addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera,&shadowLight);
     float light=lighting(&sectors[i],death.frame&FF_FULLBRIGHT); unsigned mode=MODE_SPRITE|(thing->flags&MF_SHADOW?MODE_FUZZ:0);
     // Per-pixel lighting from silhouette normals (flipped with a mirrored frame, below).
     if(settings.detail&&!(death.frame&FF_FULLBRIGHT))mode|=MODE_RELIT;
@@ -390,7 +399,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
             float keep=1-death.fall.flatten;
             top=z+(image.top-death.fall.ground)*keep+death.fall.lift;bottom=z+(image.top-image.height-death.fall.ground)*keep+death.fall.lift;
         }
-        float sink=sinkInLiquid(thing,i,image,x,y,camera,collar);top-=sink;bottom-=sink;
+        float sink=!ragdoll?sinkInLiquid(thing,i,image,x,y,camera,collar):dollDown?sinkInLiquid(thing,i,image,x,y,camera,collar,true):0;top-=sink;bottom-=sink;
         float u0=flipped(seen)?image.width:0,u1=flipped(seen)?0:image.width;
         unsigned m=mode|((mode&MODE_RELIT)&&flipped(seen)?MODE_FLIPPED:0);
         auto &vertices=out[-1-lump];size_t first=vertices.size();
@@ -398,17 +407,40 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         // Wound holes (wounds.cpp): texels shot through, and their rims.
         std::vector<byte> holes;bool wounded=!self&&woundMask(*thing,image,flipped(seen),rx,ry,holes);
         const std::vector<byte> *cut=wounded?&holes:nullptr;
+        auto finish=[&](std::vector<Vertex> &batch,size_t from) {
+            for(size_t n=from;n<batch.size();++n) {
+                batch[n].red=pulse[0];batch[n].green=pulse[1];batch[n].blue=pulse[2];batch[n].statics=packedStatics;
+                batch[n].lampTint=tint;
+                if(grounded) {batch[n].mode|=MODE_GROUNDED;batch[n].sunU=grounding;batch[n].sunV=batch[n].z-z+lift;}
+                if(soft)batch[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
+            }
+        };
+        RagdollCard card;
+        if(ragdoll) {
+            // A ragdoll: its virtual camera's picture on an upright card (ragdoll.cpp), already mirrored.
+            if(ragdollCard(*death.ragdoll,fraction,sink,camera.eye,cut,card)) {
+                auto &batch=out[card.key];size_t from=batch.size();unsigned cm=m&~MODE_FLIPPED;
+                float l=-card.half,r=card.half,t=card.top,b=card.top-card.size,s=(float)card.size;
+                quad(batch,{card.x+rx*l,card.y+ry*l,t,0,0,light,cm},{card.x+rx*r,card.y+ry*r,t,s,0,light,cm},
+                     {card.x+rx*r,card.y+ry*r,b,s,s,light,cm},{card.x+rx*l,card.y+ry*l,b,0,s,light,cm});
+                finish(batch,from);
+                if(collar) {
+                    const Image &shadow=images.at(card.key);
+                    int shadowLump=-1-card.key; // the shadow renderer resolves images by -1-lump
+                    addEnemyShadow(*thing,shadow,shadowLump,false,card.x,card.y,z,camera,nullptr,false,&card);
+                    if(strongest>0.025f)addEnemyShadow(*thing,shadow,shadowLump,false,card.x,card.y,z,camera,&shadowLight,false,&card);
+                    if(beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(death.frame&FF_FULLBRIGHT))
+                        casters.push_back({thing,&shadow,shadowLump,false,card.x,card.y,z,std::hypot(card.x-camera.eye[0],card.y-camera.eye[1]),card});
+                }
+            }
+            return;
+        }
         if(death.fall.rig)fallQuads(vertices,{0,0,0,0,0,light,m},death.fall,x,y,z-sink,rx,ry,flipped(seen),cut);
         else if(posed)bodyQuads(vertices,pose,{0,0,0,0,0,light,m},x,y,z-sink,rx,ry,left,right,image.top,image.height,u0,u1,cut);
         else if(wounded)woundedQuads(vertices,{0,0,0,0,0,light,m},image,holes,x,y,top,rx,ry,flipped(seen),(top-bottom)/image.height);
         else quad(vertices,{x+rx*left,y+ry*left,top,u0,0,light,m},{x+rx*right,y+ry*right,top,u1,0,light,m},
             {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,m},{x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,m});
-        for(size_t n=first;n<vertices.size();++n) {
-            vertices[n].red=pulse[0];vertices[n].green=pulse[1];vertices[n].blue=pulse[2];vertices[n].statics=packedStatics;
-            vertices[n].lampTint=tint;
-            if(grounded) {vertices[n].mode|=MODE_GROUNDED;vertices[n].sunU=grounding;vertices[n].sunV=vertices[n].z-z+lift;}
-            if(soft)vertices[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
-        }
+        finish(vertices,first);
     };
     if(!self)emit(batches,rotation,camera.right[0],camera.right[1],true);
     if(mirror)emit(mirrorBatches,rotationFrom(mirror->eye),mirror->right[0],mirror->right[1],false);
@@ -479,13 +511,14 @@ void geometry(const Uniforms &camera,float fraction) {
     std::sort(casters.begin(),casters.end(),[](const Caster &a,const Caster &b){return a.distance<b.distance;});
     for(size_t n=0;n<std::min(size_t(6),casters.size());++n) {
         const Caster &c=casters[n];
-        flashlightSilhouette(*c.thing,*c.image,c.lump,c.flip,c.x,c.y,c.z,camera,*beam);
+        flashlightSilhouette(*c.thing,*c.image,c.lump,c.flip,c.x,c.y,c.z,camera,*beam,c.card.key?&c.card:nullptr);
     }
     playerShadow(camera,fraction);
     buildBlood(camera);
     buildHeat(camera);
     buildDust(camera);
     buildEmbers(camera);
+    buildRain(camera);
     buildBubbles(camera);
 }
 } // namespace doom3d

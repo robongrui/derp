@@ -30,9 +30,10 @@ struct Fixture {
 };
 Fixture fixture;
 std::string outputDir,pendingCapture;
-int stage=0,settled=0,placedAt=0,brokenAt=0,nextCapture=0,captures=0,lastTic=-1;
-const int captureTics[]={0,2,5,10,20,40};
+int stage=0,settled=0,placedAt=0,brokenAt=0,nextCapture=0,captures=0,lastTic=-1,bullets=0,shotAt=0;
+const int captureTics[]={0,1,2,3,4,5,6,8,10,20,40};
 float sightStartZ,sightEndZ;
+float finalHit[3]={};
 
 fixed_t fixed(float n) {return (fixed_t)std::lround(n*FRACUNIT);}
 float units(fixed_t n) {return n/(float)FRACUNIT;}
@@ -146,6 +147,38 @@ void checkCapture() {
     if(!valid)I_Error((char*)"Glass smoke: screenshot was not saved: %s",pendingCapture.c_str());
     pendingCapture.clear();
 }
+void shoot(int index) {
+    // Real line attacks exercise the shot hook, the sill offset and slope.
+    // Use distinct impacts: the final fracture must start at the THIRD one.
+    const float offsets[]={-0.22f,0.0f,0.28f},heights[]={0.5f,0.62f,0.35f};
+    float dx=units(fixture.line->v2->x-fixture.line->v1->x)/fixture.width;
+    float dy=units(fixture.line->v2->y-fixture.line->v1->y)/fixture.width;
+    float x=fixture.x+dx*fixture.width*offsets[index],y=fixture.y+dy*fixture.width*offsets[index];
+    float z=fixture.bottom+(fixture.top-fixture.bottom)*heights[index];
+    mobj_t *mo=players[consoleplayer].mo;
+    float distance=std::hypot(x-units(mo->x),y-units(mo->y)),shootZ=units(mo->z+(mo->height>>1)+8*FRACUNIT);
+    P_LineAttack(mo,R_PointToAngle2(mo->x,mo->y,fixed(x),fixed(y)),2048*FRACUNIT,fixed((z-shootZ)/distance),5);
+    finalHit[0]=x;finalHit[1]=y;finalHit[2]=z;
+}
+void checkHoles(int hits) {
+    uint32_t seed=paneSeed((int)(fixture.line-lines));
+    bool found=false;
+    for(const auto &v:doom3d::glassVertices)if((v.statics&0x7fffffffu)==seed&&v.mode==0) {
+        found=true;
+        if(v.statics&0x80000000u)I_Error((char*)"Glass smoke: hit %d broke the pane before the third bullet",hits);
+        for(int i=0;i<2;++i) {
+            bool marked=(v.lightMask[i]&(1u<<30))!=0;
+            if(marked!=(i<hits))I_Error((char*)"Glass smoke: hit %d has the wrong persistent bullet holes",hits);
+            if(marked) {
+                const float along[]={0.28f,0.5f},height[]={0.5f,0.62f};
+                float x=(float)((v.lightMask[i]>>2)&16383u),y=(float)((v.lightMask[i]>>16)&16383u);
+                if(std::abs(x-fixture.width*along[i])>1.5f||std::abs(y-(fixture.top-fixture.bottom)*height[i])>1.5f)
+                    I_Error((char*)"Glass smoke: a bullet hole missed its visible pane impact");
+            }
+        }
+    }
+    if(!found)I_Error((char*)"Glass smoke: the damaged pane disappeared");
+}
 }
 
 extern "C" void I_TestFrame(void) {
@@ -171,10 +204,16 @@ extern "C" void I_TestFrame(void) {
         capture("glass-intact.png");stage=2;return;
     }
     if(stage==2) {
-        float dx=fixture.x-fixture.cameraX,dy=fixture.y-fixture.cameraY;
-        float length=std::hypot(dx,dy);
-        R_ShotPassed(fixture.line,fixed(fixture.x),fixed(fixture.y),fixed((fixture.bottom+fixture.top)/2),fixed(dx/length),fixed(dy/length));
-        brokenAt=leveltime;stage=3;
+        if(bullets==0||leveltime-shotAt>=8) {
+            shoot(bullets++);shotAt=leveltime;
+            if(bullets==3) {brokenAt=leveltime;stage=3;}
+            else return;
+        }
+        else {
+            checkHoles(bullets);
+            if(leveltime-shotAt==2)capture(bullets==1?"glass-hit-1.png":"glass-hit-2.png");
+            return;
+        }
     }
     if(stage==3) {
         int elapsed=leveltime-brokenAt;
@@ -184,6 +223,17 @@ extern "C" void I_TestFrame(void) {
             for(const auto &vertex:doom3d::glassVertices)if(vertex.statics==brokenSeed) {broken=true;break;}
             if(!broken)I_Error((char*)"Glass smoke: the fixture shot did not break its pane");
         }
+        int held=0,flying=0;
+        for(const auto &v:doom3d::glassVertices) {
+            if(v.mode&MODE_GLASS_HELD)++held;
+            if(v.mode&MODE_GLASS_SHARD)++flying;
+            if(v.mode&MODE_GLASS_CRACK) {
+                float distance=std::hypot(std::hypot(v.x-finalHit[0],v.y-finalHit[1]),v.z-finalHit[2]);
+                if(distance>(elapsed+1)*12+3)I_Error((char*)"Glass smoke: cracks appeared ahead of the front from the final impact");
+            }
+        }
+        if(elapsed==1&&(!held||flying))I_Error((char*)"Glass smoke: the whole pane detached immediately instead of fracturing outward");
+        if(elapsed==40&&(held||!flying))I_Error((char*)"Glass smoke: the spreading fracture did not finish releasing its pieces");
         if(nextCapture<(int)(sizeof(captureTics)/sizeof(captureTics[0]))&&elapsed==captureTics[nextCapture]) {
             char name[64];std::snprintf(name,sizeof(name),"glass-tic-%02d.png",elapsed);
             capture(name);++nextCapture;
@@ -192,7 +242,7 @@ extern "C" void I_TestFrame(void) {
         return;
     }
     if(stage==4) {
-        std::printf("Glass GPU capture passed: %d screenshots in %s.\n",captures,outputDir.c_str());
+        std::printf("Glass GPU capture passed: two persistent bullet holes, third-hit fracture propagation, settling; %d screenshots in %s.\n",captures,outputDir.c_str());
         I_Quit();
     }
 }

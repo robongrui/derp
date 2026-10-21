@@ -28,7 +28,7 @@ void dropOldLevelImpacts() {
 // lights it too.
 std::unordered_set<uint64_t> crestCells;
 void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting,
-                const std::array<float,3> *albedo,bool palette,std::unordered_set<uint64_t> *taken) {
+                const std::array<float,3> *albedo,bool palette,std::unordered_set<uint64_t> *taken,float alpha) {
     float d[3]={x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]};
     float depth=d[0]*camera.forward[0]+d[1]*camera.forward[1]+d[2]*camera.forward[2];
     if(depth<4)return;
@@ -47,7 +47,7 @@ void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,
     auto lit=palette?paletteColor(shade):shade;
     auto vertex=[&](float sx,float sz) {
         float r=(sx-px)*unit,u=(sz-py)*unit;
-        Vertex v={x+camera.right[0]*r+camera.up[0]*u,y+camera.right[1]*r+camera.up[1]*u,z+camera.right[2]*r+camera.up[2]*u,0,0,1,0};
+        Vertex v={x+camera.right[0]*r+camera.up[0]*u,y+camera.right[1]*r+camera.up[1]*u,z+camera.right[2]*r+camera.up[2]*u,0,0,alpha,0};
         v.red=lit[0];v.green=lit[1];v.blue=lit[2];return v;
     };
     quad(out,vertex(left,bottom+h),vertex(left+w,bottom+h),vertex(left+w,bottom),vertex(left,bottom));

@@ -150,6 +150,8 @@ void buildDust(const Uniforms &camera) {
         int own=seamCells[(size_t)cy*mapWidth+cx].own;
         if(own==noSector)continue;
         const sector_t &sector=sectors[own];
+        // Rain washes the air under the sky clear of dust (weather.cpp).
+        if(rainNow>0.01f&&sector.ceilingpic==skyflatnum)continue;
         float floor=floorZ(&sector);
         if(p[2]<floor+2||p[2]>ceilZ(&sector)-2)continue;
         float bright=0,color[3]={};

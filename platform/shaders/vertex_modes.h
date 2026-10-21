@@ -8,6 +8,9 @@
 #define MODE_SUNBEAM         2u    // mist pass only: a sunbeam ribbon, not a mist layer
 #define MODE_FUZZ            4u    // spectre (MF_SHADOW): darkened and translucent
 #define MODE_GLASS_SHARD     4u    // glass pass only: a tumbling polygon with a full 3D face normal
+#define MODE_GLASS_CRACK     2u    // glass pass only: a fracture edge reached by the spreading crack
+#define MODE_GLASS_HELD      8u    // glass pass only: a fragment still attached to the pane
+#define MODE_GLASS_DARK      16u   // glass pass only: the shadow beside a fracture edge
 #define MODE_RELIT           8u    // per-pixel light from the silhouette normals
 #define MODE_FLIPPED         16u   // mirrored sprite frame: flip the normals too
 #define MODE_LAMP_OFF        16u   // map surfaces only, with MODE_DEAD_GLOW: switched off by its sector, not shot out

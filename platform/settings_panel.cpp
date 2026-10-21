@@ -29,6 +29,7 @@ bool hasGlass(const Settings&) {return Game_HasEffect(GAME_EFFECT_WINDOW_GLASS)!
 bool hasFlashlight(const Settings&) {return Game_HasEffect(GAME_EFFECT_FLASHLIGHT)!=0;}
 bool hasFalloff(const Settings&) {return Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF)!=0;}
 bool hasFreeAim(const Settings &s) {return s.look&&Game_HasEffect(GAME_EFFECT_FREE_AIM)!=0;}
+bool hasAuthored(const Settings&) {return Game_HasEffect(GAME_EFFECT_AUTHORED_EPISODES)!=0;}
 }
 
 void fitGame(Settings &s) {
@@ -108,6 +109,9 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("glossy_screens","Glossy monitor screens",&s.glossyScreens,
                     "Screens found in computer textures get curved CRT glass: the picture bends and shifts behind it as you move, "
                     "and it catches sharp highlights from lamps, shots and the flashlight."),
+                check("live_readouts","Live readouts",&s.liveReadouts,
+                    "The blocks of glowing cells painted into computer panels (the green grids beside DOOM's consoles) "
+                    "change now and then, cell by cell, each taking the light of another in its row."),
                 check("glowing_eyes","Glowing eyes",&s.glowingEyes,
                     "The eyes painted into monster artwork glow in the dark: the zombies' and imp's red, the demon's yellow, "
                     "the cacodemon's and mancubus's green, the arachnotron's blue. Picked by hand for the stock monsters, searched for in other artwork; "
@@ -179,9 +183,31 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("dust_motes","Dust motes",&s.dust,"Specks that glint in indoor sunbeams and the flashlight beam."),
                 check("embers","Embers",&s.embers,"A few sparks rise from torches and fires and cool as they climb; where the game's wind blows, it carries them off."),
                 check("heat_haze","Heat haze",&s.heatHaze,"Rows of pixels shimmer above lava, hot damaging floors and flames.")}},
+            {"Authored episodes",{
+                check("authored_episodes","Authored episodes",&s.authored,
+                    "Looks picked by hand for the game's own episodes, beyond what DERP derives from the WAD: Knee-Deep in the Dead "
+                    "lies at night in a downpour, the sun hidden and the lit rooms shining out through their windows into the dark. "
+                    "Off: every map is lit as the WAD gives it, sun and all. Maps from custom WADs never get these looks.",hasAuthored)}},
+            {"Weather and wear",{
+                choice("weather","Rain",&s.weather,{"Never","Authored episodes","Always"},{0,1,2},
+                    "Rain falls under the sky in streaks of whole pixels and splashes where it lands; drops gather and run down "
+                    "the outside of window glass, the ground darkens as it soaks, and you hear it. Authored episodes: it rains where "
+                    "an authored episode's look has rain (DOOM's first episode). Always: on every map. Through a broken window the wind "
+                    "blows the rain in, and the floor and wall beneath it get wet."),
+                check("worn_plates","Worn plates",&s.wornPlates,
+                    "Plain metal plates show years of use: grime packed into their seams, dull blotches, boot scuffs low down, "
+                    "and a duller sheen. Only on plates that are otherwise blank, such as the fronts of DOOM's computer desks."),
+                check("window_streaks","Window streaks",&s.windowStreaks,
+                    "Rain has run down the outside walls below windows for years: dark ragged streaks from the sill, rusty on "
+                    "metal. Inside they start once rain blows in through a broken pane. Needs window glass.",hasGlass)}},
             {"Combat",{
                 check("blood","Blood splats and pools",&s.blood,
                     "Hitscan hits leave splats on floors and nearby walls; corpses grow a pool. Colors come from the WAD's blood sprite."),
+                check("blood_spray","Blood spray",&s.bloodSpray,
+                    "Hits throw blood out the far side of the body and kills burst, the drops flying as pixels and landing as splats "
+                    "on floors, walls and low ceilings. Fresh wounds drip, bodies sliding across the floor smear it and bodies thrown "
+                    "into a wall splash it. Off: hits only leave splats, as before.",
+                    [](const Settings &d){return d.blood!=0;}),
                 check("blood_shine","Wet blood shine",&s.bloodShine,"Fresh floor blood and wound edges glint under lights. Floor blood dries matte over time.",
                     [](const Settings &d){return d.blood!=0||d.wounds!=0;}),
                 check("wounds","Wound holes",&s.wounds,
@@ -199,6 +225,18 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "shot through the head cuts the strings and the body crumples. Drawing only: damage is the game's own. The "
                     "fixed choices are for judging each one.",
                     [](const Settings &d){return d.deathDirector!=0;}),
+                check("death_ragdoll","Ragdoll falls",&s.deathRagdoll,
+                    "Monsters standing on two legs drop as ragdolls instead: their drawing gets a body as deep as their side view "
+                    "shows, on a small skeleton the killing blow knocks over (thrown back, legs swept, spun from the side, or "
+                    "strings cut by a head shot), and they come to rest lying on their back or side, as their own drawing sees them. "
+                    "Takes over from Procedural falls. Drawing only.",
+                    [](const Settings &d){return d.deathDirector!=0;}),
+                check("death_guided","Shot deaths on strings",&s.deathGuided,
+                    "Two ragdolls in three killed by a blast to the chest from the front play the death their drawings show: the "
+                    "chest yanked back as if on a stunt wire, the legs giving way, the body sitting back and landing hips first, "
+                    "then the back, the head last. The harder the blast, the harder the yank; point blank it goes down flat. "
+                    "Only monsters whose hand rig fits it (the zombieman). Drawing only.",
+                    [](const Settings &d){return d.deathDirector!=0&&d.deathRagdoll!=0;}),
                 check("death_face_viewer","Dying turn to face you",&s.deathFaceViewer,
                     "A monster killed facing away turns toward you before its death frames, which are drawn facing the viewer, "
                     "instead of snapping round.",
@@ -300,6 +338,9 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "under the sky, heard dull through window glass until it is shot, where the map shows them. Only near ones are heard; "
                     "steady lamps barely, flickering ones buzz with their light, and shot-out fixtures go quiet. "
                     "Loud effects push it down for a moment."),
+                check("alternative_computer_sounds","Alternative computer sounds",&s.alternativeComputerSounds,
+                    "Computers use a narrow machine hum, hard-drive seeks and relay chatter as an alternative to their original bleeps.",
+                    [](const Settings &d){return d.ambience!=0;}),
                 slider("ambience_amount","Ambience volume",&s.ambienceAmount,0.25,2,0.25,
                     "How loud the ambience is next to the effects.",
                     [](const Settings &d){return d.ambience!=0;},

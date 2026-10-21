@@ -117,7 +117,8 @@ endif()
 # panel) are compiled into each game program against that game's headers.
 add_library(doom_game INTERFACE)
 target_sources(doom_game INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/profile.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/materials.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/materials.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/authored.c")
 target_link_libraries(doom_game INTERFACE doom_core)
 
 # Heretic: Raven's game code (heretic/), with heretic/derp/ answering the
@@ -241,7 +242,7 @@ if(DOOM_BUILD_SDL)
     # Without -rate, each effect uses the same native rate as its game bank.
     add_executable(doom-sfx-render tests/sfx_render.c platform/audio/impact_synth.c platform/audio/spark_synth.c
         platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
-        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/flyby_synth.c platform/audio/resample.c platform/audio/reverb.c)
+        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/resample.c platform/audio/reverb.c)
     target_include_directories(doom-sfx-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/platform")
     if(NOT WIN32)
         target_link_libraries(doom-sfx-render PRIVATE m)
@@ -255,9 +256,13 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/bake_sun.cpp
         platform/scene3d/glass_light.cpp
         platform/scene3d/blood.cpp
+        platform/scene3d/spray.cpp
         platform/scene3d/body_motion.cpp
         platform/scene3d/death_director.cpp
         platform/scene3d/death_falls.cpp
+        platform/scene3d/ragdoll.cpp
+        platform/scene3d/ragdoll_body.cpp
+        platform/scene3d/ragdoll_test.cpp
         platform/scene3d/wounds.cpp
         platform/scene3d/caustics.cpp
         platform/scene3d/liquid_edges.cpp
@@ -279,6 +284,8 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/surface_lights.cpp
         platform/scene3d/thing_light.cpp
         platform/scene3d/weapon.cpp
+        platform/scene3d/wear.cpp
+        platform/scene3d/weather.cpp
         platform/scene3d/windows.cpp
     )
     # The SDL_gpu backend that draws it; gpu3d/internal.h holds what its files share.
@@ -306,11 +313,11 @@ if(DOOM_BUILD_SDL)
     endfunction()
     # Sound in the map for the SDL mixer: room reverb, muffling, the map reads they share, sample playback,
     # and the made-up sounds: impacts and the ambience read from the map's textures.
-    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c platform/audio/relief.c platform/audio/flyby.c
+    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c platform/audio/beyond.c platform/audio/relief.c platform/audio/flyby.c
         platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/acoustic_graph.c platform/audio/steps.c
         platform/audio/impact_synth.c platform/audio/spark_synth.c platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
-        platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c
-        platform/audio/flyby_synth.c)
+        platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/computer_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c
+        platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
@@ -485,12 +492,27 @@ if(BUILD_TESTING)
     add_executable(doom-glass-audio-tests tests/glass_audio.c
         platform/audio/made_bank.c platform/audio/impact_synth.c platform/audio/spark_synth.c
         platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
-        platform/audio/flyby_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
-        platform/audio/liquid_synth.c platform/audio/fire_synth.c)
+        platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
+        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/computer_synth.c platform/audio/hidden_synth.c)
     if(NOT WIN32)
         target_link_libraries(doom-glass-audio-tests PRIVATE m)
     endif()
     add_test(NAME glass-audio-synthesis COMMAND doom-glass-audio-tests)
+    add_executable(doom-computer-audio-tests tests/computer_audio.c
+        platform/audio/made_bank.c platform/audio/impact_synth.c platform/audio/spark_synth.c
+        platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
+        platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
+        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/computer_synth.c platform/audio/hidden_synth.c
+        platform/audio/ambience_voices.c platform/audio/resample.c)
+    add_executable(doom-computer-presence-tests tests/computer_presence.c platform/audio/ambience.c)
+    target_include_directories(doom-computer-presence-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
+    target_link_libraries(doom-computer-presence-tests PRIVATE doom_options)
+    if(NOT WIN32)
+        target_link_libraries(doom-computer-audio-tests PRIVATE m)
+        target_link_libraries(doom-computer-presence-tests PRIVATE m)
+    endif()
+    add_test(NAME computer-audio-synthesis COMMAND doom-computer-audio-tests)
+    add_test(NAME computer-room-presence COMMAND doom-computer-presence-tests)
     add_executable(doom-wad-probe-tests tests/wad_probe.c platform/wad_probe.c)
     add_test(NAME wad-loader-probe COMMAND doom-wad-probe-tests)
     add_executable(doom-portability-tests tests/portability.c)

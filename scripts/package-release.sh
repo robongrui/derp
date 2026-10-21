@@ -27,12 +27,18 @@ rm -rf "$stage"
 mkdir -p "$stage/wads" "$stage/licenses/Freedoom"
 cp "$program" "$stage/"
 # The Heretic program beside it: the launcher hands Heretic WADs over.
+heretic=
 for candidate in "$(dirname -- "$program")/derp-heretic.exe" "$(dirname -- "$program")/derp-heretic"; do
     if [ -f "$candidate" ]; then
-        cp "$candidate" "$stage/"
+        heretic=$candidate
         break
     fi
 done
+if [ -z "$heretic" ]; then
+    echo "Build derp-heretic too; see BUILDING.md." >&2
+    exit 1
+fi
+cp "$heretic" "$stage/"
 cp "$freedoom_dir/freedoom1.wad" "$stage/default.wad"
 cp "$project_dir/README.md" "$project_dir/PLAY.md" "$stage/"
 cp "$project_dir/LICENSE.TXT" "$stage/licenses/GPL-3.txt"

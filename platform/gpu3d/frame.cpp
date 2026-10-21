@@ -366,7 +366,11 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     SDL_GPUCommandBuffer *command=SDL_AcquireGPUCommandBuffer(device);
     if(!command) {fprintf(stderr,"GPU command buffer: %s\n",SDL_GetError());return;}
     SDL_GPUTexture *swapchain=nullptr;Uint32 drawableWidth=0,drawableHeight=0;
-    if(!SDL_WaitAndAcquireGPUSwapchainTexture(command,gameWindow,&swapchain,&drawableWidth,&drawableHeight)||!swapchain) {
+    // A hidden window (render checks) has no swapchain: the frame is drawn for capture() alone.
+    if(SDL_GetWindowFlags(gameWindow)&SDL_WINDOW_HIDDEN) {
+        int pw=1,ph=1;SDL_GetWindowSizeInPixels(gameWindow,&pw,&ph);drawableWidth=(Uint32)pw;drawableHeight=(Uint32)ph;
+    }
+    else if(!SDL_WaitAndAcquireGPUSwapchainTexture(command,gameWindow,&swapchain,&drawableWidth,&drawableHeight)||!swapchain) {
         flushUploads();SDL_SubmitGPUCommandBuffer(command);return;
     }
     uint64_t frameStart=SDL_GetTicksNS();
@@ -402,7 +406,7 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     drawMainView(render,view,camera,drawMist,msaa,weapons,hud,cross);
     if(camera.materials[1]>0)drawBloom(render,view,camera,weapons);
     if(render!=command)submitProfiled(render,frameStart);
-    present(command,swapchain,view);
+    if(swapchain)present(command,swapchain,view);
     flushUploads();
     if(screenshotPending||renderCheckDue()) {screenshotPending=false;capture(command,view,(int)drawableWidth,(int)drawableHeight);}
     else if(!SDL_SubmitGPUCommandBuffer(command)) I_Error((char*)"GPU rendering failed: %s",SDL_GetError());

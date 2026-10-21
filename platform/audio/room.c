@@ -19,7 +19,7 @@
 #include "room.h"
 #include "../game_materials.h"
 
-#define RAYS 32
+#define RAYS ROOM_RAYS
 #define SPEED 10700.0f  /* sound, in map units per second (a unit is ~3.2 cm) */
 #define METERS 0.032f
 #define EAR 41.0f       /* the listener's ear above their feet */
@@ -180,18 +180,21 @@ static ray_t cast(float x, float y, float cx, float cy, sector_t *start)
 
 static void dry(room_t *room) { memset(room, 0, sizeof(*room)); room->decay = 0.2f; }
 
-void Room_Measure(room_t *room)
+/* The room around (x, y) in start, heard by an ear at height ear facing
+   facing (radians); its floor plan to outline. */
+static void measure(float x, float y, float ear, sector_t *start, float facing, room_t *room, room_outline_t *outline)
 {
-    mobj_t *listener = players[consoleplayer].mo;
-    if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numlines) { dry(room); return; }
     name_materials();
-    float x = listener->x / (float)FRACUNIT, y = listener->y / (float)FRACUNIT;
-    sector_t *start = listener->subsector->sector;
     Map_Gather(x, y);
 
     static ray_t rays[RAYS];
     const float step = 2 * (float)M_PI / RAYS;
     for (int i = 0; i < RAYS; ++i) rays[i] = cast(x, y, cosf(i * step), sinf(i * step), start);
+    if (outline)
+    {
+        outline->x = x; outline->y = y;
+        for (int i = 0; i < RAYS; ++i) outline->reach[i] = rays[i].distance;
+    }
 
     /* The floor plan the rays outline, and its walls. */
     float area = 0, perimeter = 0, wall_absorb = 0, wall_dark = 0, wall_scatter = 0, open = 0;
@@ -220,6 +223,7 @@ void Room_Measure(room_t *room)
     /* Sabine: the tail lasts 0.161 V / A seconds, A the room's absorbing area. */
     float floor_m2 = area * METERS * METERS, height_m = height * METERS, walls_m2 = perimeter * METERS * height_m;
     float volume = floor_m2 * height_m;
+    if (outline) outline->volume = volume;
     float absorbing = floor_m2 * (floor_absorb + ceiling_absorb) + walls_m2 * wall_absorb / perimeter;
     float sabine = 0.161f * volume / fmaxf(absorbing, 0.01f);
     /* Standing under the sky, most of the sound never comes back. */
@@ -236,7 +240,6 @@ void Room_Measure(room_t *room)
 
     /* An echo off the walls in each eighth of the circle, panned to where it is
        as the listener faces; Doom's angles turn left, so left is +90 degrees. */
-    float facing = listener->angle * (2 * (float)M_PI / 4294967296.0f);
     const int per_tap = RAYS / 8;
     for (int k = 0; k < 8; ++k)
     {
@@ -259,11 +262,35 @@ void Room_Measure(room_t *room)
         room->pan[k] = -sinf(bearing);
     }
     /* And one off the ceiling, unless it is sky. */
-    float above = Map_Ceiling(start) - (listener->z / (float)FRACUNIT + EAR);
+    float above = Map_Ceiling(start) - ear;
     int ceiling = ROOM_TAPS - 1;
     room->delay[ceiling] = 2 * fmaxf(above, 8) / SPEED;
     room->gain[ceiling] = Map_Sky(start) ? 0 : (1 - flat(start->ceilingpic).absorb) * 0.25f / (1 + fmaxf(above, 8) / 320);
     room->pan[ceiling] = 0;
     room->spread[ceiling] = flat(start->ceilingpic).scatter;
     room->dark[ceiling] = flat(start->ceilingpic).dark;
+}
+
+static void dry_outline(room_outline_t *outline, float x, float y)
+{
+    if (!outline) return;
+    memset(outline, 0, sizeof(*outline));
+    outline->x = x; outline->y = y;
+}
+
+void Room_Measure(room_t *room, room_outline_t *outline)
+{
+    mobj_t *listener = players[consoleplayer].mo;
+    if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numlines)
+    { dry(room); dry_outline(outline, 0, 0); return; }
+    float x = listener->x / (float)FRACUNIT, y = listener->y / (float)FRACUNIT;
+    measure(x, y, listener->z / (float)FRACUNIT + EAR, listener->subsector->sector,
+            listener->angle * (2 * (float)M_PI / 4294967296.0f), room, outline);
+}
+
+void Room_MeasureAt(float x, float y, float facing, room_t *room, room_outline_t *outline)
+{
+    if (gamestate != GS_LEVEL || !numlines) { dry(room); dry_outline(outline, x, y); return; }
+    sector_t *sector = R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT))->sector;
+    measure(x, y, Map_Floor(sector) + EAR, sector, facing, room, outline);
 }

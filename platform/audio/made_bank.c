@@ -4,6 +4,8 @@
  * join in phase. */
 #include <stdlib.h>
 #include "ambience.h"
+#include "computer_synth.h"
+#include "hidden_synth.h"
 #include "impact_synth.h"
 #include "made_bank.h"
 #include "synth_kit.h"
@@ -13,6 +15,9 @@
 static made_sample_t impacts[IMPACT_KINDS][MADE_STEP_VARIANTS];
 static made_sample_t loops[AMBIENT_KINDS][AMBIENCE_LAYERS];
 static made_sample_t strikes[MADE_VARIANTS];
+static made_sample_t hidden[HIDDEN_KINDS][MADE_VARIANTS];
+static made_sample_t computer_body;
+static made_sample_t computer_activity[AMBIENCE_LAYERS];
 
 static made_sample_t keep(float *buffer, int length, int rate)
 {
@@ -53,6 +58,32 @@ static made_sample_t strike(unsigned seed)
     return keep(buffer, length, MADE_RATE);
 }
 
+static made_sample_t computer_body_loop(void)
+{
+    int length = 32 * MADE_RATE;
+    float *buffer = calloc((size_t)length, sizeof(float));
+    if (!buffer) return (made_sample_t){ 0 };
+    /* All body partials and modulations complete whole cycles. Applying the
+       equal-power noise overlap here would swell these coherent tones. */
+    Computer_BodyRender(0xa361c059u, MADE_RATE, buffer, length);
+    return keep(buffer, length, MADE_RATE);
+}
+
+static made_sample_t computer_activity_loop(int layer)
+{
+    static const int seconds[AMBIENCE_LAYERS] = { 32, 37, 43 };
+    int length = seconds[layer] * MADE_RATE, fade = (int)(LOOP_FADE_SECONDS * MADE_RATE);
+    float *buffer = calloc((size_t)(length + fade), sizeof(float));
+    if (!buffer) return (made_sample_t){ 0 };
+    Computer_ActivityRender(0xd09f713bu + 7919u * (unsigned)layer, MADE_RATE, buffer, length + fade);
+    for (int n = 0; n < fade; ++n)
+    {
+        float x = (n + 0.5f) / fade;
+        buffer[n] = buffer[n] * sinf(0.5f * SYNTH_PI * x) + buffer[length + n] * cosf(0.5f * SYNTH_PI * x);
+    }
+    return keep(buffer, length, MADE_RATE);
+}
+
 void MadeBank_Build(void)
 {
     for (int kind = 0; kind < IMPACT_KINDS; ++kind)
@@ -67,6 +98,18 @@ void MadeBank_Build(void)
     for (int kind = 0; kind < AMBIENT_KINDS; ++kind)
         for (int layer = 0; layer < AMBIENCE_LAYERS; ++layer) loops[kind][layer] = loop(kind, layer);
     for (int v = 0; v < MADE_VARIANTS; ++v) strikes[v] = strike(0x2545f491u * (unsigned)(v + 1));
+    for (int kind = 0; kind < HIDDEN_KINDS; ++kind)
+        for (int v = 0; v < MADE_VARIANTS; ++v)
+        {
+            int length = Hidden_Length(kind, MADE_RATE);
+            float *buffer = calloc((size_t)length, sizeof(float));
+            if (!buffer) continue;
+            Hidden_Render(kind, 0x7f4a7c15u * (unsigned)(kind * MADE_VARIANTS + v + 1), MADE_RATE, buffer, length);
+            hidden[kind][v] = keep(buffer, length, MADE_RATE);
+        }
+    computer_body = computer_body_loop();
+    for (int layer = 0; layer < AMBIENCE_LAYERS; ++layer)
+        computer_activity[layer] = computer_activity_loop(layer);
 }
 
 int MadeBank_Variants(int kind)
@@ -86,4 +129,13 @@ const made_sample_t *MadeBank_Loop(int kind, int layer)
 {
     return kind >= 0 && kind < AMBIENT_KINDS ? ready(&loops[kind][(unsigned)layer % AMBIENCE_LAYERS]) : NULL;
 }
+const made_sample_t *MadeBank_Hidden(int kind, int variant)
+{
+    return kind >= 0 && kind < HIDDEN_KINDS ? ready(&hidden[kind][(unsigned)variant % MADE_VARIANTS]) : NULL;
+}
 const made_sample_t *MadeBank_Strike(int variant) { return ready(&strikes[(unsigned)variant % MADE_VARIANTS]); }
+const made_sample_t *MadeBank_ComputerBody(void) { return ready(&computer_body); }
+const made_sample_t *MadeBank_ComputerActivity(int layer)
+{
+    return ready(&computer_activity[(unsigned)layer % AMBIENCE_LAYERS]);
+}

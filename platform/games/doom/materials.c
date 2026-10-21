@@ -5,6 +5,7 @@
 #include "../../emissive.h"
 #include "../../screen_glass.h"
 #include "../../audio/ambient_synth.h"
+#include "../../audio/hidden_synth.h"
 #include "../../game_materials.h"
 
 static int starts(const char *name, const char *prefix) { return !strncmp(name, prefix, strlen(prefix)); }
@@ -36,6 +37,8 @@ game_liquid Game_LiquidFlat(const char *name)
 }
 
 int Game_IceFlat(const char *name) { (void)name; return 0; }
+/* COMPSPAN: the blank grey front of the computer desks (E1M1). */
+int Game_WornPlate(const char *name, int flat) { return !flat && !strcmp(name, "COMPSPAN"); }
 int Game_HotFlat(const char *name) { return !strncmp(name, "LAVA", 4); }
 
 int Game_DamagingFloor(int special)
@@ -164,4 +167,21 @@ int Game_AmbientWall(const char *name)
         if (starts(name, "PLANET") || starts(name, "SILVER3")) return AMBIENT_CRT;
     }
     return -1;
+}
+
+/* Behind a base's walls: pipes carry water and steam, the frame they hang
+   on settles, and they sweat; tech panelling hides ducts, the frame and
+   machinery farther off; the bases' brown and grey stone only sweats.
+   Flesh, marble, wood and the rest hide nothing of this. */
+int Game_HiddenWall(const char *name)
+{
+    static const char *const pipes[] = {"PIPE", "BROWNPIP", "SUPPORT", NULL};
+    static const char *const panels[] = {"STARTAN", "STARG", "STARBR", "TEKWALL", "TEKGREN", "TEKBRON",
+        "COMPTILE", "COMPSPAN", "SILVER1", "SILVER2", "SHAWN", "METAL", "BRONZE", "SPACEW", "GRAY",
+        "ICKWALL", "MODWALL", NULL};
+    static const char *const stones[] = {"BROWN", "STONE", NULL};
+    if (prefixed(name, pipes)) return 1 << HIDDEN_PIPE_RUSH | 1 << HIDDEN_STEAM | 1 << HIDDEN_SETTLE | 1 << HIDDEN_DRIP;
+    if (prefixed(name, panels)) return 1 << HIDDEN_DUCT | 1 << HIDDEN_SETTLE | 1 << HIDDEN_PRESS;
+    if (prefixed(name, stones)) return 1 << HIDDEN_DRIP;
+    return 0;
 }

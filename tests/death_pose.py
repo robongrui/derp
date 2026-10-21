@@ -30,9 +30,10 @@ from death_lab import Picture, png, pulse, read_wad, smooth  # noqa: E402
 # and hit drawing (H0, the chest blast's recoil), front view, in units: right
 # of the sprite's origin, height above its feet. Guns hang below the hip line:
 # hand-marked boxes (u0, h0, u1, h1, colour) keep their texels with the torso,
-# all of them or one colour's. The same as platform/death_rigs_stock.h.
+# all of them or one colour's; a gun held above the hips is boxed too, for the
+# ragdoll's gun bone. The same as platform/death_rigs_stock.h.
 RIGS = {
-    'POSSG1': dict(split=3.5, carried=[(-21, 21, -3, 29, 'all')],
+    'POSSG1': dict(split=3.5, carried=[(-21, 21, -3, 29, 'all'), (-21, 29, 16, 39, 'neutral'), (16, 33, 21, 39, 'neutral')],
                    left=dict(hip=(-2.5, 27), knee=(-2.0, 15.5), ankle=(-1.5, 4)),
                    right=dict(hip=(9.0, 27), knee=(8.75, 15.5), ankle=(9.25, 4))),
     'POSSH0': dict(split=4.3, carried=[(-19, 12, 20, 31, 'grey'), (-20, 12, -6.5, 22, 'all')],

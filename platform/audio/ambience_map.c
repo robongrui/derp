@@ -1,7 +1,8 @@
 /* Reads a level for its ambient sound sources: lamps, screens and computers,
  * liquids, fire walls, lava and magma, teleporter pads, torches and standing
  * lamps among the things, and the open air under the sky with the openings
- * the wind comes in by. Sources of a kind close together join into a spot. */
+ * the wind and rain come in by, where the rain taps on any glass in them.
+ * Sources of a kind close together join into a spot. */
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
@@ -39,6 +40,8 @@ const reach_t ambience_reach[AMBIENT_KINDS] = {
     [AMBIENT_FIRE] = { 16384, 96, 896 },
     [AMBIENT_MAGMA] = { 16384, 64, 640 },
     [AMBIENT_WIND] = { 4096, 128, 896 },
+    [AMBIENT_RAIN] = { 4096, 128, 768 },
+    [AMBIENT_GLASS_RAIN] = { 4096, 48, 512 },
 };
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
@@ -65,7 +68,7 @@ static spot_t *add_spot(int kind, float x, float y, float z, float size, int sec
         }
         spot = &list->spot[list->count++];
         *spot = (spot_t){ .light = 1, .cx = cx, .cy = cy, .cz = cz, .sector = sector, .portal = portal,
-                          .muffle = 1, .cutoff = 20000, .muffle_to = 1, .cutoff_to = 20000, .heard = -1000,
+                          .line = -1, .muffle = 1, .cutoff = 20000, .muffle_to = 1, .cutoff_to = 20000, .heard = -1000,
                           .measured = -1000 };
     }
     spot->x += x * size; spot->y += y * size; spot->z += z * size; spot->size += size;
@@ -111,8 +114,14 @@ static void read_flats(void)
         int s = (int)(sector - sectors);
         flat_name(sector->floorpic, name);
         add(flat_kind(name, 0), cx, cy, Map_Floor(sector), area, s);
-        /* Under the sky the wind always blows, a little above head height. */
-        if (Map_Sky(sector)) { add(AMBIENT_WIND, cx, cy, Map_Floor(sector) + 64, area, s); continue; }
+        /* Under the sky the wind always blows, a little above head height;
+           the rain, when it rains, falls there. */
+        if (Map_Sky(sector))
+        {
+            add(AMBIENT_WIND, cx, cy, Map_Floor(sector) + 64, area, s);
+            add(AMBIENT_RAIN, cx, cy, Map_Floor(sector) + 32, area, s);
+            continue;
+        }
         flat_name(sector->ceilingpic, name);
         add(flat_kind(name, 1), cx, cy, Map_Ceiling(sector), area, s);
     }
@@ -136,6 +145,25 @@ static void wall(int texture, const line_t *line, float bottom, float top, int s
     }
 }
 
+/* Where rain would tap on a pane, should one stand in this opening: on the
+   inside of it, a spot of its own, heard only while the glass is whole
+   (Ambience_Glaze) and it rains. */
+static void pane(const line_t *line, float x, float y, float z, float size, int sector)
+{
+    spots_t *list = &ambience_spots[AMBIENT_GLASS_RAIN];
+    if (list->count == list->capacity)
+    {
+        int capacity = list->capacity ? 2 * list->capacity : 64;
+        spot_t *grown = realloc(list->spot, (size_t)capacity * sizeof(spot_t));
+        if (!grown) return;
+        list->spot = grown; list->capacity = capacity;
+    }
+    list->spot[list->count++] = (spot_t){ .x = x * size, .y = y * size, .z = z * size, .size = size, .biggest = size,
+                                          .light = 1, .sector = sector, .portal = 1, .line = (int)(line - lines),
+                                          .muffle = 1, .cutoff = 20000, .muffle_to = 1, .cutoff_to = 20000,
+                                          .heard = -1000, .measured = -1000 };
+}
+
 /* An opening from under a ceiling to under the sky - a window, a doorway
    out - is where the wind comes in, a few units out on the sky side, so a
    pane in it stands between it and anyone inside. */
@@ -152,8 +180,11 @@ static void portal(const line_t *line)
     float length = hypotf(dx, dy), out = Map_Sky(front) ? 4 : -4;  /* the front lies to the right */
     if (length < 1) return;
     top = fminf(top, bottom + 128);
-    add_spot(AMBIENT_WIND, ax + 0.5f * dx + out * dy / length, ay + 0.5f * dy - out * dx / length, 0.5f * (bottom + top),
-             2 * length * (top - bottom), (int)(sky - sectors), 1);
+    for (int kind = AMBIENT_WIND; kind <= AMBIENT_RAIN; ++kind)
+        add_spot(kind, ax + 0.5f * dx + out * dy / length, ay + 0.5f * dy - out * dx / length, 0.5f * (bottom + top),
+                 2 * length * (top - bottom), (int)(sky - sectors), 1);
+    pane(line, ax + 0.5f * dx - out * dy / length, ay + 0.5f * dy + out * dx / length, 0.5f * (bottom + top),
+         length * (top - bottom), (int)((sky == front ? back : front) - sectors));
 }
 
 static void read_walls(void)

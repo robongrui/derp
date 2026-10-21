@@ -1,6 +1,7 @@
 /* DOOM's answers to platform/game_profile.h. */
 #include <stdio.h>
 #include "doomdef.h"
+#include "doomstat.h"
 #include "p_local.h"
 #include "sounds.h"
 #include "i_sound.h"

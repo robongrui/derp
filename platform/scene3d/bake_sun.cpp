@@ -114,6 +114,7 @@ void bakeSun() {
     float yaw=-(best+0.5f)*2*doomPi/(4.0f*sky.width);
     float bright=(float)std::pow(total/(9.0*sky.height),0.25),glow=std::clamp((bright-0.2f)/0.4f,0.0f,1.0f);
     sunYaw=yaw;sunGlow=glow*glow*(3-2*glow)*daylight; // no sun in a night sky
+    if(!levelMood().sun)sunGlow=0; // An episode with the sun hidden (Game_Mood).
     const float direction[3]={std::cos(yaw)*std::cos(elevation),std::sin(yaw)*std::cos(elevation),std::sin(elevation)};
     float sunLength=std::hypot(direction[0],direction[1]),sunX=direction[0]/sunLength,sunY=direction[1]/sunLength;
     sunAzimuth[0]=sunX;sunAzimuth[1]=sunY;
@@ -132,8 +133,10 @@ void bakeSun() {
     if(!contactTexture)I_Error((char*)"Could not allocate surface maps");
     uploadWallBake();
     for(int c=0;c<3;++c)sunDirection[c]=direction[c];
-    bakeShafts();
-    sunLevel=level;
+    // Hidden by the episode's mood: no sunlight, only its direction (which
+    // way the rain blows) is kept.
+    if(levelMood().sun)bakeShafts();else sunShafts.clear();
+    sunLevel=levelMood().sun?level:0;
     fprintf(stderr,"3D sun: yaw %.0f degrees, %.0f up, %zu sunlit cells, %zu sunbeams, %zu wall strips in %dx%d, baked in %.0f ms.\n",
         yaw*180/doomPi,elevation*180/doomPi,lit.load(),sunShafts.size(),bakeOrder.size(),atlasWidth,atlasHeight,(SDL_GetTicksNS()-start)/1e6);
 }

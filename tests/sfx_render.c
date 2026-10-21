@@ -1,6 +1,6 @@
 /* Renders the made-up effects to WAV files without the game, for listening:
 
-     doom-sfx-render <iwad> [-kind name|impacts|ambient|walk|all] [-room dry|room|hall|stone|all]
+     doom-sfx-render <iwad> [-kind name|impacts|ambient|walk|hidden|all] [-room dry|room|hall|stone|all]
                      [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-out dir]
    With no -rate, use each effect's native game-bank rate.
 
@@ -23,7 +23,14 @@
    six walking, ten running and a landing, as the game layers them, with
    the kit -armor (0 none, 1 green, 2 blue) and -heft (0 fist or pistol,
    1 a slung gun, 2 rockets or BFG) say. -ring scales how much the kit's
-   metal rings (0 leaves the noise alone). */
+   metal rings (0 leaves the noise alone).
+
+   -kind hidden renders the sounds inside a base's walls (pipe-rush,
+   steam, ... of audio/hidden_synth.h), three variations each after
+   one pistol shot: dry is the sound itself, close; the rooms hear it from
+   behind a wall, muffled and quiet, off to one side. hidden-scene is a
+   minute of them, now and then, over the room tone, as the base around the
+   player might sound. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +38,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "audio/ambient_synth.h"
+#include "audio/hidden_synth.h"
 #include "audio/impact_synth.h"
 #include "audio/resample.h"
 #include "audio/reverb.h"
@@ -171,10 +179,12 @@ static void finish (float *stereo, float *send, long frames, int room, const cha
     if (room)
     {
 	room_t preset = room_preset (room);
-	Reverb_Init (RATE);
-	Reverb_SetRoom (&preset);
+	reverb_t *reverb = Reverb_New (RATE);
+	if (!reverb) fail ("Out of memory%s", "");
+	Reverb_SetRoom (reverb, &preset);
 	for (long n = 0; n < frames; n += 512)
-	    Reverb_Process (send + n, stereo + 2 * n, (int)(frames - n < 512 ? frames - n : 512), 1);
+	    Reverb_Process (reverb, send + n, stereo + 2 * n, (int)(frames - n < 512 ? frames - n : 512), 1);
+	Reverb_Free (reverb);
     }
     /* The mixer's limiter. */
     float gain = 1, release = 1 - expf (-1.0f / (LIMIT_RELEASE_SECONDS * RATE)), peak = 0;
@@ -323,6 +333,109 @@ static void render_walk (const sample_t *pistol, int floor, int armor, int heft,
     finish (stereo, send, frames, room, name, out);
 }
 
+#define BEHIND_LEVEL 0.3f	/* a sound behind a wall, of a point-blank shot */
+#define BEHIND_HZ 900.0f	/* the mixer's muffling for a sound through a wall nearby */
+#define SCENE_SECONDS 60
+
+/* A sound behind a wall, as the mixer plays it: DMX's panning (separation
+   1-254) and two one-pole lowpasses at cutoff Hz. */
+static void mix_behind (const voice_t *v, int separation, float cutoff, float *stereo, float *send, long frames)
+{
+    double step = v->sample.rate / (double)RATE;
+    float keep = expf (-2 * 3.14159265f * cutoff / RATE), low[2] = { 0, 0 };
+    float left = fminf (1, (254 - separation) / 127.0f), right = fminf (1, separation / 127.0f);
+    for (long n = v->start < 0 ? 0 : v->start; n < frames && n < v->stop; ++n)
+    {
+	double position = (n - v->start) * step;
+	if (position >= v->sample.length) break;
+	float value = Resample_At (v->sample.data, v->sample.length, position, RESAMPLE_ORIGINAL);
+	low[0] = value + (low[0] - value) * keep;
+	low[1] = low[0] + (low[1] - low[0]) * keep;
+	stereo[2 * n] += low[1] * v->dry * left;
+	stereo[2 * n + 1] += low[1] * v->dry * right;
+	send[n] += low[1] * v->send;
+    }
+}
+
+static unsigned char *render_hidden_8bit (int kind, unsigned seed, int rate, int *length)
+{
+    *length = Hidden_Length (kind, rate);
+    float *buffer = calloc ((size_t)*length, sizeof(float));
+    if (!buffer) fail ("Out of memory%s", "");
+    Hidden_Render (kind, seed, rate, buffer, *length);
+    return to_8bit (buffer, *length);
+}
+
+/* Three variations of a hidden kind after one shot: room 0 close and dry,
+   else behind a wall off to the left in that room. level < 0 is the default. */
+static void render_hidden (const sample_t *pistol, int kind, int room, int rate, float level, const char *out)
+{
+    float each = Hidden_Length (kind, rate) / (float)rate + 0.5f;
+    long frames = (long)((1.2f + SHOTS * each) * RATE);
+    float *stereo = calloc ((size_t)frames * 2, sizeof(float)), *send = calloc ((size_t)frames, sizeof(float));
+    if (!stereo || !send) fail ("Out of memory%s", "");
+    voice_t gun = { *pistol, (long)(0.2f * RATE), frames, SFX_GAIN, SFX_GAIN };
+    if (gun_on) mix (&gun, stereo, send, frames);
+    float l = level >= 0 ? level : room ? BEHIND_LEVEL : 0.6f;
+    for (int s = 0; s < SHOTS; ++s)
+    {
+	int length;
+	unsigned char *data = render_hidden_8bit (kind, 977u * (unsigned)s + 13u, rate, &length);
+	voice_t v = { { data, length, rate }, (long)((1.2f + s * each) * RATE), frames, SFX_GAIN * l, SFX_GAIN * sqrtf (l) };
+	if (room) mix_behind (&v, 60, BEHIND_HZ, stereo, send, frames);
+	else mix (&v, stereo, send, frames);
+	free (data);
+    }
+    char name[64];
+    snprintf (name, sizeof(name), "hidden-%s", Hidden_Name (kind));
+    finish (stereo, send, frames, room, name, out);
+}
+
+static float scene_unit (unsigned *state)
+{
+    *state = *state * 1103515245u + 12345u;
+    return (*state >> 8 & 0xffff) / 65536.0f;
+}
+
+/* A minute of the base behind the walls over the room tone, a shot at half
+   time: the kinds come up now and then, from either side, through walls
+   near and far. */
+static void render_hidden_scene (const sample_t *pistol, int room, int rate, float level, const char *out)
+{
+    long frames = (long)SCENE_SECONDS * RATE;
+    int length = SCENE_SECONDS * rate;
+    float *stereo = calloc ((size_t)frames * 2, sizeof(float)), *send = calloc ((size_t)frames, sizeof(float));
+    float *tone = calloc ((size_t)length, sizeof(float));
+    if (!stereo || !send || !tone) fail ("Out of memory%s", "");
+    Ambient_Render (AMBIENT_ROOM, 11, rate, tone, length, NULL, SCENE_SECONDS * TIC_RATE);
+    unsigned char *bed_data = to_8bit (tone, length);
+    float bed_level = HUM_LEVEL * Ambient_Level (AMBIENT_ROOM);
+    voice_t bed = { { bed_data, length, rate }, 0, frames, SFX_GAIN * bed_level, SFX_GAIN * sqrtf (bed_level) };
+    mix (&bed, stereo, send, frames);
+    voice_t gun = { *pistol, (long)(SCENE_SECONDS / 2 * RATE), frames, SFX_GAIN, SFX_GAIN };
+    if (gun_on) mix (&gun, stereo, send, frames);
+    /* How often each kind comes up: drips and settling most, the press seldom. */
+    static const int weight[HIDDEN_KINDS] = { 2, 1, 2, 4, 1, 4 };
+    int total = 0;
+    for (int k = 0; k < HIDDEN_KINDS; ++k) total += weight[k];
+    unsigned state = 2024;
+    for (float t = 1.5f; t < SCENE_SECONDS - 2; t += 1.5f - 4 * logf (fmaxf (scene_unit (&state), 1e-4f)))
+    {
+	int roll = (int)(scene_unit (&state) * total), kind = 0;
+	while (roll >= weight[kind]) roll -= weight[kind++];
+	int structural = kind == HIDDEN_PRESS || kind == HIDDEN_DUCT, data_length;
+	float cutoff = structural ? 350 + 350 * scene_unit (&state) : 600 + 800 * scene_unit (&state);
+	float l = (level >= 0 ? level : BEHIND_LEVEL) * (0.5f + 0.5f * scene_unit (&state));
+	int separation = 40 + (int)(176 * scene_unit (&state));
+	unsigned char *data = render_hidden_8bit (kind, state, rate, &data_length);
+	voice_t v = { { data, data_length, rate }, (long)(t * RATE), frames, SFX_GAIN * l, SFX_GAIN * sqrtf (l) };
+	mix_behind (&v, separation, cutoff, stereo, send, frames);
+	free (data);
+    }
+    finish (stereo, send, frames, room, "hidden-scene", out);
+    free (bed_data);
+}
+
 int main (int argc, char **argv)
 {
     const char *kind = "all", *room = "all", *out = ".";
@@ -330,7 +443,7 @@ int main (int argc, char **argv)
     float level = -1;
     if (argc < 2)
     {
-	fprintf (stderr, "usage: %s <iwad> [-kind name|pistol|impacts|ambient|walk|all] [-room dry|room|hall|stone|all] [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-out dir]\nWithout -rate, use each effect's native game-bank rate.\n", argv[0]);
+	fprintf (stderr, "usage: %s <iwad> [-kind name|pistol|impacts|ambient|walk|hidden|all] [-room dry|room|hall|stone|all] [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-out dir]\nWithout -rate, use each effect's native game-bank rate.\n", argv[0]);
 	return 2;
     }
     for (int i = 2; i + 1 < argc; i += 2)
@@ -382,6 +495,20 @@ int main (int argc, char **argv)
 	for (int r = 0; r < 4; ++r)
 	    if (!strcmp (room, "all") || !strcmp (room, rooms[r]))
 		render_walk (&pistol, floor, armor, heft, r, rate ? rate : 11025, out), found = 1;
+    }
+    for (int k = 0; k <= HIDDEN_KINDS; ++k)
+    {
+	const char *name = k < HIDDEN_KINDS ? Hidden_Name (k) : "scene";
+	char full[64];
+	snprintf (full, sizeof(full), "hidden-%s", name);
+	if (!all && strcmp (kind, "hidden") && strcmp (kind, name) && strcmp (kind, full)) continue;
+	for (int r = 0; r < 4; ++r)
+	{
+	    if (strcmp (room, "all") && strcmp (room, rooms[r])) continue;
+	    if (k < HIDDEN_KINDS) render_hidden (&pistol, k, r, rate ? rate : 11025, level, out);
+	    else render_hidden_scene (&pistol, r, rate ? rate : 11025, level, out);
+	    found = 1;
+	}
     }
     if (!found) fail ("No kind or room called %s", kind);
     return 0;

@@ -14,6 +14,7 @@
  * Room changes crossfade the echoes and glide the tail, so walking through a
  * door never clicks or warbles. */
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include "reverb.h"
 
@@ -50,50 +51,61 @@ typedef struct { int delay, copies; float left[COPIES], right[COPIES], keep; } e
 typedef struct { echo_t from, to, next; int fading, queued; float fade, low_from[2], low_to[2]; } tap_t;
 typedef struct { float *buffer; int length, at; } allpass_t;
 
-static int rate = 44100;
-static float history[HISTORY]; static unsigned written;
-static tap_t taps[ROOM_TAPS];
-static int smear_offset[ROOM_TAPS][COPIES];
-static float lines[LINES][LINE_MAX], line_lowpass[LINES]; static int line_length[LINES], line_at[LINES];
-static float diffuser_memory[DIFFUSERS][DIFFUSER_MAX], spray_memory[LINES][SPRAY_MAX];
-static allpass_t diffusers[DIFFUSERS], sprays[LINES];
-static float send_lowpass, decay = 0.2f, damping, late, scatter,
-    target_decay = 0.2f, target_damping, target_late, target_scatter;
+struct reverb_s {
+    int rate;
+    float history[HISTORY]; unsigned written;
+    tap_t taps[ROOM_TAPS];
+    int smear_offset[ROOM_TAPS][COPIES];
+    float lines[LINES][LINE_MAX], line_lowpass[LINES]; int line_length[LINES], line_at[LINES];
+    float diffuser_memory[DIFFUSERS][DIFFUSER_MAX], spray_memory[LINES][SPRAY_MAX];
+    allpass_t diffusers[DIFFUSERS], sprays[LINES];
+    float send_lowpass, decay, damping, late, scatter, target_decay, target_damping, target_late, target_scatter;
+};
 
-static int samples(float ms, int most)
+
+static int samples(const reverb_t *r, float ms, int most)
 {
-    int n = (int)(ms * 0.001f * rate);
+    int n = (int)(ms * 0.001f * r->rate);
     return n < 1 ? 1 : n >= most ? most - 1 : n;
 }
-void Reverb_Init(int output_rate)
+reverb_t *Reverb_New(int rate)
 {
-    rate = output_rate;
+    reverb_t *r = calloc(1, sizeof(*r));
+    if (!r) return NULL;
+    r->rate = rate;
+    r->decay = r->target_decay = 0.2f;
     for (int i = 0; i < LINES; ++i)
     {
-        line_length[i] = samples(line_ms[i], LINE_MAX);
-        sprays[i] = (allpass_t){ spray_memory[i], samples(spray_ms[i], SPRAY_MAX), 0 };
+        r->line_length[i] = samples(r, line_ms[i], LINE_MAX);
+        r->sprays[i] = (allpass_t){ r->spray_memory[i], samples(r, spray_ms[i], SPRAY_MAX), 0 };
     }
-    for (int i = 0; i < DIFFUSERS; ++i) diffusers[i] = (allpass_t){ diffuser_memory[i], samples(diffuser_ms[i], DIFFUSER_MAX), 0 };
+    for (int i = 0; i < DIFFUSERS; ++i)
+        r->diffusers[i] = (allpass_t){ r->diffuser_memory[i], samples(r, diffuser_ms[i], DIFFUSER_MAX), 0 };
     /* Each wall smears a little differently, so the clusters don't line up. */
     for (int t = 0; t < ROOM_TAPS; ++t)
-        for (int s = 0; s < SMEARS; ++s) smear_offset[t][s + 1] = samples(smear_ms[s] * (1 + 0.13f * t), HISTORY);
-    Reverb_Clear();
+        for (int s = 0; s < SMEARS; ++s) r->smear_offset[t][s + 1] = samples(r, smear_ms[s] * (1 + 0.13f * t), HISTORY);
+    return r;
 }
-void Reverb_Clear(void)
+void Reverb_Free(reverb_t *r) { free(r); }
+void Reverb_Clear(reverb_t *r)
 {
-    memset(history, 0, sizeof(history));
-    memset(lines, 0, sizeof(lines)); memset(line_lowpass, 0, sizeof(line_lowpass));
-    memset(diffuser_memory, 0, sizeof(diffuser_memory)); memset(spray_memory, 0, sizeof(spray_memory));
-    for (int t = 0; t < ROOM_TAPS; ++t) taps[t].low_from[0] = taps[t].low_from[1] = taps[t].low_to[0] = taps[t].low_to[1] = 0;
-    send_lowpass = 0;
+    memset(r->history, 0, sizeof(r->history));
+    memset(r->lines, 0, sizeof(r->lines)); memset(r->line_lowpass, 0, sizeof(r->line_lowpass));
+    memset(r->diffuser_memory, 0, sizeof(r->diffuser_memory)); memset(r->spray_memory, 0, sizeof(r->spray_memory));
+    for (int t = 0; t < ROOM_TAPS; ++t)
+    {
+        tap_t *tap = &r->taps[t];
+        tap->low_from[0] = tap->low_from[1] = tap->low_to[0] = tap->low_to[1] = 0;
+    }
+    r->send_lowpass = 0;
 }
 
 static float clamp1(float x, float lo) { return x < lo ? lo : x > 1 ? 1 : x; }
-static float bounce_keep(float dark) { return expf(-2 * (float)M_PI * (7000 - 5500 * clamp1(dark, 0)) / rate); }
+static float bounce_keep(float dark, int rate) { return expf(-2 * (float)M_PI * (7000 - 5500 * clamp1(dark, 0)) / rate); }
 
 /* As rough as the wall is, the copy gives way to a smeared cluster of the
    same energy: the copy keeps sqrt(1 - s) of it, the cluster shares sqrt(s). */
-static echo_t echo(const room_t *room, int i)
+static echo_t echo(const room_t *room, int i, int rate)
 {
     echo_t e = {0};
     e.delay = (int)(room->delay[i] * rate);
@@ -111,15 +123,15 @@ static echo_t echo(const room_t *room, int i)
         float p = k ? clamp1(pan + s * smear_pan[k - 1], -1) : pan, g = room->gain[i] * gain[k] / sqrtf(energy);
         e.left[k] = g * sqrtf(0.5f * (1 - p)); e.right[k] = g * sqrtf(0.5f * (1 + p));
     }
-    e.keep = bounce_keep(room->dark[i]);
+    e.keep = bounce_keep(room->dark[i], rate);
     return e;
 }
-void Reverb_SetRoom(const room_t *room)
+void Reverb_SetRoom(reverb_t *r, const room_t *room)
 {
     for (int i = 0; i < ROOM_TAPS; ++i)
     {
-        tap_t *tap = &taps[i];
-        echo_t target = echo(room, i);
+        tap_t *tap = &r->taps[i];
+        echo_t target = echo(room, i, r->rate);
         if (tap->fading) { tap->next = target; tap->queued = 1; }
         else
         {
@@ -127,22 +139,22 @@ void Reverb_SetRoom(const room_t *room)
             tap->low_to[0] = tap->low_from[0]; tap->low_to[1] = tap->low_from[1];
         }
     }
-    target_decay = room->decay; target_damping = room->damping; target_late = room->late;
-    target_scatter = room->scatter < 0 ? 0 : room->scatter > 1 ? 1 : room->scatter;
+    r->target_decay = room->decay; r->target_damping = room->damping; r->target_late = room->late;
+    r->target_scatter = room->scatter < 0 ? 0 : room->scatter > 1 ? 1 : room->scatter;
 }
 
-static float read_history(int delay) { return history[(written - (unsigned)delay) & (HISTORY - 1)]; }
+static float read_history(const reverb_t *r, int delay) { return r->history[(r->written - (unsigned)delay) & (HISTORY - 1)]; }
 
 /* One wall's echo into left and right, through its walls' lowpass. */
-static void hear(const echo_t *e, int t, float *low, float *left, float *right)
+static void hear(const reverb_t *r, const echo_t *e, int t, float *low, float *left, float *right)
 {
-    float l = 0, r = 0;
+    float l = 0, rr = 0;
     for (int k = 0; k < e->copies; ++k)
     {
-        float v = read_history(e->delay + smear_offset[t][k]);
-        l += e->left[k] * v; r += e->right[k] * v;
+        float v = read_history(r, e->delay + r->smear_offset[t][k]);
+        l += e->left[k] * v; rr += e->right[k] * v;
     }
-    low[0] = l + (low[0] - l) * e->keep; low[1] = r + (low[1] - r) * e->keep;
+    low[0] = l + (low[0] - l) * e->keep; low[1] = rr + (low[1] - rr) * e->keep;
     *left = low[0]; *right = low[1];
 }
 
@@ -154,39 +166,40 @@ static float pass(allpass_t *a, float x, float g)
     return held + g * into;
 }
 
-void Reverb_Process(const float *send, float *stereo, int frames, float amount)
+void Reverb_Process(reverb_t *r, const float *send, float *stereo, int frames, float amount)
 {
+    int rate = r->rate;
     float glide = 1 - expf(-frames / (GLIDE_SECONDS * rate));
-    decay += (target_decay - decay) * glide;
-    damping += (target_damping - damping) * glide;
-    late += (target_late - late) * glide;
-    scatter += (target_scatter - scatter) * glide;
+    r->decay += (r->target_decay - r->decay) * glide;
+    r->damping += (r->target_damping - r->damping) * glide;
+    r->late += (r->target_late - r->late) * glide;
+    r->scatter += (r->target_scatter - r->scatter) * glide;
     /* A line's loop runs through its allpass too: count that in its decay. */
     float gain[LINES];
-    for (int j = 0; j < LINES; ++j) gain[j] = powf(10, -3 * (line_length[j] + sprays[j].length) / (decay * rate));
+    for (int j = 0; j < LINES; ++j) gain[j] = powf(10, -3 * (r->line_length[j] + r->sprays[j].length) / (r->decay * rate));
     /* Even the smoothest room scatters a little. */
-    float diffuse = 0.2f + 0.8f * scatter, spray = SPRAY_GAIN * scatter;
+    float diffuse = 0.2f + 0.8f * r->scatter, spray = SPRAY_GAIN * r->scatter;
     /* Each bounce keeps less treble in dark rooms: 7 kHz for metal, 1.5 kHz for wood. */
-    float cutoff = 7000 - 5500 * damping;
+    float cutoff = 7000 - 5500 * r->damping;
     float keep = expf(-2 * (float)M_PI * cutoff / rate);
     /* The send loses its upsampling hiss before it echoes. */
     float input_keep = expf(-2 * (float)M_PI * 5000 / rate);
     float fade_step = 1 / (FADE_SECONDS * rate);
-    float tail_level = late * 1.1f;
+    float tail_level = r->late * 1.1f;
 
     for (int i = 0; i < frames; ++i)
     {
-        send_lowpass = send[i] + (send_lowpass - send[i]) * input_keep;
-        history[written & (HISTORY - 1)] = send_lowpass;
+        r->send_lowpass = send[i] + (r->send_lowpass - send[i]) * input_keep;
+        r->history[r->written & (HISTORY - 1)] = r->send_lowpass;
 
         float early_left = 0, early_right = 0;
         for (int t = 0; t < ROOM_TAPS; ++t)
         {
-            tap_t *tap = &taps[t];
+            tap_t *tap = &r->taps[t];
             float old_left, old_right, now_left, now_right;
-            hear(&tap->from, t, tap->low_from, &old_left, &old_right);
+            hear(r, &tap->from, t, tap->low_from, &old_left, &old_right);
             if (!tap->fading) { early_left += old_left; early_right += old_right; continue; }
-            hear(&tap->to, t, tap->low_to, &now_left, &now_right);
+            hear(r, &tap->to, t, tap->low_to, &now_left, &now_right);
             float f = tap->fade;
             early_left += old_left * (1 - f) + now_left * f;
             early_right += old_right * (1 - f) + now_right * f;
@@ -200,25 +213,25 @@ void Reverb_Process(const float *send, float *stereo, int frames, float amount)
         }
 
         /* The tail grows from the echoes, plus a little of the sound itself. */
-        float input = 0.3f * (early_left + early_right) + 0.12f * send_lowpass;
-        for (int d = 0; d < DIFFUSERS; ++d) input = pass(&diffusers[d], input, diffuser_gain[d] * diffuse);
+        float input = 0.3f * (early_left + early_right) + 0.12f * r->send_lowpass;
+        for (int d = 0; d < DIFFUSERS; ++d) input = pass(&r->diffusers[d], input, diffuser_gain[d] * diffuse);
         float out[LINES], sum = 0, tail_left = 0, tail_right = 0;
         for (int j = 0; j < LINES; ++j)
         {
-            float value = pass(&sprays[j], lines[j][line_at[j]], spray);
-            line_lowpass[j] = value + (line_lowpass[j] - value) * keep + 1e-18f - 1e-18f;
-            out[j] = line_lowpass[j] * gain[j];
+            float value = pass(&r->sprays[j], r->lines[j][r->line_at[j]], spray);
+            r->line_lowpass[j] = value + (r->line_lowpass[j] - value) * keep + 1e-18f - 1e-18f;
+            out[j] = r->line_lowpass[j] * gain[j];
             sum += out[j];
-            if (j & 1) tail_right += (j & 2 ? -1 : 1) * line_lowpass[j];
-            else tail_left += (j & 2 ? -1 : 1) * line_lowpass[j];
+            if (j & 1) tail_right += (j & 2 ? -1 : 1) * r->line_lowpass[j];
+            else tail_left += (j & 2 ? -1 : 1) * r->line_lowpass[j];
         }
         sum *= 2.0f / LINES;
         for (int j = 0; j < LINES; ++j)
         {
-            lines[j][line_at[j]] = out[j] - sum + input;
-            if (++line_at[j] >= line_length[j]) line_at[j] = 0;
+            r->lines[j][r->line_at[j]] = out[j] - sum + input;
+            if (++r->line_at[j] >= r->line_length[j]) r->line_at[j] = 0;
         }
-        ++written;
+        ++r->written;
         stereo[2 * i] += amount * (early_left + tail_level * tail_left);
         stereo[2 * i + 1] += amount * (early_right + tail_level * tail_right);
     }

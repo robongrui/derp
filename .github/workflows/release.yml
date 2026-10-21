@@ -73,8 +73,9 @@ jobs:
           -DDOOM_RELEASE_VERSION="$DOOM_RELEASE_VERSION" -DDOOM_GAME_DATA="$FREEDOOM_WAD"
           ${{ matrix.configure }}
 
+      # derp-heretic too: the launcher hands Heretic WADs to it, beside the game.
       - name: Build
-        run: cmake --build build/release --config Release --parallel 4 --target doom
+        run: cmake --build build/release --config Release --parallel 4 --target doom derp-heretic
 
       - name: Package Windows or Linux
         if: matrix.platform != 'mac'
@@ -118,6 +119,8 @@ jobs:
             rm "$RUNNER_TEMP/certificate.p12"
             security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
             security list-keychains -d user -s "$keychain" login.keychain
+            codesign --force --options runtime --timestamp --sign "Developer ID Application" \
+              "$app/Contents/MacOS/derp-heretic"
             codesign --force --options runtime --timestamp --sign "Developer ID Application" "$app"
             ditto -c -k --keepParent "$app" notarize.zip
             result=$(xcrun notarytool submit notarize.zip --apple-id "$APPLE_ID" \

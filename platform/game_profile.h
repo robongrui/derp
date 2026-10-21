@@ -79,7 +79,8 @@ typedef enum {
     GAME_EFFECT_FLASHLIGHT,       /* the F key's flashlight */
     GAME_EFFECT_WIND,             /* made-up wind under the sky and through openings */
     GAME_EFFECT_NATURAL_FALLOFF,  /* sounds fading with distance as in air, in place of the game's own curve */
-    GAME_EFFECT_FREE_AIM          /* mouselook bullets going where the view points (else the game's own aiming) */
+    GAME_EFFECT_FREE_AIM,         /* mouselook bullets going where the view points (else the game's own aiming) */
+    GAME_EFFECT_AUTHORED_EPISODES /* hand-picked looks for the game's own episodes (Game_Mood) */
 } game_effect;
 int Game_HasEffect(game_effect effect);
 
@@ -94,6 +95,30 @@ int Game_HasEffect(game_effect effect);
    sky's horizon colour with distance (0 none, 1 strong). */
 typedef struct { int fromSky; float shade, gain, skyCast, haze; } game_sun;
 void Game_Sun(game_sun *sun);
+
+/* Authored episodes (games/<game>/authored.c): looks hand-picked for the
+   game's own maps, beyond what the WAD data gives, so episodes can differ in
+   mood. Not DERP's derived look: F4 "Authored episodes" switches the whole
+   layer off, and maps a custom WAD brings never get it. Game_Mood fills in
+   mood for one of the game's own maps and leaves it alone for one it has
+   nothing for (it starts as { 1, 1, 0, 0, -1, 1, { 1, 1, 1 } }).
+   outdoor: what the light under the sky keeps (1 as mapped); sun: 0 hides
+   the sun (no sunlight, disc or sunbeams); shineOut: window light turns
+   round, the lit rooms shining out through their openings into the dark
+   outdoors instead of the outdoors lighting the rooms; rain: it pours under
+   the sky (F4 Rain); rainAngle: the way the wind blows the rain, in degrees
+   as map angles go (0 east, 90 north), whatever the sun does; below 0 the
+   level picks its own; rainAmount: how hard (1 a downpour, 0.5 half as
+   many drops); skyTint: what the sky and the haze under it are drawn
+   in (1, 1, 1 as painted). */
+typedef struct { float outdoor; int sun, shineOut, rain; float rainAngle, rainAmount, skyTint[3]; } game_mood;
+void Game_Mood(int episode, int map, game_mood *mood);
+
+/* Also authored: windows one of the game's own maps has broken before the
+   player comes, each the window nearest a spot (x, y). Fills at most max
+   spots, returns how many. */
+typedef struct { float x, y; } game_spot;
+int Game_BrokenWindows(int episode, int map, game_spot *spots, int max);
 
 /* How clearly water mirrors the room, 0 to 1: 0 is murky (DOOM: stained in
    the water's hue, only bright things punch through), 1 a clear pool that

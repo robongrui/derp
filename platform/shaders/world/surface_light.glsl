@@ -19,7 +19,7 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
     float staticShare=useBake&&c.bake.z>0.0?direction.b:0.0;
     bool staticDetail=staticShare>0.05&&dot(staticLight,vec3(0.299,0.587,0.114))>0.02;
     // Ice floors (frameMean.a 1, iceFlat) always show their grooves.
-    uint material=uint(round(frameMean.a));
+    uint material=uint(round(frameMean.a))&15u;
     bool ice=material==1u&&!blood&&!glassy;
     bool detail=(uint(c.flashlightTint.w)&FEATURE_SURFACE_DETAIL)!=0u&&(any(notEqual(mask,uvec2(0)))||staticDetail||ice);
     // Glass is smooth: its bulge replaces the artwork's bump detail,
@@ -45,6 +45,9 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
             shininess=ramp*exp2(1.0-2.0*busy);
             gloss*=(shininess+2.0)/26.0*(1.0-0.25*busy);
         }
+        // Worn plates (plateWear) have lost their polish: a broad, dim
+        // sheen on the bare metal, none where grime sits.
+        if(plateWear>=0.0) {shininess*=0.5;gloss*=0.4*(1.0-plateWear);}
     }
     vec3 view=normalize(c.eye.xyz-vWorld);
     // Wet blood glints only under dynamic lights, in a brighter palette

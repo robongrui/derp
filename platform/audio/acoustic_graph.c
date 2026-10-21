@@ -280,6 +280,10 @@ void Acoustic_Glass(int line, int whole)
         follow_dirty = 1;
     }
 }
+int Acoustic_GlassWhole(int line)
+{
+    return glass_shown && glass && glass_serial == r_levelserial && line >= 0 && line < glass_lines && glass[line] == 1;
+}
 void Acoustic_ShowGlass(int shown)
 {
     if (glass_shown == (shown != 0)) return;

@@ -87,7 +87,8 @@ static const DeathArt &deathArt(int first,const mobjinfo_t &info) {
     return art;
 }
 void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,float high,bool gib,const mobj_t *attack,float hitZ,float hitU) {
-    // A rigged monster falls procedurally instead (death_falls.cpp).
+    // A rigged monster falls as a ragdoll (ragdoll.cpp) or procedurally (death_falls.cpp) instead.
+    if(!gib&&settings.deathRagdoll&&startRagdoll(thing,dx,dy,speed,side,high,hitZ,hitU))return;
     if(!gib&&startFall(thing,speed,high,side,hitZ,hitU))return;
     const mobjinfo_t &info=*thing.info;
     int first=gib?info.xdeathstate:info.deathstate;
@@ -165,10 +166,11 @@ void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,flo
     }
     deaths[&thing]=d;
 }
-void forgetDeath(const mobj_t *thing) {deaths.erase(thing);forgetFall(thing);}
-void deathsShutdown() {deaths.clear();arts.clear();attackPace.clear();attackTic=-1;fallsShutdown();}
+void forgetDeath(const mobj_t *thing) {deaths.erase(thing);forgetFall(thing);forgetRagdoll(thing);}
+void deathsShutdown() {deaths.clear();arts.clear();attackPace.clear();attackTic=-1;fallsShutdown();ragdollsShutdown();}
 
 bool deathView(const mobj_t &thing,float fraction,DeathView &view) {
+    if(ragdollView(thing,view))return true;
     if(fallView(thing,fraction,view))return true;
     auto found=deaths.find(&thing);
     if(found==deaths.end()||thing.health>0||!(thing.flags&MF_CORPSE)||!thing.state)return false;

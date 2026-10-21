@@ -1,8 +1,10 @@
 /* Window glass: windows found in the map's geometry get a pane of glass
-   (glass.frag), which shatters into falling shards the first time a shot,
-   projectile or blast goes through it. Render-only: the engine never sees
+   (glass.frag). Two bullets chip and crack it; the third starts a fracture
+   spreading across its plane from the impact. Projectiles and blasts break
+   it outright. Render-only: the engine never sees
    the glass, shots and sight pass as in vanilla, and every level starts
-   with whole panes. */
+   with whole panes, but for a window an authored map has broken already
+   (Game_BrokenWindows). */
 #include "internal.h"
 #include "../glass_fracture.h"
 extern "C" {
@@ -23,16 +25,24 @@ unsigned glassProbeSerial=0,settingsSerial=0;
 // the outer and inner side (-1: none). The pane stands halfway through the
 // frame, in the middle of the sill: (ax,ay)-(bx,by) is the line moved inward
 // by shift.
-struct GlassPane { int line,frame,outer,inner; float ax,ay,bx,by; uint32_t seed; bool broken=false; int probe[2]={-1,-1}; float shift=0; };
+struct GlassPane {
+    int line,frame,outer,inner; float ax,ay,bx,by; uint32_t seed;
+    bool broken=false; int probe[2]={-1,-1}; float shift=0;
+    int hits=0,fractureAt=0,fractureEnd=-1;
+    std::array<doom_glass::Point,2> holes={};
+    doom_glass::Point impact={};
+};
 // Actual pieces of the pane, in local coordinates about their center. Their
 // yaw, tilt and in-plane roll tumble independently, interpolated between tics.
 struct Shard {
     float x,y,z,px,py,pz,vx,vy,vz;
     doom_glass::Raster pixels;
+    std::vector<doom_glass::Point> outline;
+    doom_glass::Point center;
     std::array<float,3> angle,previous,spin;
-    int pane,die;
+    int pane,release,die;
     uint32_t seed;
-    bool landed=false;
+    bool landed=false,impactPiece=false;
 };
 struct ShardAxes { std::array<float,3> u,v,normal; };
 static ShardAxes shardAxes(const std::array<float,3> &a) {
@@ -61,6 +71,8 @@ static std::unordered_map<int,std::vector<int>> nearLines;
 static std::vector<Shard> shards;
 static std::unordered_map<const mobj_t*,MissileWatch> missileWatch;
 static unsigned glassLevelSerial=~0u;
+// Map units per tic along the glass, deliberately visible over several frames.
+static constexpr float fractureSpeed=12;
 
 static float rawFloor(const sector_t *s) {return units(s->floorheight);}
 static float rawCeiling(const sector_t *s) {return units(s->ceilingheight);}
@@ -193,7 +205,22 @@ static void findWindows() {
             if(std::hypot(ax+ex*t-cx,ay+ey*t-cy)<256)list.push_back(i);
         }
     }
-    fprintf(stderr,"3D glass: %zu window panes.\n",panes.size());
+    // The windows the authored map broke before the player came: the
+    // window nearest each spot, within 128 units, every pane of it.
+    int broken=0;
+    if(settings.authored&&!panes.empty()) {
+        game_spot spots[16];
+        int count=Game_BrokenWindows(gameepisode,gamemap,spots,16);
+        for(int i=0;i<count;++i) {
+            int frame=-1;float nearest=128;
+            for(const GlassPane &p:panes) {
+                float d=std::hypot((p.ax+p.bx)/2-spots[i].x,(p.ay+p.by)/2-spots[i].y);
+                if(d<nearest) {nearest=d;frame=p.frame;}
+            }
+            for(GlassPane &p:panes)if(p.frame==frame&&!p.broken) {p.broken=true;++broken;}
+        }
+    }
+    fprintf(stderr,"3D glass: %zu window panes%s.\n",panes.size(),broken?", some broken already":"");
 }
 // Inside the frame the opening runs from its sill to its lintel.
 static void paneHeights(const GlassPane &p,float &bottom,float &top) {
@@ -203,7 +230,7 @@ static void paneHeights(const GlassPane &p,float &bottom,float &top) {
 // Breaks every pane of a window. Shards scatter from all over the glass:
 // fast along the shot near where it went through, slower further away, a few
 // back toward the shooter; they fall, bounce once and lie glinting a while.
-static void shatter(int frame,float hx,float hy,float hz,float dx,float dy) {
+static void shatter(int frame,float hx,float hy,float hz,float dx,float dy,bool spreading=false) {
     float length=std::hypot(dx,dy),area=0;
     if(length>1e-4f) {dx/=length;dy/=length;}
     for(GlassPane &p:panes) {
@@ -218,6 +245,7 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy) {
         // A blast in the glass's own plane pushes straight through it.
         if(length<=1e-4f) {dx=ey;dy=-ex;}
         float hitAlong=(hx-p.ax)*ex+(hy-p.ay)*ey;
+        p.impact={hitAlong,hz-bottom};p.fractureAt=leveltime;
         auto fragments=doom_glass::fracture(len,top-bottom,hitAlong,hz-bottom,p.seed);
         size_t count=fragments.size();
         if(shards.size()+count>600)shards.erase(shards.begin(),shards.begin()+std::min(shards.size(),shards.size()+count-600));
@@ -235,7 +263,19 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy) {
             s.angle={std::atan2(ey,ex),0,0};s.previous=s.angle;
             s.spin={randomRange(-0.10f,0.10f),randomRange(-0.22f,0.22f),randomRange(-0.14f,0.14f)};
             s.pixels=doom_glass::raster(piece.points);
-            s.pane=int(&p-panes.data());s.die=leveltime+(int)randomRange(14*TICRATE,24*TICRATE);s.seed=(uint32_t)impactRandom();
+            s.center=piece.center;s.outline=std::move(piece.points);
+            // A piece stays in the pane until the crack has reached all its
+            // corners. Pieces near the final hit release before distant ones.
+            float reach=0;
+            for(const auto &v:s.outline)reach=std::max(reach,std::hypot(s.center.x+v.x-hitAlong,s.center.y+v.y-p.impact.y));
+            s.impactPiece=true;
+            for(size_t i=0;i<s.outline.size();++i) {
+                auto a=s.outline[i],b=s.outline[(i+1)%s.outline.size()];
+                if((b.x-a.x)*(p.impact.y-s.center.y-a.y)-(b.y-a.y)*(hitAlong-s.center.x-a.x)<-1e-4f)s.impactPiece=false;
+            }
+            s.release=leveltime+(spreading?(int)std::ceil(reach/fractureSpeed)+2:0);
+            p.fractureEnd=std::max(p.fractureEnd,s.release);
+            s.pane=int(&p-panes.data());s.die=s.release+(int)randomRange(14*TICRATE,24*TICRATE);s.seed=(uint32_t)impactRandom();
             shards.push_back(std::move(s));
         }
     }
@@ -247,7 +287,27 @@ void glassShot(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy)
     if(!line||!glassReady())return;
     int pane=paneOfLine[line-lines];
     if(pane<0||panes[pane].broken)return;
-    shatter(panes[pane].frame,units(x),units(y),units(z),units(dx),units(dy));
+    GlassPane &p=panes[pane];
+    float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey),length=std::hypot(units(dx),units(dy));
+    if(len<1||length<1e-4f)return;
+    ex/=len;ey/=len;
+    float rx=units(dx)/length,ry=units(dy)/length,hx=units(x),hy=units(y),hz=units(z);
+    // The hook is on the map line; the visible glass is halfway through
+    // the sill. Follow the shot to that plane, including its vertical slope.
+    float across=rx*ey-ry*ex;
+    if(std::abs(across)<1e-4f)return;
+    float travel=((p.ax-hx)*ey-(p.ay-hy)*ex)/across;
+    hx+=rx*travel;hy+=ry*travel;hz+=units(aimslope)*travel;
+    float bottom,top;paneHeights(p,bottom,top);
+    float along=(hx-p.ax)*ex+(hy-p.ay)*ey;
+    if(along<0||along>len||hz<bottom||hz>top)return;
+    int hits=0;
+    for(const GlassPane &other:panes)if(other.frame==p.frame)hits+=other.hits;
+    if(hits>=2)shatter(p.frame,hx,hy,hz,rx,ry,true);
+    else {
+        p.holes[p.hits++]={along,hz-bottom};
+        I_MadeSound(IMPACT_GLASS_TINKLE,hx,hy,hz);
+    }
 }
 // Explosions break windows within radius of the blast.
 void glassBlast(float x,float y,float z,float radius) {
@@ -277,6 +337,7 @@ static bool crosses(float ax,float ay,float bx,float by,const line_t &line,float
 static void stepShards() {
     for(Shard &s:shards) {
         s.px=s.x;s.py=s.y;s.pz=s.z;s.previous=s.angle;
+        if(leveltime<=s.release)continue;
         if(s.landed)continue;
         for(int i=0;i<3;++i) {s.angle[i]+=s.spin[i];s.spin[i]*=0.985f;}
         float nx=s.x+s.vx,ny=s.y+s.vy,nz=s.z+s.vz;
@@ -322,7 +383,7 @@ void watchGlass() {
         glassLevelSerial=r_levelserial;shards.clear();missileWatch.clear();
         findWindows();
         // Through the glass ambience comes muffled until it breaks.
-        for(const GlassPane &p:panes)I_AmbienceGlaze(p.line,1);
+        for(const GlassPane &p:panes)I_AmbienceGlaze(p.line,p.broken?0:1);
     }
     stepShards();
     if(panes.empty())return;
@@ -360,6 +421,9 @@ void watchGlass() {
 // Vertex: uv the texel on the pane, (sunU, sunV) its size, (red, green) the
 // face normal, blue 1 on a face out under the sky; statics the pane's seed,
 // top bit set once broken; lightMask[0] 1 on panes in the mirror's plane;
+// lightMask[1] 1 on panes out under the sky (rain on them), plus 2 where u
+// runs from the pane's far end; both words carry one bullet hole each in
+// bits 2..29 (14 bits per coordinate), with bit 30 marking a valid hole;
 // lampTint the captured probe on the eye's side plus one (0: none).
 // Glass reflections (settings.glassReflections): the pane the eye looks at
 // becomes the mirror the world is drawn again through (glassMirrorPlane:
@@ -379,7 +443,7 @@ static void chooseMirror(const Uniforms &camera) {
     const float *e=camera.eye,*f=camera.forward;
     float best=1e9f,kept=1e9f,bestPlane[4]={};
     for(const GlassPane &p:panes) {
-        if(p.broken)continue;
+        if(p.broken&&leveltime>p.fractureEnd)continue;
         float bottom,top;paneHeights(p,bottom,top);
         float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
         if(top-bottom<4||len<4)continue;
@@ -459,23 +523,97 @@ void buildGlass(const Uniforms &camera) {
         float light=camera.effects[2]!=0?1:lighting(lit);
         // u runs along (-ny, nx), so the shader knows the pane's direction.
         Point a={p.ax,p.ay},b={p.bx,p.by};
-        if((b.x-a.x)*-ny+(b.y-a.y)*nx<0)std::swap(a,b);
+        bool flipped=(b.x-a.x)*-ny+(b.y-a.y)*nx<0;
+        if(flipped)std::swap(a,b);
+        // Rain gathers on panes looking out under the sky, drawn the same
+        // from both sides: u from the pane's first end (flipped: from b).
+        unsigned rain=(skySector(&sectors[p.outer])?1u:0u)|(flipped?2u:0u);
         unsigned statics=(p.seed&0x7fffffffu)|(p.broken?0x80000000u:0u);
         bool mirror=glassMirrorActive&&nx*glassMirrorPlane[0]+ny*glassMirrorPlane[1]>0.999f&&std::abs(nx*p.ax+ny*p.ay-glassMirrorPlane[3])<1;
         int probe=p.probe[outside?0:1];
         unsigned probeId=probe>=0&&(size_t)probe<captured.size()&&captured[probe]?(unsigned)probe+1:0;
+        auto hole=[&](int index) {
+            if(index>=p.hits)return 0u;
+            unsigned u=(unsigned)std::clamp((int)std::floor(p.holes[index].x),0,16383);
+            unsigned v=(unsigned)std::clamp((int)std::floor(p.holes[index].y),0,16383);
+            return (1u<<30)|(u<<2)|(v<<16);
+        };
         auto vertex=[&](Point at,float u,float z) {
-            Vertex v={at.x,at.y,z,u,z-bottom,light,0};v.lightMask[0]=mirror?1u:0u;v.lampTint=probeId;
+            Vertex v={at.x,at.y,z,u,z-bottom,light,0};v.lightMask[0]=(mirror?1u:0u)|hole(0);v.lightMask[1]=rain|hole(1);v.lampTint=probeId;
             v.red=nx;v.green=ny;v.blue=outside&&skySector(&sectors[p.outer])?1.0f:0.0f;
-            v.sunU=len;v.sunV=top-bottom;v.statics=statics;return v;
+            v.sunU=len;v.sunV=top-bottom;v.statics=statics;
+            // Suppress the rim's fresh broken edge until the fracture has
+            // crossed the pane, so the whole perimeter cannot flash at once.
+            if(p.broken&&leveltime<=p.fractureEnd)v.mode=MODE_GLASS_HELD;
+            return v;
         };
         size_t first=glassVertices.size();
         quad(glassVertices,vertex(a,0,top),vertex(b,len,top),vertex(b,len,bottom),vertex(a,0,bottom));
+        // While the fracture travels through the pane, exact, stationary
+        // polygons retain its surface. They become tumbling pixel shards
+        // only after the front reaches them, leaving the original rim.
+        auto heldVertex=[&](doom_glass::Point at,unsigned mode) {
+            Point world={p.ax+(p.bx-p.ax)*at.x/len,p.ay+(p.by-p.ay)*at.x/len};
+            Vertex v=vertex(world,flipped?len-at.x:at.x,bottom+at.y);
+            v.mode=mode;v.statics=p.seed&0x7fffffffu;
+            return v;
+        };
+        for(const Shard &s:shards)if(s.pane==(int)(&p-panes.data())&&leveltime<=s.release) {
+            auto at=[&](const doom_glass::Point &v) {return doom_glass::Point{s.center.x+v.x,s.center.y+v.y};};
+            for(size_t i=1;i+1<s.outline.size();++i) {
+                glassVertices.push_back(heldVertex(at(s.outline[0]),MODE_GLASS_HELD));
+                glassVertices.push_back(heldVertex(at(s.outline[i]),MODE_GLASS_HELD));
+                glassVertices.push_back(heldVertex(at(s.outline[i+1]),MODE_GLASS_HELD));
+            }
+        }
+        // Reveal each polygon edge only as the front from the LAST hit
+        // reaches it. Clipping the segment, rather than dissolving a circle,
+        // makes cracks grow through the flat glass before pieces let go.
+        float radius=std::max(0.0f,leveltime-p.fractureAt-1+renderFraction)*fractureSpeed;
+        auto crackEdge=[&](doom_glass::Point c,doom_glass::Point d) {
+            float dx=d.x-c.x,dy=d.y-c.y,aa=dx*dx+dy*dy;
+            float ox=c.x-p.impact.x,oy=c.y-p.impact.y,bb=ox*dx+oy*dy;
+            float disc=bb*bb-aa*(ox*ox+oy*oy-radius*radius);
+            if(aa<1e-6f||disc<=0)return;
+            float start=std::max(0.0f,(-bb-std::sqrt(disc))/aa),stop=std::min(1.0f,(-bb+std::sqrt(disc))/aa);
+            if(stop<=start)return;
+            d={c.x+dx*stop,c.y+dy*stop};c={c.x+dx*start,c.y+dy*start};
+            // Whole texels, merging horizontal runs: the fracture's edges
+            // have the same pixel steps as the first two bullet cracks.
+            int steps=std::max(1,(int)std::ceil(std::max(std::abs(d.x-c.x),std::abs(d.y-c.y))));
+            int row=INT_MIN,left=0,right=0;
+            auto run=[&]() {
+                if(row==INT_MIN)return;
+                auto strip=[&](int x,int y,unsigned mode) {
+                    quad(glassVertices,heldVertex({(float)(left+x),(float)(row+y)},mode),heldVertex({(float)(right+1+x),(float)(row+y)},mode),
+                        heldVertex({(float)(right+1+x),(float)(row+1+y)},mode),heldVertex({(float)(left+x),(float)(row+1+y)},mode));
+                };
+                strip(1,-1,MODE_GLASS_CRACK|MODE_GLASS_DARK);strip(0,0,MODE_GLASS_CRACK);
+            };
+            for(int i=0;i<=steps;++i) {
+                float t=i/(float)steps;
+                int x=(int)std::floor(c.x+(d.x-c.x)*t),y=(int)std::floor(c.y+(d.y-c.y)*t);
+                if(y!=row) {run();row=y;left=right=x;}
+                else {left=std::min(left,x);right=std::max(right,x);}
+            }
+            run();
+        };
+        for(const Shard &s:shards)if(s.pane==(int)(&p-panes.data())&&leveltime<=s.release) {
+            for(size_t i=0;i<s.outline.size();++i) {
+                doom_glass::Point c={s.center.x+s.outline[i].x,s.center.y+s.outline[i].y};
+                auto end=s.outline[(i+1)%s.outline.size()];
+                crackEdge(c,{s.center.x+end.x,s.center.y+end.y});
+                // Spokes start at the actual puncture and join the fracture
+                // network, so the break visibly begins at the last bullet.
+                if(s.impactPiece)crackEdge(p.impact,c);
+            }
+        }
         record(first,(a.x+b.x)/2,(a.y+b.y)/2,(bottom+top)/2);
     }
     // Large pieces keep their shape and tumble, but their silhouettes are
     // cut from whole texels like the broken glass left in the window frame.
     for(const Shard &s:shards) {
+        if(leveltime<=s.release)continue;
         float f=renderFraction,x=s.px+(s.x-s.px)*f,y=s.py+(s.y-s.py)*f,z=s.pz+(s.z-s.pz)*f;
         const sector_t *sector=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
         float light=camera.effects[2]!=0?1:lighting(sector);
@@ -534,6 +672,20 @@ void buildGlass(const Uniforms &camera) {
     ordered.clear();ordered.reserve(glassVertices.size());
     for(const Draw &draw:draws)ordered.insert(ordered.end(),glassVertices.begin()+draw.first,glassVertices.begin()+draw.first+draw.count);
     glassVertices.swap(ordered);
+}
+unsigned windowPaneSerial() {return glassLevelSerial==r_levelserial?glassLevelSerial:~0u;}
+int windowPaneCount() {return glassLevelSerial==r_levelserial?(int)panes.size():0;}
+bool windowPane(int index,PaneView &out) {
+    if(index<0||index>=windowPaneCount())return false;
+    const GlassPane &p=panes[index];
+    const line_t &line=lines[p.line];
+    float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
+    if(len<1)return false;
+    float nx=ey/len,ny=-ex/len; // Toward the line's front side...
+    if(line.frontsector==&sectors[p.outer]) {nx=-nx;ny=-ny;} // ...turned to point in from the outer side.
+    out={p.line,p.frame,p.outer,p.inner,p.ax,p.ay,p.bx,p.by,0,0,nx,ny,p.broken,skySector(&sectors[p.outer]),p.seed};
+    paneHeights(p,out.bottom,out.top);
+    return true;
 }
 void glassShutdown() {glassProbes.clear();glassCaptures.clear();captured.clear();captureKey=-1;panes.clear();paneOfLine.clear();nearLines.clear();shards.clear();missileWatch.clear();glassVertices.clear();glassLevelSerial=~0u;}
 } // namespace doom3d

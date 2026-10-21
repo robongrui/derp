@@ -22,6 +22,9 @@ typedef enum { GAME_LIQUID_NONE, GAME_LIQUID_WATER, GAME_LIQUID_THICK } game_liq
 game_liquid Game_LiquidFlat(const char *name);
 /* Ice floors: smooth and glassy, their painted streaks cut deep grooves. */
 int Game_IceFlat(const char *name);
+/* Plain metal plates that use has worn: grime in their seams, dull
+   blotches, scuffs near the floor and a duller sheen (world/wear.glsl). */
+int Game_WornPlate(const char *name, int flat);
 /* Floors hot enough for heat haze. */
 int Game_HotFlat(const char *name);
 /* Sector specials that hurt whoever stands there (toxic mist). */
@@ -41,6 +44,9 @@ game_surface Game_FlatSurface(const char *name);
 /* Ambient sound: an AMBIENT_* kind (audio/ambience_spots.h) or -1. */
 int Game_AmbientFlat(const char *name, int ceiling);
 int Game_AmbientWall(const char *name);
+/* What lives behind a one-sided wall with this face, heard now and then
+   (audio/hidden.h): a mask of 1 << HIDDEN_* kinds (audio/hidden_synth.h). */
+int Game_HiddenWall(const char *name);
 
 #ifdef __cplusplus
 }

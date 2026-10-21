@@ -441,10 +441,20 @@ bool startFall(const mobj_t &thing,float speed,float high,float side,float hitZ,
 }
 void forgetFall(const mobj_t *thing) {falls.erase(thing);}
 void fallsShutdown() {falls.clear();}
+bool rigJoints(int lump,RigJoints &out) {
+    const FallRig *rig=rigFor(lump);
+    if(!rig)return false;
+    const doom_stock_rig &d=*rig->data;
+    memcpy(out.hip,d.hip,sizeof out.hip);memcpy(out.knee,d.knee,sizeof out.knee);memcpy(out.ankle,d.ankle,sizeof out.ankle);
+    out.split=d.split;out.hasHead=rig->hasHead;out.guided=d.guided;
+    out.neck=rig->head.neck;out.headMiddle=rig->head.middle;out.headWidth=rig->head.width;
+    out.carried=&rig->carried;out.width=rig->width;out.height=rig->height;out.left=rig->left;out.top=rig->top;
+    return true;
+}
 // At level load: rig every killable monster's pain and first death drawing,
 // so no death waits on finding joints.
 void prepareFalls() {
-    if(!settings.deathFalls)return;
+    if(!settings.deathFalls&&!settings.deathRagdoll)return;
     for(int type=0;type<NUMMOBJTYPES;++type) {
         const mobjinfo_t &info=mobjinfo[type];
         if(!(info.flags&MF_COUNTKILL))continue;

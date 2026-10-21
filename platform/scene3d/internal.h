@@ -126,6 +126,7 @@ const std::array<float,3> &brightestColor(Image &image);
 std::array<float,3> texelColor(Image &image);
 
 // sprite_normals.cpp
+std::vector<float> spriteTubeHeights(int w,int h,const byte *pixels);   // texels' true tube depth, 0 where empty
 std::vector<byte> spriteNormals(int w,int h,const byte *pixels);
 
 // map.cpp
@@ -151,6 +152,9 @@ extern int mapWidth,mapHeight;
 std::vector<Point> clip(const std::vector<Point> &poly,Point origin,Point direction,bool right);
 void buildMap();
 float sectorHeight(const sector_t *sector,bool ceiling);
+// The level's mood: the authored episode's (Game_Mood, with settings.authored) or the plain derived one:
+// outdoor light, sun, window light turned round, rain and its angle.
+const game_mood &levelMood();
 float lighting(const sector_t *sector,bool bright=false);
 
 // caustics.cpp
@@ -365,9 +369,10 @@ void quad(std::vector<Vertex> &out,Vertex a,Vertex b,Vertex c,Vertex d);
 void geometry(const Uniforms &camera,float fraction);
 
 // shadows.cpp
+struct RagdollCard;
 void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
-                    float x,float y,float z,const Uniforms &camera,const ShadowLight *light=nullptr,bool anyThing=false);
-void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool flip,float x,float y,float z,const Uniforms &camera,const Flash &beam);
+                    float x,float y,float z,const Uniforms &camera,const ShadowLight *light=nullptr,bool anyThing=false,const RagdollCard *card=nullptr);
+void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool flip,float x,float y,float z,const Uniforms &camera,const Flash &beam,const RagdollCard *card=nullptr);
 
 // atmosphere.cpp
 void buildShafts(const Uniforms &camera);
@@ -384,7 +389,7 @@ extern std::vector<FlatDecal> flatDecals;
 extern std::vector<Debris> debris;
 extern std::minstd_rand impactRandom;
 void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting=false,
-                const std::array<float,3> *albedo=nullptr,bool palette=true,std::unordered_set<uint64_t> *taken=nullptr);
+                const std::array<float,3> *albedo=nullptr,bool palette=true,std::unordered_set<uint64_t> *taken=nullptr,float alpha=1);
 // Doom-pixel cells on screen already holding a liquid crest this frame:
 // crests brighten what is under them, so overlapping ones would compound.
 extern std::unordered_set<uint64_t> crestCells;
@@ -422,8 +427,37 @@ bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,con
 void bloodShutdown();
 // Opaque blood-sprite palette indices, ordered from dark to bright.
 const std::vector<byte> &bloodPalette();
+// Blood shown at all: switched on, in a level, the WAD's blood sprite found.
+bool bloodOn();
+// A blood shade (0 dark - 1 bright) of the blood sprite, unlit.
+std::array<float,3> bloodColor(float shade);
 void bloodHit(mobj_t *target,mobj_t *shooter,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,fixed_t slope,int damage);
 void buildBlood(const Uniforms &camera);
+// Splats shown from born on: a splat, a drop's speck, or a body's smear
+// (thick end forward along angle). size across, stretched along angle.
+enum { BLOOD_SPLAT,BLOOD_SPECK,BLOOD_SMEAR };
+void bloodFloorSplat(float x,float y,int sector,float size,float angle,float stretch,bool ceiling,float born,int kind);
+// On the wall hit at (x,y,z), stretched along it; drips: one or two run down from it.
+void bloodWallSplat(const WallHit &hit,float x,float y,float z,float size,float stretch,float born,int kind,bool drips);
+
+// spray.cpp
+// What a hitscan hit throws: an exit spray past the body along the shot, a speck or two back.
+void sprayHit(const mobj_t *target,float x,float y,float z,float dx,float dy,float slope,int damage);
+// A kill's burst: along the push (dx,dy, speed units a tic) from where it struck (hitZ above
+// the feet, -1 unknown), more for overkill, all around for a gib.
+void sprayKill(const mobj_t &thing,float dx,float dy,float speed,float hitZ,bool gib,int overkill);
+// A hit that didn't kill, by a missile or blast, at hitZ above the feet.
+void sprayHurt(const mobj_t &thing,float dx,float dy,float hitZ,int damage);
+// A ragdoll's torso coming down at (x,y) on the floor z, at speed (units a tic): the harder, the more.
+void sprayLanding(float x,float y,float z,float speed);
+// A ragdoll's torso slamming into the wall along (dx,dy) from (x,y,z) at speed (units a tic).
+void sprayWallHit(float x,float y,float z,float dx,float dy,float speed);
+// A body sliding on the floor: a smear at (x,y), thick end forward along angle.
+void spraySmear(float x,float y,float angle,float size);
+// Each tic: wounds drip, sliding bodies smear, bodies thrown into walls splash them.
+void watchSpray();
+void buildSpray(const Uniforms &camera);
+void sprayShutdown();
 
 // body_motion.cpp
 // A monster's drawn pose from the blows it took: lean and upper-body whip
@@ -452,7 +486,9 @@ struct FallPose { const FallRig *rig=nullptr;float drops[2]={},shift=0,torso=0,l
 // bend: how much of the death jolt (body_motion.cpp) the pictured body
 // still takes, 1 before the collapse, 0 once it lies; settle: a landing's
 // brief flattening; fall: a procedural fall, which draws instead.
-struct DeathView { int sprite,frame;angle_t facing;bool mirror;float bend,settle;FallPose fall; };
+// ragdoll: a ragdoll fall (ragdoll.cpp), which draws instead of all of the above.
+struct Ragdoll;
+struct DeathView { int sprite,frame;angle_t facing;bool mirror;float bend,settle;FallPose fall;const Ragdoll *ragdoll=nullptr; };
 void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,float high,bool gib,const mobj_t *attack,float hitZ=-1,float hitU=0);
 void forgetDeath(const mobj_t *thing);
 void deathsShutdown();
@@ -468,6 +504,38 @@ void prepareFalls();      // at level load: rigs for every killable monster's pa
 bool fallView(const mobj_t &thing,float fraction,DeathView &view);
 void fallQuads(std::vector<Vertex> &out,const Vertex &base,const FallPose &pose,float x,float y,float feet,float rx,float ry,bool flip,
                const std::vector<byte> *holes=nullptr);
+// The rig a drawing falls on, for the ragdoll's body: hips, knees and ankles ([left, right][u, h], units
+// right of the origin and above the feet), where the legs part, the head (if found), whether its hand
+// rig plays the guided shot death (ragdoll.cpp), and per texel whether it moves with the torso whatever
+// its height (a gun).
+struct RigJoints { float hip[2][2],knee[2][2],ankle[2][2],split;bool hasHead,guided;float neck,headMiddle,headWidth;
+                   const std::vector<byte> *carried;int width,height,left,top; };
+bool rigJoints(int lump,RigJoints &out);
+
+// ragdoll.cpp
+// A rigged monster's body thrown down as a ragdoll: its pain drawing raised into a relief
+// (ragdoll_body.cpp) on a small 3D skeleton the hit knocks over. hitZ, hitU as startFall.
+bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,float high,float hitZ,float hitU);
+bool ragdollView(const mobj_t &thing,DeathView &view);
+void forgetRagdoll(const mobj_t *thing);
+void ragdollsShutdown();
+void prepareRagdolls();   // at level load: bodies for every killable monster's pain drawing
+void ragdollTestTic();    // ragdoll_test.cpp: -ragdolltest's scripted kills, each tic
+// The body as a sprite card: drawn by a virtual camera of its own (looking at it from the eye's side,
+// stepped to 45 degrees, straight on while it stands and 30 degrees down once it lies, one pixel
+// per unit), and that picture stood upright at the body facing the eye like any sprite, its lowest
+// solid row on the floor. Once the body lies still the card is baked: the last picture shown the same
+// from every angle (rotation 0, like id's corpse frames), the doll's posed body freed.
+// key: the picture's image; centred at (x, y), top at top, half wide, size square.
+// The doll flies in the world from where it died, not with the thing: fraction is the frame's
+// share of the tic, sink how far the thing sinks into a liquid.
+struct RagdollCard { int key;float x,y,top,half;int size;int u0,v0,u1,v1; }; // opaque texel bounds, upper limits exclusive
+bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,const std::vector<byte> *holes,RagdollCard &card);
+// Where the body is drawn (its card's middle) and the floor it died on: its light and liquid are found
+// there. True once it is down (a body in the air doesn't sink into the liquid under it).
+bool ragdollWhere(const Ragdoll &doll,float fraction,float &x,float &y,float &z);
+bool hasRagdoll(const mobj_t *thing);   // a ragdoll draws it: its own contacts make its blood and slaps
+bool ragdollSettled(const mobj_t *thing);   // no ragdoll, or one come to rest (ragdoll_test.cpp's -ragdollloop)
 
 // wounds.cpp
 // Holes shot through monsters' sprites. woundMask: per texel of a drawn frame,
@@ -479,6 +547,11 @@ void woundView(const mobj_t *thing,const mobj_t *viewer,const Image &image,bool 
                float top,float bottom,float rx,float ry,const BodyPose *pose=nullptr);
 void forgetWounds(const mobj_t *thing);
 void woundsShutdown();
+// A monster's wounds as spray.cpp drips from them: height above the feet,
+// across the drawing it was seen in, that view's turn from the monster's
+// facing (radians), the hole's size and the tic it was last shot.
+struct WoundSpot { float height,across,yaw,radius;int tic; };
+int woundSpots(const mobj_t *thing,WoundSpot *out,int most);
 bool woundMask(const mobj_t &thing,const Image &image,bool flipped,float rx,float ry,std::vector<byte> &mask);
 void woundVertex(Vertex &vertex,byte state);
 void maskedRow(std::vector<Vertex> &out,const std::vector<byte> &mask,int width,int r,bool flip,
@@ -502,6 +575,45 @@ void glassBlast(float x,float y,float z,float radius);
 void watchGlass();
 void buildGlass(const Uniforms &camera);
 bool planGlassCaptures(const Uniforms &camera);
+// A pane's opening, for the weather and wear: its map line (frame to outer),
+// the sectors, the pane's ends (halfway through the frame), sill and lintel,
+// the unit normal pointing in from the outer side, and whether it is broken
+// and looks out under the sky. The serial changes when the panes are found anew.
+struct PaneView { int line,frame,outer,inner; float ax,ay,bx,by,bottom,top,inX,inY; bool broken,sky; uint32_t seed; };
+unsigned windowPaneSerial();
+int windowPaneCount();
+bool windowPane(int index,PaneView &out);
+
+// weather.cpp
+// Rain under the sky (settings.weather): how hard it rains this tic (0-1),
+// whether the ground and walls outside are wet (1 while it rains), how wet
+// the windows (following the rain, drying slower than they soak), the wind carrying it
+// (units a second). Per pane, how much rain a broken window has let in.
+extern float rainNow,wetNow,glassWetNow;
+extern float rainWind[2];
+float paneSoak(int pane);
+// Where the rain blows (unit vector); the ground's wetness under the sky
+// baked into the floor light's alpha (1 + wetness * 254, 0: none).
+void rainHeading(float &x,float &y);
+void bakeWetness();
+void watchWeather();
+void buildRain(const Uniforms &camera);
+void weatherShutdown();
+
+// wear.cpp
+// Wear drawn by world/wear.glsl: rain streaks under windows, wet patches
+// where rain came in, leaking ceilings. Records follow the sector entries in the sector
+// buffer from wearBase() on (0: none this frame).
+float wearBase();
+void appendWear(std::vector<std::array<float,4>> &info);
+// Cracks in a few ceilings beside the sky, dripping while it rains (none
+// otherwise): the room and the crack's center.
+struct CeilingLeak { int sector; float x,y; uint32_t seed; };
+const std::vector<CeilingLeak> &ceilingLeaks();
+// Whether rain blown in through a broken window has soaked the floor at (x, y) in a sector.
+bool rainSoaked(int sector,float x,float y);
+void watchWear();
+void wearShutdown();
 
 // exposure.cpp
 void exposureShutdown();

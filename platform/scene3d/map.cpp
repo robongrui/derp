@@ -303,10 +303,21 @@ float sectorHeight(const sector_t *sector,bool ceiling) {
     float old=oldHeights[index][ceiling];
     return old+(now-old)*renderFraction;
 }
+const game_mood &levelMood() {
+    static game_mood mood={1,1,0,0,-1,1,{1,1,1}};static unsigned serial=~0u;static int authored=-1;
+    if(serial!=r_levelserial||authored!=settings.authored) {
+        serial=r_levelserial;authored=settings.authored;
+        mood={1,1,0,0,-1,1,{1,1,1}};
+        if(authored)Game_Mood(gameepisode,gamemap,&mood);
+    }
+    return mood;
+}
 float lighting(const sector_t *sector,bool bright) {
     if(bright) return 1;
     float level=lampLightLevel(sector)/255.0f;
     if(bakedLightsActive&&lampDrop.size()==(size_t)numsectors)level-=lampDrop[sector-sectors];
+    // The episode's mood (Game_Mood) can darken the outdoors.
+    if(sector->ceilingpic==skyflatnum)level*=levelMood().outdoor;
     level=std::clamp(level,0.12f,1.0f);
     size_t index=sector-sectors;
     if(index<shotDim.size())level*=shotDim[index]; // Rooms whose lamps were shot out (shot_lights.cpp).

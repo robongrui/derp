@@ -43,11 +43,14 @@ struct Point { float x,y; };
 // lampTint: the sector light's color from the lamps around a sprite (lampTint
 // in baked_lighting.h), unorm bytes; white for surfaces, which compute their own.
 struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0; unsigned lightMask[2]={}; float sunU=-1,sunV=0; unsigned statics=0; unsigned lampTint=0xFFFFFFFFu; };
+// right.w: where the wear records start in the sector buffer (0: none);
+// forward.w, up.w: how wet the windows and the ground under the sky are.
+// mood: x how bright the sky is drawn (the episode's mood, Game_Mood).
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
 // sky light level (0: off); texFilter: sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],flicker[4][4]; };
-static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==352,"Shader buffer layout");
+struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],mood[4],weather[4],flicker[4][4]; };
+static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==384,"Shader buffer layout");
 using Flash=doom_flash_t;
 // 63 lights keep the FlashSet uniform block under 4 KB and fit the 64-bit light masks.
 constexpr unsigned maxLights=63;
@@ -87,10 +90,13 @@ struct Settings {
     int caustics=1; // Rippling light from liquids on nearby walls.
     // Experimental effects, each separately switchable.
     int blood=1; // Splats on floors and walls from hitscan hits; pools under corpses.
+    int bloodSpray=1; // With blood: hits and kills throw drops that land as splats; wounds drip, sliding bodies smear, bodies thrown into walls splash them.
     int bloodShine=1; // Fresh blood glints under dynamic lights, then dries matte.
     int deathMotion=1; // Deaths jolt with the killing blow's push and height before the game's corpse frame.
     int wounds=1; // Hitscan hits shoot holes through monsters' sprites, rimmed with blood; drawing only.
     int deathFalls=1; // Rigged monsters (hand rigs, else joints found in the art) fall procedurally: 0 off, 1 by the hit, 2 always legs swept, 3 always chest blast, 4 always head shot.
+    int deathRagdoll=0; // Rigged monsters fall as ragdolls instead: the pain drawing raised into a relief on a small skeleton the hit knocks over.
+    int deathGuided=1; // With deathRagdoll: chest blasts from the front sometimes play the shot death on strings (hand rigs that fit it: the zombieman).
     int deathFaceViewer=0; // With deathDirector: a monster killed facing away turns toward the eye before its death frames.
     int deathDirector=1; // Each death drawn its own way: staggers and turns from the monster's own frames, retimed, mirrored to fall away from the blow.
     int hitFlinch=1; // Living monsters flinch from hits, leaning with the push.
@@ -104,6 +110,10 @@ struct Settings {
     int splashes=1; // Ripple rings where things land or walk in liquids, spouts where shots hit them; bubbles and sinking in thick ones.
     int dust=1; // Specks glinting in sunbeams and the flashlight beam.
     int embers=1; // A few sparks rising from flames, blown along by the game's wind.
+    int authored=1; // Authored episodes (Game_Mood): hand-picked looks for the game's own maps (DOOM's E1 night in the rain); off: the derived look everywhere.
+    int weather=1; // Rain under the sky: 0 never, 1 where an authored episode has it, 2 always.
+    int wornPlates=1; // Plain metal plates (Game_WornPlate) show years of use: grime in the seams, dull blotches, scuffs near the floor.
+    int windowStreaks=1; // Dark rain runs down the outside walls below windows, rusty on metal; inside too once rain blows through a broken one.
     int playerShadow=1; // The player's own sprite shadow from the sun or a strong light.
     int doorLight=1; // Light from a bright room spills through a door as it opens.
     int movingRelight=1; // Baked lamp light and sun re-bake around doors, lifts and lowering walls as they move.
@@ -126,6 +136,7 @@ struct Settings {
     int sunShafts=1; // Soft sunbeams slanting down through ceiling holes and windows, with the dust motes in them.
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
     int glossyScreens=1; // Monitor glass found in computer textures bulges, refracts the screen behind it and catches light.
+    int liveReadouts=1; // The LED readouts painted into computer textures change their cells now and then (doom_screen_readouts).
     int glowingEyes=1; // The eyes painted into monster artwork glow in the dark, with bloom (sprite_eyes.h).
     int windowGlass=1; // Windows found in the map get glass that reflects and shatters when shot through.
     int shootableLights=1; // Experiment: tech walls spark when shot; shots into a lamp or screen break its fixture and re-bake its light.
@@ -144,6 +155,7 @@ struct Settings {
     int madeImpacts=1; // Made-up sounds for sparks, lamps and screens dying, and glass breaking (audio/made_bank.h).
     int glassSound=0; // Which breaking glass: 0 the shatter, 1 the fracture (a branching crack front).
     int ambience=1; // Lamps, machines, liquids, fire and wind sound where the map's textures show them.
+    int alternativeComputerSounds=0; // Machine hum, hard-drive seeks and relay chatter in place of the computer bleeps.
     float ambienceAmount=1; // How loud the ambience is next to the effects (0-2).
     int footsteps=1; // The player's footsteps by floor, splashes in liquids, monsters splashing as they wade.
     // Performance: cheaper stand-ins for per-frame light work.

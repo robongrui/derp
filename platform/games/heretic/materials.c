@@ -43,6 +43,7 @@ game_liquid Game_LiquidFlat(const char *name)
 
 /* FLAT517: the Ice Grotto's blue ice floor (E2M4, E2M9...). */
 int Game_IceFlat(const char *name) { return !strcmp(name, "FLAT517"); }
+int Game_WornPlate(const char *name, int flat) { (void)name; (void)flat; return 0; }
 int Game_HotFlat(const char *name) { return starts(name, "FLTLAVA") || starts(name, "FLATHUH"); }
 
 /* Damage_LavaWimpy, Damage_LavaHefty, Scroll_EastLavaDamage, Damage_Sludge. */
@@ -97,3 +98,5 @@ int Game_AmbientWall(const char *name)
     if (!strcmp(name, "LAVA1")) return AMBIENT_MAGMA;
     return -1;
 }
+/* Heretic plays its own ambient sequences; nothing is made up behind its walls. */
+int Game_HiddenWall(const char *name) { (void)name; return 0; }

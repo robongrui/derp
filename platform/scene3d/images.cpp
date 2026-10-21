@@ -121,13 +121,20 @@ Image upload(int w,int h,const byte *pixels,int left,int top,const byte *mask,co
     return image;
 }
 // Screen glass heights, or empty when the texture has no screens; frame
-// receives where each glass pixel sits on its screen (doom_screen_glass).
+// receives where each glass pixel sits on its screen (doom_screen_glass),
+// and each readout texel where it sits on its readout (doom_screen_readouts;
+// empty when there are neither). Switches keep their lamps still, so the
+// lit state stays plain.
 static std::vector<byte> screenGlass(const char *name,bool flat,int w,int h,const byte *pixels,std::vector<byte> &frame) {
     frame.clear();
     if(!Game_ScreenTexture(name,flat))return {};
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<byte> glass((size_t)w*h);frame.assign((size_t)w*h*4,0);
-    if(!doom_screen_glass(w,h,pixels,palette,glass.data(),frame.data())) {frame.clear();return {};}
+    int screens=doom_screen_glass(w,h,pixels,palette,glass.data(),frame.data());
+    bool switches=!strncmp(name,"SW1",3)||!strncmp(name,"SW2",3);
+    int readouts=switches?0:doom_screen_readouts(w,h,pixels,palette,glass.data(),frame.data());
+    if(!readouts&&!screens)frame.clear();
+    if(!screens)return {};
     return glass;
 }
 // Uploads the screen frame beside the image the shader refracts through it.

@@ -10,11 +10,12 @@ static const char *const names[IMPACT_KINDS] = {
     "step-stone", "step-metal", "step-wood", "step-soft", "splash-water", "splash-thick",
     "run-stone", "run-metal", "run-wood", "run-soft", "gear-light", "gear-slung", "gear-heavy", "gear-armor",
     "gear-light-run", "gear-slung-run", "gear-heavy-run", "gear-armor-run", "flyby",
+    "gore-burst", "gore-slap",
 };
 static const float seconds[IMPACT_KINDS] = { 0.5f, 0.5f, 0.55f, 0.9f, 0.6f, 0.9f, 0.7f, 1.8f, 2.1f, 1.8f, 2.1f,
                                                 0.3f, 0.3f, 0.3f, 0.3f, 0.4f, 0.4f,
                                                 0.3f, 0.3f, 0.3f, 0.3f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f,
-                                                0.3f };
+                                                0.3f, 0.5f, 0.4f };
 
 const char *Impact_Name(int kind) { return kind >= 0 && kind < IMPACT_KINDS ? names[kind] : "?"; }
 int Impact_Rate(int kind) { return kind >= IMPACT_GLASS_TINKLE && kind <= IMPACT_GLASS_FRACTURE_BIG ? 22050 : 11025; }
@@ -26,6 +27,7 @@ void Impact_Render(int kind, unsigned seed, int rate, float *out, int frames)
     else if (kind <= IMPACT_GLASS_BIG) Glass_Render(kind, seed, rate, out, frames);
     else if (kind <= IMPACT_GLASS_FRACTURE_BIG) Fracture_Render(kind, seed, rate, out, frames);
     else if (kind == IMPACT_FLYBY) Flyby_Render(seed, rate, out, frames);
+    else if (kind >= IMPACT_GORE_BURST) Gore_Render(kind, seed, rate, out, frames);
     else Step_Render(kind, seed, rate, out, frames);
 }
 
