@@ -1057,7 +1057,7 @@ ctest --test-dir build/play --output-on-failure
 
 ## License
 
-Copyright © 2026 Robert Heidenreich. Licensed under the GNU General Public
+Copyright © 2026 robongrui. Licensed under the GNU General Public
 License version 3 ([`LICENSE.TXT`](LICENSE.TXT)), with one additional term
 under section 7(b): redistributions and derivative works containing the
 original DERP contributions must preserve the attribution
