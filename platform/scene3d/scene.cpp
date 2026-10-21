@@ -509,6 +509,7 @@ void I_Render3DStartFrame(void) {worldPending=false;v_overlayactive=false;}
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
 void I_Render3DLook(float delta) {
     if(!settings.look||!settings.accelerated||demoplayback)return;
+    if(settings.invertLook)delta=-delta;
     float gameLook;
     if(Game_LookPitch(&gameLook))Game_Look(-delta*0.002f);
     else pitch=std::clamp(pitch-delta*0.002f,-1.2f,1.2f);
