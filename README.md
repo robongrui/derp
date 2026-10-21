@@ -85,7 +85,12 @@ graphics panel with **F4**.
 - **Wounds and deaths:** bullets leave see-through holes that follow the
   monster's animation, and every death is drawn anew: pushed by the blow,
   retimed, and for monsters on two legs a procedural fall chosen by where the
-  hit landed. See [Monsters die differently every time](#monsters-die-differently-every-time).
+  hit landed, or a ragdoll: the drawing raised into a body, thrown down and
+  drawn back into a sprite. See [Monsters die differently every time](#monsters-die-differently-every-time)
+  and [Ragdolls are drawn back into sprites](#ragdolls-are-drawn-back-into-sprites).
+- **Rain and wear:** DOOM's first episode lies at night in a downpour, rain
+  runs down the windows and blows in through broken ones, and walls and
+  plates show their years. See [Rain, night and wear](#rain-night-and-wear).
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
   finding their way round corners, through doors and windows, and fading
   with distance as they do in air.
@@ -391,6 +396,14 @@ dynamic lights slide across it as a highlight on the glass.
 
 ![A computer screen with curved glass next to two zombies](screens/crt-screen.jpg)
 
+The same search finds **live readouts**: blocks of glowing LED cells painted
+outside the screens, such as the green grids on `COMPUTE2`. A readout is a
+group of texels in one hue (green, blue or red) over several palette steps
+that fills its box and sits in the housing. The shader then changes its
+cells now and then, cell by cell, each taking the light of another in its
+row, so the consoles look busy without any new artwork. F4 → Glow → **Live
+readouts**.
+
 See [`platform/screen_glass.h`](platform/screen_glass.h).
 
 ### Water reflects the room
@@ -615,6 +628,39 @@ See
 [`platform/shaders/mist.frag`](platform/shaders/mist.frag) and
 [`platform/shaders/present.frag`](platform/shaders/present.frag).
 
+### Rain, night and wear
+
+Most of DERP's look is derived from the WAD, but the game's own episodes can
+also get a look picked by hand. With **Authored episodes** on, DOOM's first
+episode lies at night in a steady downpour: the sun is hidden, and the lit
+rooms shine out through their windows into the dark. Only maps the IWAD
+itself holds get it; Freedoom's maps and PWADs keep the derived look, sun
+and all. Turned off, every map is lit as the WAD gives it.
+
+Rain falls wherever the sky is open, as streaks of whole Doom pixels that
+step at the game's tic rate, slanted by a wind of its own. It splashes where
+it lands and rings on liquids. Drops gather and run down the outside of the
+window glass, and the ground under the sky lies wet in a few baked steps.
+Through a broken window the wind blows the rain in, and the floor and wall
+beneath the window soak. A few rooms beside the open sky have a crack in the
+ceiling, damp around it, with rain dripping through onto a small puddle. The
+rain is heard as a dense, soft patter. F4 → **Weather and wear → Rain**
+picks Never, Authored episodes (it rains where an authored look has rain) or
+Always.
+
+The weather has also left marks over the years. Dark streaks run down the
+outside walls below windows that look out under the sky, rusty on metal, and
+inside they start once rain blows through a broken pane. Plain metal plates,
+such as the fronts of DOOM's computer desks, get grime packed into their
+seams, dull blotches, boot scuffs near the floor and a duller sheen. All of
+it is drawn over the artwork by the world shader, from records the map
+itself gives when it loads.
+
+See [`platform/scene3d/weather.cpp`](platform/scene3d/weather.cpp),
+[`platform/scene3d/wear.cpp`](platform/scene3d/wear.cpp),
+[`platform/shaders/world/wear.glsl`](platform/shaders/world/wear.glsl) and
+[`platform/games/doom/authored.c`](platform/games/doom/authored.c).
+
 ### Blood is made from the WAD too
 
 Hitscan attacks can leave splats on floors and walls, and corpses slowly grow
@@ -625,7 +671,15 @@ then dries darker and matte. Pools grow in visible steps.
 Bullet impacts leave marks as well and throw small chunks colored like the
 surface they hit.
 
-See [`platform/scene3d/blood.cpp`](platform/scene3d/blood.cpp) and
+With **Blood spray**, hits throw blood out the far side of the body and
+kills burst. Each drop's flight is worked out once, when it is thrown: it
+flies as a Doom-sized pixel speck and lands as a splat on the floor, a wall
+in its way or a low ceiling. Fresh wounds drip, bodies sliding across the
+floor smear it, and bodies thrown into a wall splash it. It has its own
+random numbers, so the game never notices.
+
+See [`platform/scene3d/blood.cpp`](platform/scene3d/blood.cpp),
+[`platform/scene3d/spray.cpp`](platform/scene3d/spray.cpp) and
 [`platform/scene3d/impacts.cpp`](platform/scene3d/impacts.cpp).
 
 ### Shots go through monsters
@@ -727,6 +781,63 @@ See [`platform/scene3d/body_motion.cpp`](platform/scene3d/body_motion.cpp),
 [`platform/scene3d/death_falls.cpp`](platform/scene3d/death_falls.cpp),
 [`platform/death_joints.h`](platform/death_joints.h) and
 [`platform/death_rigs_stock.h`](platform/death_rigs_stock.h).
+
+### Ragdolls are drawn back into sprites
+
+**Ragdoll falls** goes further than bending the drawing: the monster falls
+as a body in 3D, and a camera of its own draws it back into a Doom sprite.
+
+- **A body from the drawing.** The rigged pain drawing is raised into a
+  relief. Each texel rises as deep as the round tube the sprite lighting
+  already finds under it, and the side drawing (rotation 3) then sets how
+  far the body reaches forward and back, band by band, so a body lying down
+  is as deep as its own side view rather than a round bolster. The front is
+  painted from the front drawing and the back from the drawing seen from
+  behind; walls close the outline.
+- **A small skeleton.** Eleven points on the drawing's own rig (head, neck,
+  shoulders, spine, hips, knees and ankles) are integrated in game tics and
+  held together by bone lengths and joint limits. Muscles hold the standing
+  pose at first and let go on a schedule the hit sets. The floors around the
+  kill (steps, ledges, the lower floor at a stair edge) and the walls stop
+  it, so a body can fall down a step or slam into a wall and sink to sitting.
+- **The hit decides the fall.** A body can be thrown back, have its legs
+  swept, be spun from the side or have its strings cut by a head shot. While
+  it falls it is turned so that it lands with a drawn side (front or back)
+  facing up or toward the player, and nothing turns it once it lies.
+- **Back to 2D.** An orthographic camera draws the posed body into a square
+  picture in the WAD's own texels: quickly through the hit, then at the pace
+  of the monster's own death frames, and at the top of a throw and each
+  moment it touches down. The picture stands on an ordinary sprite card and
+  is lit like any sprite. Once the body lies still, its last picture is
+  baked into a plain corpse sprite.
+
+With **Shot deaths on strings**, two ragdolls in three killed by a blast to
+the chest from the front play the death their drawings show instead: the
+chest is yanked back as if on a stunt wire, the legs give way and the body
+sits back and lands hips first, then the back, the head last. Only hand
+rigs that fit it (the zombieman) do this.
+
+As with the other deaths it is drawing only: where the corpse lies, its
+hitbox and the game's timing are vanilla. F4 → Combat → **Ragdoll falls**
+(off by default; it needs **Varied deaths**).
+
+The ragdoll was worked out in the lab first. `death_hull.py` tried carving a
+hidden 3D puppet out of the eight walk rotations, `death_relief.py` the
+relief body, `death_ragdoll.py` the skeleton and its falls,
+`death_impostor.py` how to flatten the body back into 2D, and
+`ragdoll_settle.py` how bodies come to rest. `voxel_reference.py` and
+`voxel_relief.py` check the depth guess against an artist's voxel models of
+the monsters. The models are only a reference: they are read from a local
+folder and never shipped. `ragdoll_arena.py` builds small test maps (open
+floor, stairs, ledges, a wall behind, clutter) out of plain geometry, plays
+scripted kills in them and saves the falls as a contact sheet. Its
+`showcase` mode shoots a row of monsters, lets them lie, stands them up and
+shoots them again until you quit.
+
+See [`platform/scene3d/ragdoll.cpp`](platform/scene3d/ragdoll.cpp),
+[`platform/scene3d/ragdoll_body.cpp`](platform/scene3d/ragdoll_body.cpp),
+[`platform/scene3d/ragdoll.h`](platform/scene3d/ragdoll.h) and
+[`ragdoll-tuning-research.md`](ragdoll-tuning-research.md).
 
 ### Pixel art stays sharp
 
@@ -873,6 +984,19 @@ third of a second, so walking through a door doesn't click.
 Far sounds send more to the reverb relative to the dry mix, so they sound
 further away as well as quieter.
 
+### The hall next door
+
+From a corridor or a small room, some of the rays run out through an opening
+into a bigger space, much farther than the rest. Halfway from the opening to
+the far wall that space is measured as a room of its own, and it is heard
+through the opening with a second reverb: your own sounds reach into it and
+ring there faintly, and sounds made inside it echo as the hall does, not as
+the room you stand in. Only a space that is clearly bigger and rings longer
+counts, so stepping from a hall into a corridor still hears the hall, and
+the corridor seen from the hall adds nothing.
+
+See [`platform/audio/beyond.c`](platform/audio/beyond.c).
+
 ### The map hums
 
 When a level starts, its textures and things are read for what should make a
@@ -913,6 +1037,18 @@ independently timed loops keep busy computer rooms varied. The sounds are
 synthesized at startup as mono 8-bit, 11 kHz samples and use the same distance,
 muffling and room acoustics as the original ambience.
 
+**Inside the walls**, now and then, the base works. When a level starts, the
+one-sided walls are read for what might live behind them, and every so often
+one of those walls in reach plays it from a point along its face: water
+rushing through a pipe, a blast of steam, a duct, a press, a drip, metal
+settling. Only the body of the sound gets through, muffled as if through the
+wall, and nothing in it sounds like a person: no knocking, no steps. The
+sounds are rare and spread out, never the same kind twice running, and they
+go quiet while you fight, starting again a while after it is calm.
+
+See [`platform/audio/hidden.c`](platform/audio/hidden.c) and
+[`platform/audio/hidden_synth.c`](platform/audio/hidden_synth.c).
+
 ### Sounds DOOM never had
 
 The rest of the made-up sounds are effects that answer what happens in the
@@ -944,6 +1080,8 @@ last two takes plays again.
   and lava gloop, and monsters wading through liquids splash too. Monsters on
   dry floors stay as silent as ever, so hearing tells no more about where they
   are than before.
+- **Gore:** a kill's wet burst and a body slapping into the floor or a wall,
+  filtered noise only, played quietly under the monster's own death sound.
 - **Near misses:** an enemy's bullet from far off that passes close by
   without hitting you whizzes past your head, a fluttering whistle. Real
   bullets wouldn't sound like that, but it tells you you're under fire when
