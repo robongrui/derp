@@ -63,6 +63,7 @@ struct Settings {
     int accelerated=1, widescreen=1, crosshair=1, look=1, retro=0, fps=1, scale=100;
     int invertLook=0; // Mouse look: moving the mouse forward tilts the view down.
     int classicAim=0; // With mouse look: bullets autoaim at a monster in front as in DOOM, following the view only with none.
+    int quickConfirm=1; // Quicksave and quickload ask before overwriting or loading.
     float msaa=0; // Geometry edge anti-aliasing: 0 off, then 2x, 4x and 8x MSAA (capped by gpuMaxSamples).
     // Walls and floors: 0 crisp pixels, 1 smooth (bilinear), 2 sharp bilinear
     // (flat texels, edges blended over sharpSoftness texels plus a pixel).

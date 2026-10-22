@@ -96,6 +96,7 @@ void applySettings() {
     R_ShotPassed=settings.accelerated?glassShot:nullptr;
     freeaim=settings.accelerated&&settings.look;
     classicaim=settings.classicAim!=0;
+    quickconfirm=settings.quickConfirm!=0;
     if(!settings.accelerated) clearFlashPulses();
     r_uncapped=settings.accelerated;
     if(!settings.look) pitch=0;

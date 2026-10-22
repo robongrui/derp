@@ -30,7 +30,7 @@ struct Line { const OptionSection *section; Option *option; };
 
 struct Panel {
     bool open=false,wasPaused=false;
-    Settings draft;
+    Settings draft,defaults; // defaults: as R sets them, for the per-option reset and marks
     std::vector<OptionTab> tabs;
     std::vector<Line> lines;
     int tab=0,selected=0,scroll=0;
@@ -223,6 +223,24 @@ Option &selectedOption() { return *panel.lines[(size_t)panel.selected].option; }
 
 void setSlider(Option &option,double value) { *option.number=option.snap(value); }
 
+// The options point into panel.draft; this is the same member of panel.defaults.
+template<class T> T *defaultOf(T *member) {
+    return (T*)((char*)&panel.defaults+((char*)member-(char*)&panel.draft));
+}
+
+bool isDefault(const Option &option) {
+    if(option.kind==OptionKind::Slider)return option.snap(*option.number)==option.snap(*defaultOf(option.number));
+    return *option.flag==*defaultOf(option.flag);
+}
+
+void resetOption() {
+    Option &option=selectedOption();
+    if(isDefault(option)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
+    if(option.kind==OptionKind::Slider)*option.number=*defaultOf(option.number);
+    else *option.flag=*defaultOf(option.flag);
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
+}
+
 void changeOption(int direction) {
     Option &option=selectedOption();
     if(!option.isEnabled(panel.draft)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
@@ -259,11 +277,18 @@ void drawSlider(const Option &option,int row,bool enabled) {
     fill(x,y-1,position,2,enabled?trackFill:dim);
     fill(x+position-2,y-5,5,10,enabled?bright:dim);
 }
+
+// A small diamond in the margin left of an option changed from its default.
+void drawChangedMark(int row,bool enabled) {
+    int x=(leftColumn+1)*cellWidth+cellWidth/2,y=rowY(row)+cellHeight/2-2;
+    for(int i=0;i<5;++i) {int half=2-std::abs(i-2);fill(x-half,y+i,2*half+1,1,enabled?heading:dim);}
+}
 }
 
 void I_Render3DSettingsMenu(void) {
     if(panel.open)return;
     panel.draft=settings;
+    panel.defaults=Settings{};fitGame(panel.defaults);
     panel.tabs=optionTabs(panel.draft);
     selectTab(panel.tab);
     panel.wasPaused=paused;paused=true;
@@ -284,8 +309,9 @@ void I_Render3DSettingsKey(int scancode,int shift) {
     case SDL_SCANCODE_TAB: selectTab(panel.tab+(shift?-1:1)); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
     case SDL_SCANCODE_PAGEUP: selectTab(panel.tab-1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
     case SDL_SCANCODE_PAGEDOWN: selectTab(panel.tab+1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
-    case SDL_SCANCODE_R: panel.draft=Settings{}; fitGame(panel.draft); S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE)); break;
-    case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_F4: case SDL_SCANCODE_BACKSPACE: closePanel(); break;
+    case SDL_SCANCODE_BACKSPACE: case SDL_SCANCODE_DELETE: resetOption(); break;
+    case SDL_SCANCODE_R: panel.draft=panel.defaults; S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE)); break;
+    case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_F4: closePanel(); break;
     default:
         if(scancode>=SDL_SCANCODE_1&&scancode<SDL_SCANCODE_1+(int)panel.tabs.size()) {
             selectTab(scancode-SDL_SCANCODE_1);S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));
@@ -349,6 +375,7 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
         if(selected)fill((leftColumn+1)*cellWidth,rowY(row),(rightColumn-leftColumn)*cellWidth,cellHeight,selectionBar);
         unsigned color=!enabled?dim:selected?bright:text;
         drawText(option.title,leftColumn+2,row,color);
+        if(!isDefault(option))drawChangedMark(row,enabled);
         unsigned valueColor=enabled&&option.kind==OptionKind::Check&&*option.flag?onColor:color;
         drawTextRight(valueText(option),rightColumn,row,valueColor);
         if(option.kind==OptionKind::Slider)drawSlider(option,row,enabled);
@@ -360,7 +387,7 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
     const Option &option=selectedOption();
     std::vector<std::string> lines=wrap(option.tip?option.tip:"",(rightColumn-leftColumn)*cellWidth,descriptionLines);
     for(size_t i=0;i<lines.size();++i)drawText(lines[i],leftColumn,descriptionRow+(int)i,description);
-    std::string help="Up/Down select   Left/Right change   Tab page   R defaults   Esc done";
+    std::string help="Up/Down select   Left/Right change   Tab page   Backspace reset   R reset all   Esc done";
     drawTextAt(help,(width-textWidth(help))/2,helpRow,dim);
     // The renderer repeats the border texels beyond the image, so they stay plain backdrop.
     fill(0,0,width,1,backdrop);fill(0,height-1,width,1,backdrop);

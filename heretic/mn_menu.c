@@ -134,6 +134,7 @@ static int slotptr;
 static int currentSlot;
 static int quicksave;
 static int quickload;
+boolean quickconfirm = true; // DERP: off, F6/F9 act without asking (F4 panel)
 
 static MenuItem_t MainItems[] =
 {
@@ -1310,6 +1311,13 @@ boolean MN_Responder(event_t *event)
 						P_SetMessage(&players[consoleplayer],
 							"CHOOSE A QUICKSAVE SLOT", true);
 					}
+					else if(!quickconfirm)
+					{ // DERP: save at once (F4 "Confirm quicksave and quickload")
+						P_SetMessage(&players[consoleplayer], "QUICKSAVING....", false);
+						FileMenuKeySteal = true;
+						SCSaveGame(quicksave-1);
+						BorderNeedRefresh = true;
+					}
 					else
 					{
 						askforquit = true;
@@ -1349,6 +1357,12 @@ boolean MN_Responder(event_t *event)
 					quickload = -1;
 					P_SetMessage(&players[consoleplayer],
 						"CHOOSE A QUICKLOAD SLOT", true);
+				}
+				else if(!quickconfirm)
+				{ // DERP: load at once (F4 "Confirm quicksave and quickload")
+					P_SetMessage(&players[consoleplayer], "QUICKLOADING....", false);
+					SCLoadGame(quickload-1);
+					BorderNeedRefresh = true;
 				}
 				else
 				{

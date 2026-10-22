@@ -62,6 +62,9 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way.",hasFreeAim),
                 check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view."),
                 check("fps","Show FPS in window title",&s.fps,"Frames per second and the GPU driver in the window title.")}},
+            {"Saving",{
+                check("quick_confirm","Confirm quicksave and quickload",&s.quickConfirm,
+                    "Ask before a quicksave overwrites its slot or a quickload replaces the game in progress. Off: the keys act at once.")}},
             {"Retro look",{
                 check("retro","Retro scanlines",&s.retro,"Dark lines between the rows of the picture, like an old CRT monitor."),
                 check("palette","Doom palette colors",&s.palette,"Quantize the final lighting and fog to the current WAD palette.")}}}},
