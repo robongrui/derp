@@ -73,6 +73,10 @@ typedef struct { int kind; float level; } impact_layer_t;
 /* How much the kit's metal rings, 1 as made; for doom-sfx-render's
    comparisons. Set before rendering. */
 void Step_SetGearRing(float amount);
+/* Alternative supported-metal contacts for offline auditioning. The game
+   keeps CURRENT until a replacement has been chosen. Set before rendering. */
+enum { STEP_METAL_CURRENT, STEP_METAL_FRICTION, STEP_METAL_TREAD };
+void Step_SetMetalStyle(int style);
 int Step_Layers(int floor, float force, int armor, int heft, impact_layer_t *layers);
 /* Count tiny bits still settling from start on, thinning out over a second. */
 void Glass_Debris(float *out, int frames, int rate, unsigned seed, float start, int count, float amp);

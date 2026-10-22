@@ -64,7 +64,8 @@ static int grounded(const mobj_t *mo) { return mo->z <= mo->floorz + FRACUNIT / 
 static int emit(step_event_t *events, int count, int max, int kind, const mobj_t *mo, float level)
 {
     if (count >= max) return count;
-    events[count] = (step_event_t){ kind, units(mo->x), units(mo->y), units(mo->z), level };
+    events[count] = (step_event_t){ kind, units(mo->x), units(mo->y), units(mo->z), level,
+                                  mo == players[consoleplayer].mo };
     return count + 1;
 }
 /* A step of the player's: the footfall and the kit rattling after it

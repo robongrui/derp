@@ -984,6 +984,10 @@ third of a second, so walking through a door doesn't click.
 Far sounds send more to the reverb relative to the dry mix, so they sound
 further away as well as quieter.
 
+The player's own boots, splashes and equipment keep their source loudness
+in the room send: quiet movement stays quiet in the echoes too. Distance
+still makes these sounds relatively wetter as the listener moves away.
+
 ### The hall next door
 
 From a corridor or a small room, some of the rays run out through an opening
@@ -1069,10 +1073,11 @@ last two takes plays again.
   describe the reference measurements and contact model.
 - **Footsteps:** the player is heavy and wears combat boots. Each step is a
   dense, driven impact with the body's weight in it and the sole settling a
-  moment later, coloured by the floor: grit on stone, a deck plate's ringing
-  modes on metal, a knock on wood, a crunch on grass and dirt, muffled on
-  carpet. Running lands harder, on the ball of the foot, and pushes off with a
-  scrape, and a landing is harder the faster the fall. Just after each step
+  moment later, coloured by the floor: grit on stone, a short metallic edge
+  under a cushioning rubber sole on metal backed by concrete or earth, a
+  knock on wood, a crunch on grass and dirt, muffled on carpet. Running lands
+  harder, on the ball of the foot, and pushes off with a scrape, and a landing
+  is harder the faster the fall. Just after each step
   the kit settles: buckles and pouches with a light weapon, a long gun
   knocking on its sling, the rocket launcher or BFG thudding with its rounds
   rattling, and the click of armour when you wear it. Steps come about twice a

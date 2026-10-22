@@ -384,6 +384,15 @@ if(DOOM_BUILD_SDL)
         add_dependencies(derp-heretic-bundle doom derp-heretic)
     endif()
     if(BUILD_TESTING)
+        add_executable(doom-movement-audio-tests tests/movement_audio.c
+            platform/audio/resample.c platform/audio/treble.c platform/audio/step_synth.c)
+        target_include_directories(doom-movement-audio-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10"
+            "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
+        target_link_libraries(doom-movement-audio-tests PRIVATE SDL3::SDL3 doom_options)
+        if(NOT WIN32)
+            target_link_libraries(doom-movement-audio-tests PRIVATE m)
+        endif()
+        add_test(NAME movement-audio-routing COMMAND doom-movement-audio-tests)
         function(doom_add_smoke target game renderer)
             add_executable(${target} ${ARGN} platform/i_sdl_video.c
                 platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}

@@ -49,6 +49,7 @@ typedef struct {
     sample_t sample;
     double position, step;
     float left, right, send;
+    float send_scale;  /* 1 for world sounds; personal source gain correction */
     /* Lowpass: cutoff glides to target; two one-pole stages of state. */
     float cutoff, target, low[2];
     /* How much of it is in the space beyond (beyond.h) rather than the
@@ -126,7 +127,7 @@ static void gains(mix_channel_t *channel, float volume, int separation, int pitc
     separation = SDL_clamp(separation, 1, 254);
     channel->left = SFX_GAIN * level * SDL_min(1.0f, (254 - separation) / 127.0f);
     channel->right = SFX_GAIN * level * SDL_min(1.0f, separation / 127.0f);
-    channel->send = SFX_GAIN * sqrtf(level);
+    channel->send = SFX_GAIN * sqrtf(level) * channel->send_scale;
     channel->separation = separation; channel->pitch = pitch;
     channel->step = channel->sample.rate / (double)OUTPUT_RATE * pow(2.0, (pitch - 128) / 64.0);
     Treble_Tune(&channel->treble, (float)(0.5 * channel->step * OUTPUT_RATE), OUTPUT_RATE);
@@ -204,7 +205,7 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
     }
 }
 
-static void play_kind(int kind, float x, float y, float z, float level, float reach);
+static void play_kind(int kind, float x, float y, float z, float level, float reach, int personal);
 /* A shot that passes close by whizzes; one a tic, so a shotgun's pellets or a
    chaingun's burst don't pile up. */
 static void shot_traced(const mobj_t *shooter, const mobj_t *hit, float x1, float y1, float z1,
@@ -215,7 +216,7 @@ static void shot_traced(const mobj_t *shooter, const mobj_t *hit, float x1, floa
     if (!made_impacts || gametic == last) return;
     if (!Flyby_Near(players[consoleplayer].mo, shooter, hit, x1, y1, z1, x2, y2, z2, &x, &y, &z, &level)) return;
     last = gametic;
-    play_kind(IMPACT_FLYBY, x, y, z, level, 1);
+    play_kind(IMPACT_FLYBY, x, y, z, level, 1, 0);
 }
 
 void I_InitSound(void)
@@ -252,7 +253,7 @@ void I_ShutdownSound(void)
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 static void play_at(const made_sample_t *sample, float x, float y, float z, float level, float reach);
-static void play_through(const made_sample_t *sample, float x, float y, float z, float level, float reach, float most);
+static void play_through(const made_sample_t *sample, float x, float y, float z, float level, float reach, float most, int personal);
 
 /* Every tic the ambience voices follow the listener; every other the room is
    measured for the reverb. */
@@ -275,12 +276,13 @@ void I_UpdateSound(void)
         if (strike.due) play_at(MadeBank_Strike(gametic), strike.x, strike.y, strike.z, strike.level, 1);
         step_event_t steps[8];
         int count = footsteps ? Steps_Tic(steps, 8) : 0;
-        for (int i = 0; i < count; ++i) play_kind(steps[i].kind, steps[i].x, steps[i].y, steps[i].z, steps[i].level, 1);
+        for (int i = 0; i < count; ++i)
+            play_kind(steps[i].kind, steps[i].x, steps[i].y, steps[i].z, steps[i].level, 1, steps[i].personal);
         /* Now and then something behind the walls, with the ambience. */
         hidden_event_t hidden;
         if (ambience && Hidden_Tic(&hidden))
             play_through(MadeBank_Hidden(hidden.kind, (int)(hidden.take % MADE_VARIANTS)), hidden.x, hidden.y, hidden.z,
-                         hidden.level * ambience_amount, hidden.reach, hidden.cutoff);
+                         hidden.level * ambience_amount, hidden.reach, hidden.cutoff, 0);
     }
     if (!acoustics || (gametic >= measured && gametic - measured < 2)) return;
     measured = gametic;
@@ -353,7 +355,7 @@ void I_SubmitSound(void) { }
 void I_SetChannels(void) { }
 /* Takes the free channel, or the quietest (the oldest of equals), so a
    faint far-off sound gives way to a near one. */
-static int start_sample(sample_t sample, float volume, int separation, int pitch, float cutoff, float there)
+static int start_sample(sample_t sample, float volume, int separation, int pitch, float cutoff, float there, float send_scale)
 {
     SDL_LockAudioStream(stream);
     int slot = 0;
@@ -373,6 +375,7 @@ static int start_sample(sample_t sample, float volume, int separation, int pitch
     channel->measured = gametic;
     channel->placed = 0;
     channel->reach = 1;
+    channel->send_scale = send_scale;
     if (next_handle == INT_MAX) next_handle = 1;
     channel->handle = next_handle++;
     gains(channel, volume, separation, pitch);
@@ -389,7 +392,7 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
     if (!stream || id < 1 || id >= NUMSFX || !samples[id].data) return 0;
     float reach = reach_of(id);
     if (placed && falls_off()) level = snd_SfxVolume * distance_gain(listener_distance(x, y) / reach);
-    int handle = start_sample(samples[id], level, separation, pitch, cutoff, placed ? there : 0);
+    int handle = start_sample(samples[id], level, separation, pitch, cutoff, placed ? there : 0, 1);
     SDL_LockAudioStream(stream);
     mix_channel_t *channel = find(handle);
     if (channel) { channel->placed = placed; channel->x = x; channel->y = y; channel->reach = reach; }
@@ -402,8 +405,10 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
    any effect. level scales the effects volume; reach how much farther than
    DOOM's sounds it carries, as a louder sound would. Made-up sounds are
    placed once: those that follow a thing are short. most caps the treble,
-   for a sound heard through a wall whatever the way to it. */
-static void play_through(const made_sample_t *sample, float x, float y, float z, float level, float reach, float most)
+   for a sound heard through a wall whatever the way to it. Personal
+   movement keeps source loudness and the effects volume linear in its
+   room send; only distance makes it relatively wetter. */
+static void play_through(const made_sample_t *sample, float x, float y, float z, float level, float reach, float most, int personal)
 {
     const mobj_t *listener = players[consoleplayer].mo;
     if (!stream || !sample || !listener || gamestate != GS_LEVEL || level <= 0) return;
@@ -411,6 +416,8 @@ static void play_through(const made_sample_t *sample, float x, float y, float z,
     float distance = listener_distance(x, y);
     if (distance > 1200 * reach) return;
     float volume = snd_SfxVolume * level * distance_gain(distance / reach);
+    float source = SDL_clamp(snd_SfxVolume, 0, 15) / 15.0f * level;
+    float send_scale = personal ? sqrtf(SDL_clamp(source, 0.0f, 1.0f)) : 1;
     /* A sound at the listener (their own steps) has no direction: centred,
        turning toward where it is over the first 64 units. */
     float angle = atan2f(dy, dx) - listener->angle * (2 * SDL_PI_F / 4294967296.0f);
@@ -418,16 +425,16 @@ static void play_through(const made_sample_t *sample, float x, float y, float z,
     float cutoff = SDL_min(most, Occlusion_Cutoff((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), (fixed_t)(z * FRACUNIT),
                                                   muffle_walls, muffle_distance));
     start_sample((sample_t){ sample->data, sample->length, sample->rate }, volume, separation, 128, cutoff,
-                 Beyond_Share(&beyond, x, y));
+                 Beyond_Share(&beyond, x, y), send_scale);
 }
 
 static void play_at(const made_sample_t *sample, float x, float y, float z, float level, float reach)
 {
-    play_through(sample, x, y, z, level, reach, OCCLUSION_OPEN_HZ);
+    play_through(sample, x, y, z, level, reach, OCCLUSION_OPEN_HZ, 0);
 }
 
 /* A variation of the kind, never one of the last two of it. */
-static void play_kind(int kind, float x, float y, float z, float level, float reach)
+static void play_kind(int kind, float x, float y, float z, float level, float reach, int personal)
 {
     static int last[IMPACT_KINDS][2], started;
     static unsigned turn = 0x1234567u;
@@ -438,7 +445,7 @@ static void play_kind(int kind, float x, float y, float z, float level, float re
     while (variant == last[kind][0] || variant == last[kind][1]);
     last[kind][1] = last[kind][0];
     last[kind][0] = variant;
-    play_at(MadeBank_Impact(kind, variant), x, y, z, level, reach);
+    play_through(MadeBank_Impact(kind, variant), x, y, z, level, reach, OCCLUSION_OPEN_HZ, personal);
 }
 void I_MadeSound(int kind, float x, float y, float z)
 {
@@ -451,7 +458,7 @@ void I_MadeSound(int kind, float x, float y, float z)
     /* A window breaking is loud: heard across a courtyard, where an
        enemy's stray shot can take it out. */
     int breaking = kind >= IMPACT_GLASS_SHATTER && kind <= IMPACT_GLASS_FRACTURE_BIG;
-    play_kind(kind, x, y, z, level, breaking ? 2.0f : 1.0f);
+    play_kind(kind, x, y, z, level, breaking ? 2.0f : 1.0f, 0);
 }
 void I_AmbienceSilence(float x, float y, float z, float radius) { Ambience_Silence(x, y, z, radius); }
 void I_AmbienceGlaze(int line, int whole) { Ambience_Glaze(line, whole); }

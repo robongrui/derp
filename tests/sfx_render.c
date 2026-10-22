@@ -1,7 +1,9 @@
 /* Renders the made-up effects to WAV files without the game, for listening:
 
      doom-sfx-render <iwad> [-kind name|impacts|ambient|walk|hidden|all] [-room dry|room|hall|stone|all]
-                     [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-out dir]
+                     [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1]
+                     [-kit on|off] [-metal current|friction|tread]
+                     [-movement-send current|legacy] [-out dir]
    With no -rate, use each effect's native game-bank rate.
 
    Each file plays the WAD's pistol three times, each shot with the effect
@@ -23,7 +25,15 @@
    six walking, ten running and a landing, as the game layers them, with
    the kit -armor (0 none, 1 green, 2 blue) and -heft (0 fist or pistol,
    1 a slung gun, 2 rockets or BFG) say. -ring scales how much the kit's
-   metal rings (0 leaves the noise alone).
+   metal rings (0 leaves the noise alone). -kit off leaves only the boot
+   contact, with the same steps, timing and room, for comparing floor
+   sounds; its files are walk-<floor>-boots-<room>.wav. Kit defaults to on.
+   -metal current (the default), friction or tread selects the metal-floor
+   contact: the current sound, dry sole friction or heel-to-tread contact.
+   -movement-send current (the default) sends the boots and kit to the room
+   at their actual level; legacy uses the previous square-root send for
+   comparisons. It changes only the walk layers' room send, at full game
+   SFX volume; direct sounds and the pistol are unchanged.
 
    -kind hidden renders the sounds inside a base's walls (pipe-rush,
    steam, ... of audio/hidden_synth.h), three variations each after
@@ -54,6 +64,8 @@
 #define TIC_RATE 35
 
 static int gun_on = 1;
+static int kit_on = 1;
+static int movement_send_legacy = 0;
 
 typedef struct { const unsigned char *data; int length, rate; } sample_t;
 
@@ -313,9 +325,11 @@ static void render_walk (const sample_t *pistol, int floor, int armor, int heft,
 	int count = Step_Layers (floor, force, armor, heft, layers);
 	for (int l = 0; l < count; ++l)
 	{
+	    if (!kit_on && l > 0) continue;
 	    int length;
 	    unsigned char *data = render_8bit (layers[l].kind, 7717u * (unsigned)s + 31u * (unsigned)l + 5, rate, &length, 0);
-	    voice_t v = { { data, length, rate }, (long)(t * RATE), frames, SFX_GAIN * layers[l].level, SFX_GAIN * sqrtf (layers[l].level) };
+	    voice_t v = { { data, length, rate }, (long)(t * RATE), frames, SFX_GAIN * layers[l].level,
+		SFX_GAIN * (movement_send_legacy ? sqrtf (layers[l].level) : layers[l].level) };
 	    mix (&v, stereo, send, frames);
 	    free (data);
 	}
@@ -329,7 +343,10 @@ static void render_walk (const sample_t *pistol, int floor, int armor, int heft,
     }
     char name[64];
     static const char *const kit[3] = { "light", "slung", "heavy" };
-    snprintf (name, sizeof(name), "walk-%s-%s-armor%d", Impact_Name (floor) + 5, kit[heft], armor);
+    if (kit_on)
+	snprintf (name, sizeof(name), "walk-%s-%s-armor%d", Impact_Name (floor) + 5, kit[heft], armor);
+    else
+	snprintf (name, sizeof(name), "walk-%s-boots", Impact_Name (floor) + 5);
     finish (stereo, send, frames, room, name, out);
 }
 
@@ -443,7 +460,7 @@ int main (int argc, char **argv)
     float level = -1;
     if (argc < 2)
     {
-	fprintf (stderr, "usage: %s <iwad> [-kind name|pistol|impacts|ambient|walk|hidden|all] [-room dry|room|hall|stone|all] [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-out dir]\nWithout -rate, use each effect's native game-bank rate.\n", argv[0]);
+	fprintf (stderr, "usage: %s <iwad> [-kind name|pistol|impacts|ambient|walk|hidden|all] [-room dry|room|hall|stone|all] [-rate Hz] [-level L] [-gun on|off] [-armor 0-2] [-heft 0-2] [-ring 1] [-kit on|off] [-metal current|friction|tread] [-movement-send current|legacy] [-out dir]\nWithout -rate, use each effect's native game-bank rate.\n", argv[0]);
 	return 2;
     }
     for (int i = 2; i + 1 < argc; i += 2)
@@ -457,6 +474,25 @@ int main (int argc, char **argv)
 	else if (!strcmp (argv[i], "-heft")) heft = atoi (argv[i + 1]);
 	else if (!strcmp (argv[i], "-ring")) Step_SetGearRing ((float)atof (argv[i + 1]));
 	else if (!strcmp (argv[i], "-gun")) gun_on = strcmp (argv[i + 1], "off") != 0;
+	else if (!strcmp (argv[i], "-kit"))
+	{
+	    if (!strcmp (argv[i + 1], "on")) kit_on = 1;
+	    else if (!strcmp (argv[i + 1], "off")) kit_on = 0;
+	    else fail ("Unknown kit setting %s", argv[i + 1]);
+	}
+	else if (!strcmp (argv[i], "-metal"))
+	{
+	    if (!strcmp (argv[i + 1], "current")) Step_SetMetalStyle (STEP_METAL_CURRENT);
+	    else if (!strcmp (argv[i + 1], "friction")) Step_SetMetalStyle (STEP_METAL_FRICTION);
+	    else if (!strcmp (argv[i + 1], "tread")) Step_SetMetalStyle (STEP_METAL_TREAD);
+	    else fail ("Unknown metal style %s", argv[i + 1]);
+	}
+	else if (!strcmp (argv[i], "-movement-send"))
+	{
+	    if (!strcmp (argv[i + 1], "current")) movement_send_legacy = 0;
+	    else if (!strcmp (argv[i + 1], "legacy")) movement_send_legacy = 1;
+	    else fail ("Unknown movement send %s", argv[i + 1]);
+	}
 	else fail ("Unknown option %s", argv[i]);
     }
     if (rate_given && (rate < 4000 || rate > 48000)) fail ("Rate %s is out of range", "");

@@ -1,6 +1,6 @@
 /* Footsteps and splashes. A step carries a heavy man in combat boots: dense
  * filtered noise for the impact and his weight, a quiet tone under it, the
- * sole settling into its tail, colored by the floor - a plate's modes on
+ * sole settling into its tail, colored by the floor - a short response on
  * metal, a knock on wood, grit on stone, a crunch on grass - and driven so
  * it punches. Running lands on the ball of the foot, harder. A
  * moment after each step his kit settles: buckles, a slung gun, armor. In
@@ -76,11 +76,11 @@ static void grit(float *out, int frames, int at, int rate, rng_t *r, int count, 
 
 /* How each floor takes a boot, over the same heavy body: where the heel's
    impact sits, and what the floor adds. Stone is dense and dead: a dry
-   sole snap and grit, nothing rings. Steel deck plate rings: a bright hard
-   contact, then fixed inharmonic modes of unequal strength, the low and mid
-   ones lasting 100-150 ms past the hit, the high ones gone fast, struck again
-   softly as the sole settles. Fixed pitches per floor, nudged a little, so
-   it stays one floor. Fades are the whole audible tail. */
+   sole snap and grit, nothing rings. Metal rests on concrete or earth:
+   the backing stops it flexing and booming like a suspended deck. The
+   rubber sole gives it a dull push and only a short, faint metallic edge.
+   Fixed pitches per floor, nudged a little, so it stays one floor. Fades
+   are the whole audible tail. */
 typedef struct { float centre, hi; } floor_voice_t;
 static const floor_voice_t voices[4] = {
     { 350, 2000 },  /* stone */
@@ -89,19 +89,88 @@ static const floor_voice_t voices[4] = {
     { 240, 900 },   /* soft */
 };
 
-/* A deck plate's modes: pitch, strength, fade. None down where the boot's
-   own weight is; the plate is heard above it. */
+/* A supported metal surface: pitch, strength, audible fade. The backing
+   strongly suppresses low panel modes and damps the surface vibration
+   within 6-18 ms. The boot supplies the weight, without a hollow ring. */
 static const float plate[6][3] = {
-    { 237, 0.35f, 0.15f }, { 412, 0.5f, 0.15f }, { 689, 0.55f, 0.13f },
-    { 1130, 0.5f, 0.1f }, { 1847, 0.35f, 0.05f }, { 2930, 0.2f, 0.02f },
+    { 237, 0.02f, 0.012f }, { 412, 0.03f, 0.014f },
+    { 689, 0.3f, 0.018f }, { 1130, 0.35f, 0.014f },
+    { 1847, 0.25f, 0.01f }, { 2930, 0.15f, 0.006f },
 };
 
-static void strike_plate(float *out, int frames, int at, int rate, rng_t *r, float nudge, float amp)
+/* One plate mode struck by the squashing sole: it swells over the contact
+   instead of starting at full swing, so nothing clicks. */
+static void plate_mode(float *out, int frames, int at, int rate, float freq, float amp, float seconds,
+                       float squash, float phase)
 {
-    contact(out, frames, at, rate, r, 500, 1100, 3500, 0.0005f, 0.015f / 3.5f, 1.2f * amp);
+    if (freq >= 0.47f * rate || at >= frames) return;
+    float w = 2 * SYNTH_PI * freq / rate;
+    int length = (int)(seconds * rate * 9.2f);  /* down 80 dB */
+    for (int n = 0; n < length && at + n < frames; ++n)
+    {
+        float t = n / (float)rate, env = (1 - expf(-t / squash)) * expf(-t / seconds);
+        if (at + n >= 0) out[at + n] += amp * env * sinf(w * n + phase);
+    }
+}
+
+/* A rubber sole on the plate: a dull thup of the sole itself, then the
+   modes, each weaker the higher it sits above what a contact of squash
+   seconds can reach. Harder steps squash shorter and reach higher. */
+static void strike_plate(float *out, int frames, int at, int rate, rng_t *r, float nudge, float squash, float amp)
+{
+    float reach = 1 / (SYNTH_PI * squash);
+    contact(out, frames, at, rate, r, 200, 550, 1400, squash, 0.012f / 3.5f, 0.5f * amp);
     for (int m = 0; m < 6; ++m)
-        add_partial(out, frames, at, rate, plate[m][0] * nudge, plate[m][1] * amp * rng_range(r, 0.8f, 1.15f),
-                    plate[m][2] / 3.5f, rng_range(r, 0, 6.28f));
+    {
+        float f = plate[m][0] * nudge, over = f / reach;
+        plate_mode(out, frames, at, rate, f, plate[m][1] * amp * rng_range(r, 0.8f, 1.15f) / (1 + over * over),
+                   plate[m][2] / 3.5f, squash, rng_range(r, 0, 6.28f));
+    }
+}
+
+static int metal_style = STEP_METAL_CURRENT;
+void Step_SetMetalStyle(int style)
+{
+    metal_style = style >= STEP_METAL_CURRENT && style <= STEP_METAL_TREAD ? style : STEP_METAL_CURRENT;
+}
+
+/* Smooth steel over solid ground: the rubber presses down, then briefly
+   grips and releases as the foot rolls forward. All broad noise, with no
+   ringing surface modes. The common boot already carries the weight. */
+static void metal_friction(float *out, int frames, int rate, rng_t *r, int run, int second)
+{
+    contact(out, frames, 0, rate, r, 180, 480, 1200, 0.0025f, 0.004f, run ? 0.45f : 0.35f);
+    int release = second + (int)(rng_range(r, 0.002f, 0.006f) * rate);
+    scrape(out, frames, release, rate, r, rng_range(r, 1100, 1700),
+           rng_range(r, run ? 0.025f : 0.035f, run ? 0.035f : 0.05f), run ? 0.42f : 0.32f);
+}
+
+/* A firm heel and successive rubber tread lugs seating on supported steel.
+   Broad, damped contacts carry the texture; nothing excites a panel mode. */
+static void metal_tread(float *out, int frames, int rate, rng_t *r, int run, int second)
+{
+    float tint = rng_range(r, 0.94f, 1.06f);
+    int count = run ? 3 : 4;
+    float spacing = run ? 0.003f : 0.008f;
+    int start = second - (int)((run ? 0.002f : 0.004f) * rate);
+    if (start < 0) start = 0;
+
+    contact(out, frames, 0, rate, r, 300, 900 * tint, 2000,
+            run ? 0.0010f : 0.0014f, 0.0030f, run ? 0.8f : 0.65f);
+
+    /* Soft, broad lug contacts: walking rolls through them, while running
+       compresses them into the sole-settle contact. */
+    for (int k = 0; k < count; ++k)
+    {
+        float jitter = rng_range(r, -0.0006f, 0.0006f);
+        int at = start + (int)((k * spacing + jitter) * rate);
+        float centre = rng_range(r, 650, 950) * tint;
+        float amp = (run ? 0.58f : 0.68f) * rng_range(r, 0.88f, 1.12f);
+        amp *= 1.0f - 0.13f * k;
+        if (at < 0) at = 0;
+        contact(out, frames, at, rate, r, 350, centre, 1800,
+                0.0014f, run ? 0.0024f : 0.0028f, amp);
+    }
 }
 
 static void floor_color(int floor, int run, float *out, int frames, int rate, rng_t *r, int second)
@@ -114,8 +183,11 @@ static void floor_color(int floor, int run, float *out, int frames, int rate, rn
         grit(out, frames, (int)(0.003f * rate), rate, r, (int)rng_range(r, 2, 5.99f), 0.04f, 0.25f);
         break;
     case IMPACT_STEP_METAL:
-        strike_plate(out, frames, 0, rate, r, nudge, run ? 1.3f : 1);
-        strike_plate(out, frames, second, rate, r, nudge, 0.35f);
+        /* Rubber spreads the load over milliseconds. The supported metal
+           gives a short surface response, with no hollow deck ring.
+           Running is firmer; the settling sole is softer again. */
+        strike_plate(out, frames, 0, rate, r, nudge, run ? 0.0009f : 0.0012f, run ? 1.5f : 1.3f);
+        strike_plate(out, frames, second, rate, r, nudge, 0.0018f, 0.35f);
         break;
     case IMPACT_STEP_WOOD:
         add_partial(out, frames, 0, rate, 135 * nudge, 0.5f, 0.05f, 0);
@@ -163,9 +235,21 @@ static void footfall(int floor, int run, float *out, int frames, int rate, rng_t
     contact(out, frames, second, rate, r, 120, 0.75f * v->centre, 0.7f * v->hi, 0.003f, 0.017f * vary, run ? 0.6f : 0.5f);
     level(out, frames);
     drive(out, frames, run ? 2.4f : 1.8f, 1);
-    floor_color(floor, run, out, frames, rate, r, second);
-    if (run) scrape(out, frames, (int)(rng_range(r, 0.04f, 0.07f) * rate), rate, r, rng_range(r, 900, 1400), 0.06f, 0.22f);
-    else scrape(out, frames, second, rate, r, rng_range(r, 1200, 2000), rng_range(r, 0.05f, 0.1f), 0.09f);
+    if (floor == IMPACT_STEP_METAL && metal_style != STEP_METAL_CURRENT)
+    {
+        /* The two auditions share the same boot and final gain. Their
+           surface details use a copy so changing the model cannot change
+           the body's level. Each supplies its own release or tread roll. */
+        rng_t surface = *r;
+        if (metal_style == STEP_METAL_FRICTION) metal_friction(out, frames, rate, &surface, run, second);
+        else metal_tread(out, frames, rate, &surface, run, second);
+    }
+    else
+    {
+        floor_color(floor, run, out, frames, rate, r, second);
+        if (run) scrape(out, frames, (int)(rng_range(r, 0.04f, 0.07f) * rate), rate, r, rng_range(r, 900, 1400), 0.06f, 0.22f);
+        else scrape(out, frames, second, rate, r, rng_range(r, 1200, 2000), rng_range(r, 0.05f, 0.1f), 0.09f);
+    }
     float gain = STEP_HEADROOM * rng_range(r, 0.89f, 1.12f);
     for (int n = 0; n < frames; ++n) out[n] *= gain;
 }
