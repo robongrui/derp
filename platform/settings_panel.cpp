@@ -33,6 +33,11 @@ bool hasAuthored(const Settings&) {return Game_HasEffect(GAME_EFFECT_AUTHORED_EP
 }
 
 void fitGame(Settings &s) {
+    // The combined Combat choices set the switches the effects read.
+    s.deathDirector=s.deaths>=1;s.deathFalls=s.deaths>=2;s.deathRagdoll=s.deaths>=3;s.deathGuided=s.deaths>=3;
+    s.deathBlast=s.deaths>=4;s.deathFaceViewer=0;
+    s.deathMotion=s.hitFlinch=s.hitReactions!=0;
+    s.blood=s.bloodLevel>=1;s.bloodSpray=s.bloodShine=s.bloodLevel>=2;
     if(!Game_HasEffect(GAME_EFFECT_WINDOW_GLASS))s.windowGlass=0;
     if(!Game_HasEffect(GAME_EFFECT_SHOOTABLE_LIGHTS))s.shootableLights=0;
     if(!Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF))s.naturalFalloff=0;
@@ -206,54 +211,31 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                     "Rain has run down the outside walls below windows for years: dark ragged streaks from the sill, rusty on "
                     "metal. Inside they start once rain blows in through a broken pane. Needs window glass.",hasGlass)}},
             {"Combat",{
-                check("blood","Blood splats and pools",&s.blood,
-                    "Hitscan hits leave splats on floors and nearby walls; corpses grow a pool. Colors come from the WAD's blood sprite."),
-                check("blood_spray","Blood spray",&s.bloodSpray,
-                    "Hits throw blood out the far side of the body and kills burst, the drops flying as pixels and landing as splats "
-                    "on floors, walls and low ceilings. Fresh wounds drip, bodies sliding across the floor smear it and bodies thrown "
-                    "into a wall splash it. Off: hits only leave splats, as before.",
-                    [](const Settings &d){return d.blood!=0;}),
-                check("blood_shine","Wet blood shine",&s.bloodShine,"Fresh floor blood and wound edges glint under lights. Floor blood dries matte over time.",
-                    [](const Settings &d){return d.blood!=0||d.wounds!=0;}),
+                choice("blood_level","Blood",&s.bloodLevel,{"Off","Splats","Full"},{0,1,2},
+                    "Splats: hitscan hits leave splats on floors and nearby walls, and corpses grow a pool, in the WAD's blood colors. "
+                    "Full adds the spray: hits throw blood out the far side of the body and kills burst, the drops flying as pixels "
+                    "and landing as splats on floors, walls and low ceilings; fresh wounds drip, sliding bodies smear it, bodies "
+                    "thrown into a wall splash it; and fresh blood glints under lights, drying matte."),
                 check("wounds","Wound holes",&s.wounds,
                     "Bullets and pellets leave holes with ragged bloody edges, dark torn rims and short blood smears. "
                     "The marks follow the monster's animation. Close hits widen a hole; seen from the side it closes. "
                     "Drawing only: the monster is hit as always."),
-                check("varied_deaths","Varied deaths",&s.deathDirector,
-                    "No two monsters die alike: the death frames keep their order but take new timing each kill (a snap, a "
-                    "hesitation then a drop, a slump), monsters dropped by one blast differ on purpose, and the body settles "
-                    "as it lands. Now and then a hit off the middle turns it, or a hard push steps it back. Drawing only."),
-                choice("death_falls","Procedural falls",&s.deathFalls,{"Off","By the hit","Legs swept","Chest blast","Head shot"},{0,1,2,3,4},
-                    "Monsters standing on two legs fall a way their drawings never show, on joints placed by hand or found in their "
-                    "own art. A weak or low hit buckles the knee on its side and the body goes over, toward its weapon or away; a "
-                    "hard hit snaps the shoulders back and knocks the body down, sooner and farther the harder the hit; a killing "
-                    "shot through the head cuts the strings and the body crumples. Drawing only: damage is the game's own. The "
-                    "fixed choices are for judging each one.",
-                    [](const Settings &d){return d.deathDirector!=0;}),
-                check("death_ragdoll","Ragdoll falls",&s.deathRagdoll,
-                    "Monsters standing on two legs drop as ragdolls instead: their drawing gets a body as deep as their side view "
-                    "shows, on a small skeleton the killing blow knocks over (thrown back, legs swept, spun from the side, or "
-                    "strings cut by a head shot), and they come to rest lying on their back or side, as their own drawing sees them. "
-                    "Takes over from Procedural falls. Drawing only.",
-                    [](const Settings &d){return d.deathDirector!=0;}),
-                check("death_guided","Shot deaths on strings",&s.deathGuided,
-                    "Two ragdolls in three killed by a blast to the chest from the front play the death their drawings show: the "
-                    "chest yanked back as if on a stunt wire, the legs giving way, the body sitting back and landing hips first, "
-                    "then the back, the head last. The harder the blast, the harder the yank; point blank it goes down flat. "
-                    "Only monsters whose hand rig fits it (the zombieman). Drawing only.",
-                    [](const Settings &d){return d.deathDirector!=0&&d.deathRagdoll!=0;}),
-                check("death_face_viewer","Dying turn to face you",&s.deathFaceViewer,
-                    "A monster killed facing away turns toward you before its death frames, which are drawn facing the viewer, "
-                    "instead of snapping round.",
-                    [](const Settings &d){return d.deathDirector!=0;}),
-                check("death_motion","Death reactions",&s.deathMotion,
-                    "Dying monsters jolt with the killing blow: thrown back by high hits, legs knocked out by low ones, crumpling "
-                    "under the chainsaw, hopping when gibbed, swaying as fliers fall. Drawn in whole-pixel rows over the game's own "
-                    "death frames, and gone by the corpse frame."),
-                check("hit_flinch","Hit flinches",&s.hitFlinch,"Monsters lean with the push of every hit and spring back. Drawing only: the game sees no difference."),
+                choice("deaths","Deaths",&s.deaths,{"Classic","Varied","Procedural falls","Ragdolls","Ragdolls, Hollywood"},{0,1,2,3,4},
+                    "Classic: the game's own death frames. Varied: no two monsters die alike, the frames retimed (a snap, a hesitation, "
+                    "a slump), turned off the middle or stepped back by the push. Procedural falls: monsters on two legs fall a way "
+                    "their drawings never show, on joints placed by hand or found in the art, knocked down by the hit. Ragdolls: "
+                    "their drawing gets a body as deep as its side view on a small skeleton the killing blow throws (back, legs "
+                    "swept, spun, strings cut by a head shot), the zombieman's chest blasts sometimes yanked as on a stunt wire. "
+                    "Hollywood: shots punch harder and spin the body as struck, and explosions send it flying off walls and "
+                    "columns, gibs included; each thrown body keeps track of twice the floor around it, so big blasts cost more "
+                    "CPU, and the Arch-vile raises the game's corpse where the monster died, not where its body landed. Drawing only."),
+                check("hit_reactions","Hit reactions",&s.hitReactions,
+                    "Monsters lean with the push of every hit and spring back, and dying ones jolt with the killing blow over the "
+                    "game's own death frames: thrown back by high hits, legs knocked out by low ones, crumpling under the chainsaw. "
+                    "Drawing only: the game sees no difference."),
                 slider("body_motion_strength","Reaction strength",&s.bodyMotionStrength,0.5,3,0.25,
-                    "How far death reactions and hit flinches throw, bend and buckle the body.",
-                    [](const Settings &d){return d.deathMotion!=0||d.hitFlinch!=0;}),
+                    "How far hit reactions throw, bend and buckle the body.",
+                    [](const Settings &d){return d.hitReactions!=0;}),
                 check("soft_effects","Soft effect sprites",&s.softSprites,"Explosions, puffs and teleport fog stop slicing into walls and dissolve on a dither at floors."),
                 check("shootable_lights","Shootable lights",&s.shootableLights,
                     "Computer panels and tech walls throw blue sparks when shot. A shot or fireball into the glowing part "
@@ -393,13 +375,30 @@ template<class Visit> void eachOption(Settings &s,Visit visit) {
     for(OptionTab &tab:optionTabs(s))for(OptionSection &section:tab.sections)for(Option &option:section.options)visit(option);
 }
 }
+// graphics.cfg from before the combined Combat choices: the old switches' values, until finishReading
+// turns them into the choices a file without those keys still lacks.
+static double oldDeath[4]={1,1,0,0},oldHit[2]={1,1},oldBlood[3]={1,1,1};   // varied, falls, ragdoll, blast; motion, flinch; blood, spray, shine
+static bool readOld[3],readNew[3];
 void readOption(Settings &s,const char *key,double value) {
+    static const char *const olds[][4]={{"varied_deaths","death_falls","death_ragdoll","death_blast"},{"death_motion","hit_flinch"},{"blood","blood_spray","blood_shine"}};
+    double *into[]={oldDeath,oldHit,oldBlood};
+    static const char *const news[]={"deaths","hit_reactions","blood_level"};
+    for(int g=0;g<3;++g) {
+        for(int k=0;k<4&&olds[g][k];++k)if(!strcmp(key,olds[g][k])) {into[g][k]=value;readOld[g]=true;}
+        if(!strcmp(key,news[g]))readNew[g]=true;
+    }
     eachOption(s,[&](Option &option) {
         if(strcmp(option.key,key))return;
         if(option.kind==OptionKind::Check)*option.flag=value!=0;
         else if(option.kind==OptionKind::Choice) {for(int v:option.values)if(v==value)*option.flag=v;}
         else *option.number=option.snap(value);
     });
+}
+void finishReading(Settings &s) {
+    if(readOld[0]&&!readNew[0])s.deaths=!oldDeath[0]?0:oldDeath[2]?(oldDeath[3]?4:3):oldDeath[1]?2:1;
+    if(readOld[1]&&!readNew[1])s.hitReactions=oldHit[0]||oldHit[1];
+    if(readOld[2]&&!readNew[2])s.bloodLevel=!oldBlood[0]?0:oldBlood[1]||oldBlood[2]?2:1;
+    for(int g=0;g<3;++g)readOld[g]=readNew[g]=false;
 }
 void writeOptions(FILE *file,Settings &s) {
     eachOption(s,[&](Option &option) {

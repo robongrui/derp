@@ -88,7 +88,12 @@ static const DeathArt &deathArt(int first,const mobjinfo_t &info) {
 }
 void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,float high,bool gib,const mobj_t *attack,float hitZ,float hitU) {
     // A rigged monster falls as a ragdoll (ragdoll.cpp) or procedurally (death_falls.cpp) instead.
-    if(!gib&&settings.deathRagdoll&&startRagdoll(thing,dx,dy,speed,side,high,hitZ,hitU))return;
+    game_thing_role by=attack?Game_ThingRole(attack->type):GAME_THING_OTHER;
+    bool blast=by==GAME_THING_ROCKET||by==GAME_THING_BARREL||by==GAME_THING_BIG_SHOT;
+    // With Flying enemies a blast's gib is drawn as the whole body thrown (the gib's blood and sound stay
+    // the game's): a rocket gibs a zombieman every time, and it went to mush instead of flying.
+    bool flies=!gib||(blast&&settings.deathBlast);
+    if(flies&&settings.deathRagdoll&&startRagdoll(thing,dx,dy,speed,side,high,hitZ,hitU,blast))return;
     if(!gib&&startFall(thing,speed,high,side,hitZ,hitU))return;
     const mobjinfo_t &info=*thing.info;
     int first=gib?info.xdeathstate:info.deathstate;

@@ -1,6 +1,10 @@
 /* Ripple rings, spouts and bubbles where things enter or move in or are
    shot into liquids. */
 #include "internal.h"
+extern "C" {
+#include "../audio/impact_synth.h"
+#include "../audio/sound_options.h"
+}
 
 namespace doom3d {
 // Splashes: per tic, things in liquid sectors are watched for landing,
@@ -10,9 +14,11 @@ namespace doom3d {
 struct SplashWatch { float z;bool missile,seen;int ripple;bool down;float x,y; };
 struct Ring { float x,y,born,speed,life,strength;int sector; };
 struct Spout { float x,y,born;int sector;uint32_t seed; };
+struct Plunge { float x,y,born,heft,radius;int sector;uint32_t seed; };
 static std::unordered_map<const mobj_t*,SplashWatch> splashWatch;
 static std::vector<Ring> rings;
 static std::vector<Spout> spouts;
+static std::vector<Plunge> plunges;
 static unsigned splashLevelSerial;
 // Rings and spouts hold each frame this many tics, like the bullet puff,
 // so they step like a Doom sprite rather than moving every tic.
@@ -30,6 +36,28 @@ static void spout(float x,float y,int sector) {
     for(const Spout &s:spouts)if(s.born==now&&std::hypot(s.x-x,s.y-y)<32)return;
     if(spouts.size()>=16)spouts.erase(spouts.begin());
     spouts.push_back({x,y,now,sector,(uint32_t)leveltime*2654435761u^(uint32_t)(randomRange(0,1)*16777216)});
+}
+// A body coming down in a liquid: a plunge (buildPlunges) and a ring wider
+// than the body. How hard is its fall (units a tic) times its weight (mass
+// 100, a zombieman's, counts as 1): a body slumping in throws about 0.6, a
+// zombieman falling hard about 1.5, a baron dropping in up to 3.5. Any body
+// going in throws some; a whole one is heavy, not a pebble (at a tenth of the
+// fall alone a ragdoll's torso threw a cute little splash).
+static void plunge(float x,float y,float z,int sector,float fall,float mass,float radius,bool ring=true) {
+    float heft=std::min(3.5f,std::clamp(0.5f+fall/8,0.5f,2.5f)*std::clamp(std::sqrt(mass/100),0.8f,2.2f));
+    if(ring)ripple(x,y,sector,std::clamp(radius*2+heft*24,32.0f,110.0f));
+    float now=leveltime/(float)TICRATE;
+    if(plunges.size()>=8)plunges.erase(plunges.begin());
+    plunges.push_back({x,y,now,heft,radius,sector,(uint32_t)leveltime*2654435761u^(uint32_t)(randomRange(0,1)*16777216)});
+    I_MadeSound(sectorMist[sector].thick?IMPACT_SPLASH_THICK:IMPACT_SPLASH_WATER,x,y,z);
+}
+bool bodySplash(float x,float y,float fall,float mass,float radius) {
+    if(!settings.splashes||levelSerial!=r_levelserial||splashLevelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return false;
+    const sector_t *sector=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
+    int index=int(sector-sectors);
+    if(!sectorMist[index].liquid||sector->floorpic==skyflatnum)return false;
+    plunge(x,y,floorZ(sector),index,fall,mass,radius);
+    return true;
 }
 // Free-aimed hitscan shots stopping on a floor or ceiling (R_PlaneImpact):
 // liquids splash, the pellets of one blast sharing a ring where they land
@@ -62,7 +90,7 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
 }
 void watchSplashes() {
     if(!settings.splashes||levelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return;
-    if(splashLevelSerial!=r_levelserial) {splashWatch.clear();rings.clear();spouts.clear();splashLevelSerial=r_levelserial;}
+    if(splashLevelSerial!=r_levelserial) {splashWatch.clear();rings.clear();spouts.clear();plunges.clear();splashLevelSerial=r_levelserial;}
     for(auto &entry:splashWatch)entry.second.seen=false;
     for(int i=0;i<numsectors;++i) {
         if(!sectorMist[i].liquid||sectors[i].floorpic==skyflatnum)continue;
@@ -85,6 +113,10 @@ void watchSplashes() {
             if(watch.missile&&!missile&&z<=floor+8) {ripple(x,y,i,48);spout(x,y,i);}
             else if(surface&&watch.z>floor+3) {
                 ripple(x,y,i,std::clamp(size*0.5f+(watch.z-z)*0.8f,12.0f,64.0f));
+                // A monster or corpse dropping in hard plunges; a ragdoll's body
+                // is elsewhere and plunges where its torso comes down (ragdoll.cpp).
+                if(!thing->player&&!missile&&watch.z-z>5&&(thing->flags&(MF_COUNTKILL|MF_CORPSE))&&!hasRagdoll(thing))
+                    plunge(x,y,floor,i,watch.z-z,(float)thing->info->mass,size*0.5f,false);
                 watch.ripple=leveltime;
             } else if(surface&&!down&&std::hypot(x-watch.x,y-watch.y)>1&&leveltime-watch.ripple>=12) {
                 // Monsters step without momentum, so movement is the change
@@ -207,6 +239,59 @@ static void buildSpouts(const Uniforms &camera) {
         }
     }
 }
+// Plunges: a body come down in a liquid throws it up round itself. The
+// surface heaves where it went in, and a crown of chunky globs is flung up
+// and out from its edge, arcs and drops back, each leaving a crest where it
+// falls in; from nearer its middle a few fatter ones shoot up twice as high
+// and hardly out, a column of the stuff. A harder fall and a heavier body
+// throw more, higher and wider: a baron's goes up most of a man's height.
+// Thick liquids throw fewer, fatter globs that hang longer; water throws a
+// spray of foam. Drawn like the spouts: rebuilt each frame
+// from the plunge's seed, stepped every two tics, colored from the liquid's
+// own to its brightest texel.
+static void buildPlunges(const Uniforms &camera) {
+    float now=gameSeconds();
+    plunges.erase(std::remove_if(plunges.begin(),plunges.end(),[&](const Plunge &p){return now<p.born-0.1f||now-p.born>2.2f;}),plunges.end());
+    for(const Plunge &p:plunges) {
+        const sector_t &sector=sectors[p.sector];
+        bool thick=sectorMist[p.sector].thick;
+        float t=std::floor(std::max(0.0f,now-p.born)*TICRATE/2)*2/TICRATE,floor=floorZ(&sector)+0.2f,ceiling=ceilZ(&sector);
+        Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
+        float light=liquidLight(p.sector,flat,p.x,p.y,floor+8,camera);
+        const auto &brightest=brightestColor(flat);const auto &color=sectorMist[p.sector].color;
+        std::array<float,3> albedo[3]; // Dim edge, body, crest.
+        for(int k=0;k<3;++k)for(int c=0;c<3;++c)albedo[k][c]=color[c]+(brightest[c]-color[c])*(k==0?0.25f:k==1?0.6f:1.0f);
+        // The heave: crest-bright over the body's middle for its first tics.
+        if(t<0.35f) {
+            float r=std::clamp(p.radius,8.0f,28.0f);
+            auto tint=crestOf(p.sector,t<0.17f?1.0f:0.6f);
+            for(float gy=-r;gy<=r;gy+=3)for(float gx=-r;gx<=r;gx+=3)
+                if(gx*gx+gy*gy<=r*r)pixelBlock(crestVertices,camera,p.x+gx,p.y+gy,floor,3,1,tint,true,nullptr,false,&crestCells);
+        }
+        float lift=std::sqrt(p.heft),gravity=thick?700:1225;
+        int crown=(int)std::round((thick?14:24)+(thick?10:20)*std::min(p.heft,3.0f));
+        int globs=crown+(int)std::round(6+4*std::min(p.heft,3.0f));
+        for(int i=0;i<globs;++i) {
+            auto random=[&](int k){return hashUnit(i,k,p.seed);};
+            bool column=i>=crown;
+            float angle=(i+random(0)*0.8f)*2*doomPi/(column?globs-crown:crown);
+            float start=column?p.radius*0.3f*random(1):p.radius*(0.5f+0.5f*random(1));
+            float high=(thick?30:44)*lift*(0.5f+0.5f*random(2))*(column?1.7f:1),out=(thick?26:40)*lift*(0.5f+0.5f*random(3))*(column?0.25f:1);
+            float s=t-(column?0.05f+random(4)*0.1f:random(4)*0.08f),up=std::sqrt(2*gravity*high),air=2*up/gravity;
+            float size=(thick?3+(random(5)<0.4f?1:0):(random(5)<0.3f?2:1))+(p.heft>1.5f?1:0)+(column?1:0);
+            int shade=std::min(2,(int)(random(6)*3));
+            float r=start+out*std::min(1.0f,std::max(0.0f,s)/air),x=p.x+std::cos(angle)*r,y=p.y+std::sin(angle)*r;
+            if(s<0)continue;
+            if(s<air) {
+                float z=std::min(up*s-0.5f*gravity*s*s,ceiling-floor-size);
+                std::array<float,3> shown=thick?albedo[shade]:foam(albedo[shade],0.3f+0.3f*std::clamp(z/high,0.0f,1.0f),light),lit;
+                for(int c=0;c<3;++c)lit[c]=std::min(1.0f,shown[c]*light);
+                pixelBlock(particleVertices,camera,x,y,floor+z,size,1,lit,true,&shown);
+            } else if(s<air+0.2f)
+                pixelBlock(crestVertices,camera,x,y,floor,size+2,1,crestOf(p.sector,0.75f),true,nullptr,false,&crestCells);
+        }
+    }
+}
 // Shore ripples (settings.shoreRipples): liquid held by a wall ripples
 // against it, drawn like the splash rings: unbroken lines of Doom-pixel
 // blocks. Each crest is a line of equal distance from the shore, as a wave
@@ -294,7 +379,7 @@ static void buildShoreRipples(const Uniforms &camera) {
 // flashlight included, step down to it as they age, and are gone at the end.
 void buildRings(Uniforms &camera) {
     buildShoreRipples(camera);
-    if(!settings.splashes||splashLevelSerial!=r_levelserial) {rings.clear();spouts.clear();return;}
+    if(!settings.splashes||splashLevelSerial!=r_levelserial) {rings.clear();spouts.clear();plunges.clear();return;}
     float now=gameSeconds();
     rings.erase(std::remove_if(rings.begin(),rings.end(),[&](const Ring &r){return now-r.born>r.life||now<r.born-0.1f;}),rings.end());
     for(const Ring &ring:rings) {
@@ -321,6 +406,7 @@ void buildRings(Uniforms &camera) {
         }
     }
     buildSpouts(camera);
+    buildPlunges(camera);
 }
 
 // A thick liquid's color for its bubbles and collars: the brightest of a few
@@ -391,5 +477,5 @@ void buildBubbles(const Uniforms &camera) {
         }
     }
 }
-void splashesShutdown() {splashWatch.clear();rings.clear();spouts.clear();}
+void splashesShutdown() {splashWatch.clear();rings.clear();spouts.clear();plunges.clear();}
 } // namespace doom3d

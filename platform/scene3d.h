@@ -91,6 +91,10 @@ struct Settings {
     float bounceTint=3; // With bounce: how strongly bounced lamp light colors the sector light around it (0-4).
     int caustics=1; // Rippling light from liquids on nearby walls.
     // Experimental effects, each separately switchable.
+    // F4's combined choices; fitGame sets the switches below them from these.
+    int deaths=2; // Deaths: 0 the game's frames, 1 varied, 2 procedural falls, 3 ragdolls, 4 ragdolls Hollywood (flying, punch, spins).
+    int hitReactions=1; // Hit reactions: death reactions and hit flinches.
+    int bloodLevel=2; // Blood: 0 off, 1 splats and pools, 2 full (spray, shine).
     int blood=1; // Splats on floors and walls from hitscan hits; pools under corpses.
     int bloodSpray=1; // With blood: hits and kills throw drops that land as splats; wounds drip, sliding bodies smear, bodies thrown into walls splash them.
     int bloodShine=1; // Fresh blood glints under dynamic lights, then dries matte.
@@ -99,6 +103,7 @@ struct Settings {
     int deathFalls=1; // Rigged monsters (hand rigs, else joints found in the art) fall procedurally: 0 off, 1 by the hit, 2 always legs swept, 3 always chest blast, 4 always head shot.
     int deathRagdoll=0; // Rigged monsters fall as ragdolls instead: the pain drawing raised into a relief on a small skeleton the hit knocks over.
     int deathGuided=1; // With deathRagdoll: chest blasts from the front sometimes play the shot death on strings (hand rigs that fit it: the zombieman).
+    int deathBlast=0; // With deathRagdoll: explosions (rockets, barrels, the BFG) send bodies flying, glancing off walls until they land.
     int deathFaceViewer=0; // With deathDirector: a monster killed facing away turns toward the eye before its death frames.
     int deathDirector=1; // Each death drawn its own way: staggers and turns from the monster's own frames, retimed, mirrored to fall away from the blow.
     int hitFlinch=1; // Living monsters flinch from hits, leaning with the push.

@@ -13,7 +13,8 @@ and saves the falls as a contact sheet.
   MAP05 clutter  behind each monster in turn a step up, a pillar, open floor, a pit;
                  beyond them a dark floor (light 96)
   MAP07 show     the row facing the player, 90 apart, and behind each something else:
-                 a broad column (64), a pit (96 deep), open floor, stairs up (16 a step)
+                 a broad column (64), a pit (96 deep) with a pillar standing in it, open
+                 floor with two staggered columns, stairs up (16 a step) to a column
 
 The rectangles tile each room in guillotine cuts (every split line runs the
 room's whole width or depth), so the BSP is the cut tree, each rectangle a
@@ -24,8 +25,9 @@ convex subsector closed by real lines, and no seg is ever split.
 
   python3 tests/ragdoll_arena.py showcase [monster] [weapon[:aim]]
   plays MAP07 in a window with -ragdollloop: the row shot, left to lie, stood up and shot
-  again until you quit (default mix, ssg:mix). Your graphics.cfg and default.cfg are copied
-  to output/ragdoll-showcase/ and the game uses those, so it can't change yours.
+  again until you quit (default mix, ssg:mix; rocket:mix for explosions). Your graphics.cfg and
+  default.cfg are copied to output/ragdoll-showcase/ (with Deaths "Ragdolls, Hollywood")
+  and the game uses those, so it can't change yours.
 
   python3 tests/ragdoll_arena.py run <monster> <map 1-7> <weapon[:aim[:n[:tic]]]> <sheet.png> [--side]
   builds the WAD next to the sheet and plays it with DOOM II: 20 frames 3 tics
@@ -60,16 +62,31 @@ def arenas():
                                    (0, 80, 0, 256), (80, 160, -32, 256), (160, 384, 0, 256)):
         clutter.append((x0, 160, x1, 208, floor, ceiling))
     close = [(-160, -448, 0, 150, 0, 256), (0, -448, 160, 150, 0, 256)]   # a wall 22 behind, side walls 40 off the ends
-    show = [(-384, -448, 384, 160, 0, 256),
-            (-384, 160, -167, 400, 0, 256), (-167, 160, -103, 168, 0, 256), (-167, 168, -103, 200, 0, 0),   # the column,
-            (-167, 200, -103, 400, 0, 256), (-103, 160, -90, 400, 0, 256),                                  # 20 behind
-            (-90, 160, 0, 400, -96, 256),                                                                   # the pit
-            (0, 160, 90, 400, 0, 256)]                                                                      # nothing
-    y = 160
-    for step in range(1, 4):
-        show.append((90, y, 384, y + 24, 16 * step, 256)); y += 24
-    show.append((90, y, 384, 400, 64, 256))                                                                 # stairs up
-    return [flat, stairs, ledge, wall, clutter, close, show]
+    return [flat, stairs, ledge, wall, clutter, close, show_room()]
+
+def show_room():
+    """MAP07: the front room, and behind the row a grid of cells cut at every edge (so the cuts
+    stay guillotine however many columns there are): the lanes' floors, columns closed off."""
+    def floor(x, y):                     # the lanes behind the row, at a cell's middle
+        if -90 <= x < 0:
+            return -96                   # the pit
+        if x >= 90:
+            return min(64, 16 * (1 + int((y - 160) // 24)))   # stairs up, 16 a step, then the landing
+        return 0
+    columns = [(-167, 168, -103, 200),   # broad, 20 behind the first
+               (-61, 196, -29, 228),     # standing in the pit
+               (13, 196, 45, 228),       # open floor: clipped on its right side,
+               (56, 252, 88, 284),       # and glanced into
+               (119, 236, 151, 268)]     # on the stairs' landing
+    xs = sorted({-384, -90, 0, 90, 384} | {c[0] for c in columns} | {c[2] for c in columns})
+    ys = sorted({160, 184, 208, 232, 400} | {c[1] for c in columns} | {c[3] for c in columns})
+    rects = [(-384, -448, 384, 160, 0, 256)]
+    for x0, x1 in zip(xs, xs[1:]):
+        for y0, y1 in zip(ys, ys[1:]):
+            f = floor((x0 + x1) / 2, (y0 + y1) / 2)
+            closed = any(c[0] <= x0 and x1 <= c[2] and c[1] <= y0 and y1 <= c[3] for c in columns)
+            rects.append((x0, y0, x1, y1, f, f if closed else 256))
+    return rects
 
 # Maps (from 0) laid out otherwise: the row facing the player, spread out, the player further back
 SHOWS = {6: {'facings': (270,) * 4, 'row': (-135, -45, 45, 135), 'player': -100}}
@@ -247,6 +264,10 @@ def showcase(monster, spec):
     for name in ('graphics.cfg', 'default.cfg'):     # fresh copies each time: today's settings, never written back
         if os.path.exists(os.path.join(mine, name)):
             shutil.copy(os.path.join(mine, name), os.path.join(out, name))
+    graphics = os.path.join(out, 'graphics.cfg')     # whatever yours says: Deaths "Ragdolls, Hollywood"
+    lines = open(graphics).read().splitlines() if os.path.exists(graphics) else []
+    lines = [l for l in lines if l.split()[:1] not in (['deaths'], ['death_ragdoll'], ['death_blast'])]
+    open(graphics, 'w').write('\n'.join(lines + ['deaths 4']) + '\n')
     game = os.path.join(here, '..', 'build', 'play', 'Play DOOM.app', 'Contents', 'MacOS', 'Play DOOM')
     iwad = os.path.expanduser('~/Downloads/DOOM-gamedata/gog_doom/doom2.wad')
     command = [game, '-iwad', iwad, '-file', wad, '-warp', '7', '-skill', '3', '-ragdolltest', spec, '-ragdollloop']

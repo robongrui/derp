@@ -13,7 +13,13 @@
    -ragdollloop runs it for show: once every body has come to rest (or 12 seconds on) the corpses
    are cleared, the row stands up again where it was placed and is shot again, until the game is
    quit; the player can't die and may walk about to watch. Aim mix gives each victim another aim
-   each round (chest, legs, left, right, head). A test switch only: it changes the game. */
+   each round (chest, legs, left, right, head). Weapon rocket kills each victim in turn, 20 tics
+   apart, with a rocket's explosion beside it (the game's own blast, push and sound): with aim mix
+   anywhere round it at any height, so bodies fly every way; otherwise chest and legs from the
+   shooter's side (thrown away), left and right from that side (across the view), head from behind
+   (toward the eye). Only the one in turn can be hurt, so each blast throws one body; it gibs as in
+   the game, drawn as a body thrown with Flying enemies on. Weapon chaingun fires a burst of three bullets 4 tics apart (the gun's pace), the last
+   one killing. A test switch only: it changes the game. */
 #include "internal.h"
 extern "C" {
 void P_LineAttack(mobj_t *t1,angle_t angle,fixed_t distance,fixed_t slope,int damage);
@@ -21,6 +27,7 @@ fixed_t P_AproxDistance(fixed_t dx,fixed_t dy);
 boolean P_TeleportMove(mobj_t *thing,fixed_t x,fixed_t y);
 void P_RemoveMobj(mobj_t *th);
 mobj_t *P_SpawnMobj(fixed_t x,fixed_t y,fixed_t z,mobjtype_t type);
+void P_ExplodeMissile(mobj_t *mo);
 }
 
 namespace doom3d {
@@ -49,6 +56,11 @@ void ragdollTestTic() {
     std::string weapon=fields[0],aim=fields.size()>1?fields[1]:"chest";
     int only=fields.size()>2?atoi(fields[2].c_str()):-1,first=only>=0&&fields.size()>3?std::max(3,atoi(fields[3].c_str())):3;
     int pellets=weapon=="ssg"?7:weapon=="shotgun"?3:1,damage=10;
+    bool blast=weapon=="rocket",burst=weapon=="chaingun";
+    int spacing=blast?20:burst?12:1;    // tics between kills
+    static int rocket=-2;               // the game's rocket, whose explosion the blasts are
+    if(rocket==-2) {rocket=-1;for(int t=0;t<NUMMOBJTYPES&&rocket<0;++t)if(Game_ThingRole(t)==GAME_THING_ROCKET)rocket=t;}
+    if(blast&&rocket<0)return;
     std::vector<mobj_t*> victims;
     for(int i=0;i<numsectors;++i)for(mobj_t *mo=sectors[i].thinglist;mo;mo=mo->snext)
         if((mo->flags&MF_COUNTKILL)&&mo!=shooter)victims.push_back(mo);
@@ -59,7 +71,7 @@ void ragdollTestTic() {
     }
     if(M_CheckParm((char*)"-ragdollloop")) {
         players[consoleplayer].cheats|=CF_GODMODE;
-        bool done=leveltime>roundAt+first+(int)victims.size();
+        bool done=leveltime>roundAt+first+spacing*(int)victims.size();
         for(mobj_t *v:victims)done=done&&v->health<=0&&ragdollSettled(v);
         settledFor=done?settledFor+1:0;
         if(settledFor>=TICRATE*3/2||leveltime-roundAt>=TICRATE*12) {   // a moment to look at them lying, then again
@@ -67,9 +79,40 @@ void ragdollTestTic() {
         }
     }
     static const char *aims[]={"chest","legs","left","right","head"};
-    int which=leveltime-roundAt-first;
+    int at=leveltime-roundAt-first,which=at>=0&&at%spacing==0?at/spacing:-1;
+    int bullet=0;                       // a burst's bullets: 0, 1, then the killing one
+    if(burst&&at>=0&&at%spacing%4==0) {which=at/spacing;bullet=at%spacing/4;}
+    bool anywhere=blast&&aim=="mix";   // the blast anywhere round the victim
     if(aim=="mix"&&which>=0)aim=aims[(which+round)%5];
-    if(which>=0&&which<(int)victims.size()&&victims[which]->health>0) {
+    if(blast) {
+        // Only the victim in turn shootable: a blast's reach takes in the neighbours.
+        int turn=std::clamp(at/spacing,0,(int)victims.size()-1);
+        for(int i=0;i<(int)victims.size();++i) {
+            mobj_t *v=victims[i];
+            if(v->health>0)v->flags=i==turn?v->flags|MF_SHOOTABLE:v->flags&~MF_SHOOTABLE;
+        }
+    }
+    if(blast&&which>=0&&which<(int)victims.size()&&victims[which]->health>0) {
+        mobj_t *target=victims[which];
+        float dx=units(shooter->x-target->x),dy=units(shooter->y-target->y),l=std::max(1.0f,std::hypot(dx,dy));
+        dx/=l;dy/=l;                    // toward the shooter
+        // Where round the victim it goes off, turned from the shooter's side (positive: the shooter's right,
+        // throwing the body to its left): by the aim, or anywhere.
+        float turn=aim=="left"?-80.0f:aim=="right"?80.0f:aim=="head"?160.0f:0.0f;
+        float height=units(target->height),z=aim=="legs"?6:aim=="head"?height-12:24;
+        if(anywhere) {
+            uint32_t draw=hash32((uint32_t)leveltime*2654435761u^0x5b1au);
+            turn=(float)(draw%360);z=6+(float)(draw>>16)/65536.0f*(height-18);
+        }
+        float a=turn*(float)doomPi/180,c=std::cos(a),s=std::sin(a),bx=dx*c-dy*s,by=dx*s+dy*c;
+        float out=units(target->radius)+8;
+        target->health=1;
+        mobj_t *boom=P_SpawnMobj(target->x+(fixed_t)(bx*out*FRACUNIT),target->y+(fixed_t)(by*out*FRACUNIT),
+                                 target->z+(fixed_t)(z*FRACUNIT),(mobjtype_t)rocket);
+        boom->target=shooter;
+        P_ExplodeMissile(boom);
+    }
+    else if(which>=0&&which<(int)victims.size()&&victims[which]->health>0) {
         mobj_t *target=victims[which];
         float height=units(target->height),across=0,z=0.55f*height;
         if(aim=="head")z=height-5;
@@ -81,7 +124,7 @@ void ragdollTestTic() {
         fixed_t slope=FixedDiv(target->z+(fixed_t)(z*FRACUNIT)-shootZ,std::max(distance,FRACUNIT));
         angle_t angle=R_PointToAngle2(shooter->x,shooter->y,target->x,target->y)+
             (angle_t)(int64_t)(std::atan2(across,units(distance))/(2*doomPi)*4294967296.0);
-        target->health=damage*(pellets-1)+1;
+        target->health=burst?(bullet==0?damage*2+1:std::min(target->health,damage*(2-bullet)+1)):damage*(pellets-1)+1;
         for(int n=0;n<pellets&&target->health>0;++n)P_LineAttack(shooter,angle,32*64*FRACUNIT,slope,damage);
     }
     int view=M_CheckParm((char*)"-ragdollview");

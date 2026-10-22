@@ -515,8 +515,9 @@ bool rigJoints(int lump,RigJoints &out);
 
 // ragdoll.cpp
 // A rigged monster's body thrown down as a ragdoll: its pain drawing raised into a relief
-// (ragdoll_body.cpp) on a small 3D skeleton the hit knocks over. hitZ, hitU as startFall.
-bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,float high,float hitZ,float hitU);
+// (ragdoll_body.cpp) on a small 3D skeleton the hit knocks over. hitZ, hitU as startFall; blast: an
+// explosion killed it (thrown flying).
+bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,float high,float hitZ,float hitU,bool blast);
 bool ragdollView(const mobj_t &thing,DeathView &view);
 void forgetRagdoll(const mobj_t *thing);
 void ragdollsShutdown();
@@ -563,6 +564,9 @@ void woundedQuads(std::vector<Vertex> &out,const Vertex &base,const Image &image
 // liquids.cpp
 void splashesShutdown();
 boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed_t fz);
+// A body come down at (x,y) in a liquid: rings, and a plunge as hard as its fall (units a tic) and mass.
+// False when not over a liquid.
+bool bodySplash(float x,float y,float fall,float mass,float radius);
 void watchSplashes();
 void buildRings(Uniforms &camera);
 float liquidLight(int sector,Image &flat,float x,float y,float z,const Uniforms &camera);

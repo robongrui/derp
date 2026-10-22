@@ -380,7 +380,10 @@ bool startFall(const mobj_t &thing,float speed,float high,float side,float hitZ,
     const FallRig *painRig=legs?rigFor(fall.pain):nullptr;
     bool headshot=painRig&&painRig->hasHead&&hitZ>=painRig->head.neck&&
         std::abs(hitU-painRig->head.middle)<=painRig->head.width/2+1;
-    int choice=settings.deathFalls;
+    // -deathfalls 2|3|4 forces legs swept, chest blast or head shot for every fall, for judging each
+    // (once F4 choices; F4's Deaths only turns the falls on by the hit).
+    int choice=settings.deathFalls,forced=M_CheckParm((char*)"-deathfalls");
+    if(forced&&forced+1<myargc)choice=atoi(myargv[forced+1]);
     if(choice==2)fall.kind=FALL_LEGS;
     else if(choice==3)fall.kind=FALL_CHEST;
     else if(choice==4)fall.kind=FALL_HEAD;
