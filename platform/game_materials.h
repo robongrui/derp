@@ -25,6 +25,9 @@ int Game_IceFlat(const char *name);
 /* Plain metal plates that use has worn: grime in their seams, dull
    blotches, scuffs near the floor and a duller sheen (world/wear.glsl). */
 int Game_WornPlate(const char *name, int flat);
+/* Grey concrete where gloss comes from the palette ramps (Game_SurfaceGloss
+   0), which read grey as metal: these stay nearly matte, as stone. */
+int Game_MatteTexture(const char *name, int flat);
 /* Floors hot enough for heat haze. */
 int Game_HotFlat(const char *name);
 /* Sector specials that hurt whoever stands there (toxic mist). */

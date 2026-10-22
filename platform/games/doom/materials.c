@@ -39,6 +39,12 @@ game_liquid Game_LiquidFlat(const char *name)
 int Game_IceFlat(const char *name) { (void)name; return 0; }
 /* COMPSPAN: the blank grey front of the computer desks (E1M1). */
 int Game_WornPlate(const char *name, int flat) { return !flat && !strcmp(name, "COMPSPAN"); }
+/* GRAY5's walls, columns and steps with the FLAT19 floors and FLAT18
+   ceilings that go with them. */
+int Game_MatteTexture(const char *name, int flat)
+{
+    return flat ? !strcmp(name, "FLAT19") || !strcmp(name, "FLAT18") : !strcmp(name, "GRAY5");
+}
 int Game_HotFlat(const char *name) { return !strncmp(name, "LAVA", 4); }
 
 int Game_DamagingFloor(int special)

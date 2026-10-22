@@ -175,21 +175,24 @@ static void planStages(bool level) {
     planLoading(LoadStage::Flow,settings.lightFlow&&(level||flowKey!=flowInputs()));
 }
 // What frameMean's alpha tells surfaceLight about a texture's material:
-// 0 DOOM's palette ramps, 1 ice (iceFlat); with Game_SurfaceGloss, 2 a
-// sprite (judged by colour alone), else 3 + its game_surface; fabric (9)
-// takes materialGloss's matte default. Worn plates (wornPlate) add 16.
+// 0 DOOM's palette ramps (3, stone, for Game_MatteTexture), 1 ice
+// (iceFlat); with Game_SurfaceGloss, 2 a sprite (judged by colour alone),
+// else 3 + its game_surface; fabric (9) takes materialGloss's matte
+// default. Worn plates (wornPlate) add 16.
 static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2&&GAME_SURFACE_FLESH==3&&GAME_SURFACE_SOIL==4&&GAME_SURFACE_LIQUID==5&&GAME_SURFACE_FABRIC==6,
               "materialGloss in world/surface.glsl numbers the surfaces");
 static float surfaceMaterial(int key,int pic,bool flat) {
     if(flat&&iceFlat(pic))return 1;
-    if(!Game_SurfaceGloss())return 0;
     static std::unordered_map<int,float> known;
     auto found=known.find(key);
     if(found!=known.end())return found->second;
-    float material=2;
     char name[9]={};
-    if(key>=0) {R_TextureName(key,name);material=3+(float)Game_WallSurface(name);}
-    else if(flat) {memcpy(name,lumpinfo[firstflat+pic].name,8);material=3+(float)Game_FlatSurface(name);}
+    if(key>=0)R_TextureName(key,name);
+    else if(flat)memcpy(name,lumpinfo[firstflat+pic].name,8);
+    float material=2;
+    if(!Game_SurfaceGloss())material=name[0]&&Game_MatteTexture(name,flat)?3+(float)GAME_SURFACE_STONE:0;
+    else if(key>=0)material=3+(float)Game_WallSurface(name);
+    else if(flat)material=3+(float)Game_FlatSurface(name);
     return known[key]=material;
 }
 // Plain metal plates that use has worn (Game_WornPlate; world/wear.glsl plateGrime).
