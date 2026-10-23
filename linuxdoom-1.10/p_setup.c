@@ -44,6 +44,7 @@ rcsid[] = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_phobos.h"
 
 #include "s_sound.h"
 
@@ -927,6 +928,7 @@ P_SetupLevel
 	
     // set up world state
     P_SpawnSpecials ();
+    P_AirLevel ();
 	
     // build subsector connect matrix
     //	UNUSED P_ConnectSubsectors ();

@@ -486,6 +486,7 @@ extern void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y,
 extern void (*R_DamageHit)(mobj_t *target, mobj_t *inflictor, mobj_t *source, int damage);
 extern boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fixed_t y, fixed_t z);
 extern void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+extern void (*R_GlassStruck)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);	/* never called (DOOM's Phobos) */
 // Frames between tics (the accelerated renderer interpolates).
 extern boolean r_uncapped;
 

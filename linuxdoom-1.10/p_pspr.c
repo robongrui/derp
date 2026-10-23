@@ -34,6 +34,7 @@ rcsid[] = "$Id: p_pspr.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "m_random.h"
 #include "p_local.h"
+#include "p_phobos.h"
 #include "s_sound.h"
 
 // State.
@@ -560,6 +561,7 @@ A_FireMissile
 
     player->ammo[weaponinfo[player->readyweapon].ammo]--;
     P_SpawnPlayerMissile (player->mo, MT_ROCKET);
+    P_Recoil (player, 6, RECOIL_VIEW);	// near recoilless: the exhaust leaves behind
 }
 
 
@@ -575,6 +577,7 @@ A_FireBFG
 
     player->ammo[weaponinfo[player->readyweapon].ammo] -= deh_bfg_cells_per_shot;
     P_SpawnPlayerMissile (player->mo, MT_BFG);
+    P_Recoil (player, 15, RECOIL_VIEW);
 }
 
 
@@ -596,6 +599,7 @@ A_FirePlasma
 		  weaponinfo[player->readyweapon].flashstate+(P_Random ()&1) );
 
     P_SpawnPlayerMissile (player->mo, MT_PLASMA);
+    P_Recoil (player, 1, RECOIL_VIEW);
 }
 
 
@@ -689,6 +693,7 @@ A_FirePistol
 
     P_BulletSlope (player->mo);
     P_GunShot (player->mo, !player->refire);
+    P_Recoil (player, 3, bulletslope);	// 7.5 g at 360 m/s and the gas
 }
 
 
@@ -717,6 +722,7 @@ A_FireShotgun
 	
     for (i=0 ; i<7 ; i++)
 	P_GunShot (player->mo, false);
+    P_Recoil (player, 16, bulletslope);	// 32 g of shot at 400 m/s, wad and gas
 }
 
 
@@ -758,6 +764,7 @@ A_FireShotgun2
 		      MISSILERANGE,
 		      bulletslope + ((P_Random()-P_Random())<<5), damage);
     }
+    P_Recoil (player, 32, bulletslope);	// both barrels
 }
 
 
@@ -788,6 +795,7 @@ A_FireCGun
     P_BulletSlope (player->mo);
 	
     P_GunShot (player->mo, !player->refire);
+    P_Recoil (player, 3, bulletslope);
 }
 
 

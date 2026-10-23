@@ -121,6 +121,17 @@ void loadSettings();
 // images.cpp
 void imagesShutdown();
 Image upload(int w,int h,const byte *pixels,int left=0,int top=0,const byte *mask=nullptr,const byte *normals=nullptr,const byte *glass=nullptr,bool mipmaps=false);
+// Phobos: glowing slime frozen solid, frosted (grey 0) to dead grey ice (16), its glow mask at
+// glow eighths (0-8), batched under keys of their own (images.cpp).
+constexpr int frozenFlatOffset=1<<24,frozenWallOffset=1<<26,stillFlatOffset=1<<28;
+inline int frozenFlatKey(int lump,int grey,int glow) {return -1-(frozenFlatOffset+lump*256+grey*9+glow);}
+inline int frozenWallKey(int texture,int grey,int glow) {return -1-(frozenWallOffset+texture*256+grey*9+glow);}
+inline bool isFrozenFlatKey(int key) {return key<0&&-1-key>=frozenFlatOffset&&-1-key<stillFlatOffset;}
+inline int stillFlatKey(int lump) {return -1-(stillFlatOffset+lump);}
+inline bool isStillFlatKey(int key) {return key<0&&-1-key>=stillFlatOffset;}
+Image &stillFlat(int lump);   // a liquid stilled under forming ice
+Image &frozenFlat(int lump,int grey,int glow);
+Image &frozenWall(int texture,int grey,int glow);
 const std::array<float,3> &averageColor(Image &image);
 std::array<float,3> paletteColor(const std::array<float,3> &color);
 const std::array<float,3> &brightestColor(Image &image);
@@ -331,6 +342,7 @@ extern std::vector<StaticFog> staticFog;
 void collectFlashes(float fraction,const Uniforms &camera);
 float flashAt(float x,float y,float z,const Flash &f);
 void findDoors();
+bool doorLine(int line);                   // a face of a door (findDoors: a sector shut at level start)
 void selectFogLights(const Uniforms &camera);
 void assignLightMasks();
 void skipProfiledLights();
@@ -382,6 +394,26 @@ void buildHeat(const Uniforms &camera);
 void buildDust(const Uniforms &camera);
 // embers.cpp
 void buildEmbers(const Uniforms &camera);
+
+// decompression.cpp (Phobos)
+void buildDecompression(const Uniforms &camera);
+unsigned bodyFrost(const mobj_t &thing);   // 0-255, for MODE_FROST_SHIFT
+float bodySwell(const mobj_t &thing);      // 0-1: how far a body in vacuum has swollen
+struct BreachFrost { float ax,ay,bx,by,frost;int sectors[2]; };
+void watchBreaches();                      // each tic (and the pools: poolFrozen, poolBoiling)
+bool poolFrozen(int sector);               // a liquid floor frozen solid (Phobos)
+struct PoolIce { float ice=0,glow=1; };    // how far its ice sheet has formed (0-1), the slime's glow left
+PoolIce poolIce(int sector);
+bool frozenLook(int sector,int &grey,int &glow);   // frozen over: grey 0-16, glow 0-8
+bool frozenLookBeside(const line_t &line,int &grey,float &glow);   // a glowing wall by a pool frozen over
+bool poolRebakeWanted();                  // pools dimmed: bake the lights again (once per ask)
+float poolIceCode(int sector);             // for the shaders: ice (0-1) + 2 * glow left in fifteenths
+struct IceCrack { int sector;float x,y,reach;uint32_t seed; };
+bool crackIce(int sector,float x,float y);  // a shot into a pool's ice: false when it has none to crack
+const std::vector<IceCrack> &iceCracksNow();
+float poolBoiling(int sector);             // 0-1: how hard a liquid floor boils off now
+void breachFrost(std::vector<BreachFrost> &out);   // the frosted openings, for wear.cpp
+float visorFrost();
 
 // impacts.cpp
 void dropOldLevelImpacts();
@@ -519,6 +551,8 @@ bool rigJoints(int lump,RigJoints &out);
 // explosion killed it (thrown flying).
 bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,float high,float hitZ,float hitU,bool blast);
 bool ragdollView(const mobj_t &thing,DeathView &view);
+// Phobos: a living monster adrift (Game_Adrift) tumbles as a doll; false when it isn't.
+bool tumbleView(const mobj_t &thing,DeathView &view);
 void forgetRagdoll(const mobj_t *thing);
 void ragdollsShutdown();
 void prepareRagdolls();   // at level load: bodies for every killable monster's pain drawing
@@ -577,6 +611,7 @@ void buildBubbles(const Uniforms &camera);
 void glassShutdown();
 void glassShot(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy);
 void glassBlast(float x,float y,float z,float radius);
+void glassStruck(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy);
 void watchGlass();
 void buildGlass(const Uniforms &camera);
 bool planGlassCaptures(const Uniforms &camera);
@@ -620,7 +655,13 @@ bool rainSoaked(int sector,float x,float y);
 void watchWear();
 void wearShutdown();
 
+// space.cpp
+void spaceShutdown();
+constexpr float marsShine=0.75f;  // Phobos: Mars-shine, of the sky light it stands in for
+
 // exposure.cpp
+// Phobos: how plainly the stars show over the black sky, 0 to 1.
+float starVisibility();
 void exposureShutdown();
 void updateExposure(Uniforms &camera);
 void updateFlashlightTint(Uniforms &camera);

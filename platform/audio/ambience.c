@@ -86,12 +86,17 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
        about; eased, so stepping out of a door blows up rather than switches. */
     static float open_air, open_rain;
     int sky = Map_Sky(listener->subsector->sector);
-    open_air += ((sky && Game_HasEffect(GAME_EFFECT_WIND) ? 1 : 0) - open_air) * ease;
+    /* (No wind at all where there is no air: Phobos.) */
+    open_air += ((sky && Game_HasEffect(GAME_EFFECT_WIND) && !Game_Phobos() ? 1 : 0) - open_air) * ease;
+    float air_here = Game_Air(here);
     open_rain += ((sky ? 1 : 0) - open_rain) * ease;
 
     for (int k = 0; k < AMBIENT_KINDS; ++k)
     {
         if (k == AMBIENT_ROOM) continue;
+        /* Phobos: no wind, only air roaring out through a breach (Game_Vents), as loud as it
+           goes near the speed of sound and as the air round you and behind it lets it carry. */
+        int breach = k == AMBIENT_WIND && Game_Phobos();
         const reach_t *r = &ambience_reach[k];
         float sum2[AMBIENCE_LAYERS] = {0}, pan[AMBIENCE_LAYERS] = {0}, dull[AMBIENCE_LAYERS] = {0};
         /* The rain is the wind's field again, as loud as it rains; it taps
@@ -104,7 +109,24 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             float v = OPEN_AIR * open;
             sum2[0] = v * v; pan[0] = v * v * 128; dull[0] = v * v * logf(20000);
         }
-        for (int i = 0; i < ambience_spots[k].count; ++i)
+        if (breach)
+        {
+            game_vent vents[32];
+            int count = Game_Vents(vents, 32);
+            for (int i = 0; i < count; ++i)
+            {
+                const game_vent *g = &vents[i];
+                float dx = g->x - lx, dy = g->y - ly, dz = g->z - lz, d = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (d >= r->range) continue;
+                float rush = fminf(g->speed / 110, 1);   /* dies away fast as the pressure behind it goes */
+                float v = 1.5f * rush * rush * fminf(g->width / 48, 1.2f) * fade(d, r)
+                        * fminf(air_here, Game_Air(g->sector));
+                if (v < 1e-4f) continue;
+                float sep = 128 - 96 * sinf(atan2f(dy, dx) - facing) * fminf(hypotf(dx, dy) / 64, 1);
+                sum2[0] += v * v; pan[0] += v * v * sep; dull[0] += v * v * logf(20000);
+            }
+        }
+        for (int i = 0; i < (breach ? 0 : ambience_spots[k].count); ++i)
         {
             spot_t *s = &ambience_spots[k].spot[i];
             /* Only on glass, and not once it has broken. */
@@ -137,7 +159,8 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             if (fresh) { s->muffle = target; s->cutoff = cutoff; }
             else { s->muffle += (target - s->muffle) * ease; s->cutoff *= powf(cutoff / s->cutoff, ease); }
             s->heard = gametic;
-            float v = fminf(sqrtf(s->size / r->full), 1.5f) * s->muffle;
+            /* Through no more air than either end has (Phobos: none under the sky). */
+            float v = fminf(sqrtf(s->size / r->full), 1.5f) * s->muffle * fminf(air_here, Game_Air(s->sector));
             if (k == AMBIENT_LAMP)
             {
                 v *= (living || s->standing ? 1 : STEADY_LAMP) * lit;
@@ -179,7 +202,7 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
     }
     /* The room tone runs all the time, very quietly; whatever else is heard
        covers it, so silence bottoms out instead of a sound waking up. */
-    float tone = level * Ambient_Level(AMBIENT_ROOM);
+    float tone = level * Ambient_Level(AMBIENT_ROOM) * air_here;
     voices[AMBIENT_ROOM][0] = (ambience_voice_t){ tone, tone, 0.8f * tone, 20000 };
     if (strike->due) strike->level = strike_level * level;
 }

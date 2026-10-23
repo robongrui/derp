@@ -169,6 +169,17 @@ void main() {
         color.rgb=max(cycleMean.rgb+(color.rgb-frameMean.rgb)*detail,vec3(0))*poolTone(vWorld.xy);
     }
     if(color.a<0.45) discard;
+    // Phobos (scene3d/decompression.cpp poolIce): a pool's ice sheet, vTint how far it has
+    // formed, the slime's glow left and how grey it has gone. It freezes in patches, whole
+    // texels, the liquid showing through the gaps until it closes.
+    bool iceSheet=!sprite&&!blood&&vTint.r>0.0&&normal.z>0.5;
+    if(iceSheet&&vTint.r<1.0) {
+        vec2 t=floor(vWorld.xy)+0.5;
+        // Noise piles up round its middle; stretched out, the sheet closes evenly over its time
+        // instead of mostly at once.
+        float when=smoothstep(0.22,0.78,0.7*wearNoise(t,14.0,0x7a3c91d5u)+0.3*wearHash(ivec2(t),0x1d2e3f47u));
+        if(when>vTint.r) discard;
+    }
     // Blood the rain washes away goes texel by texel.
     float bloodStep=blood?floor(vTint.b*0.5+0.001):0.0,bloodPale=bloodStep*0.25,bloodWash=blood?max(vTint.b-bloodStep*2.0,0.0):0.0;
     if(bloodWash>0.0&&float(tileHash(ivec2(floor(vUV)),0x2f6b9d1eu)&255u)/255.0<bloodWash) discard;
@@ -184,9 +195,25 @@ void main() {
         vec3 paint=texelFetch(palette,ivec2(int(index),0),0).rgb;
         color.rgb=(vMode&MODE_WOUND_STAIN)!=0u?mix(color.rgb,paint,0.7):paint;
     }
+    // Phobos (MODE_FROST_SHIFT): rime on a monster left in vacuum, the moisture on it boiled
+    // off and frozen back on. Whole texels: the silhouette's edges first (normals facing
+    // aside), then mottled over the rest; thin, so the paint still shows through it.
+    uint frostBits=sprite&&(vMode&(MODE_SCREEN|MODE_SOFT|MODE_BLOOD))==0u?(vMode>>MODE_FROST_SHIFT)&255u:0u;
+    if(frostBits>0u) {
+        float frost=float(frostBits)/255.0;
+        ivec2 texel=ivec2(floor(uv));
+        float speck=float(tileHash(texel,0x6c8e9cf5u)&255u)/255.0;
+        float rim=0.5;
+        if((vMode&MODE_RELIT)!=0u) rim=saturate(length(texelFetch(image,clamp(texel,ivec2(0),textureSize(image,0)-1),0).ba*2.0-1.0));
+        vec3 rime=vec3(0.80,0.86,0.93)*(0.8+0.2*speck)*max(dot(color.rgb,vec3(0.3,0.59,0.11))*1.6,0.45);
+        float coat=speck*0.6+(1.0-rim)*0.4<frost?0.75:0.0;
+        color.rgb=mix(color.rgb,rime,max(coat,0.15*frost));
+    }
     // Rained on, blood pales: its red fades toward a dull grey of its own
     // brightness, never lighter (lighter reds would read pink).
     if(blood) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114)))*vec3(1.0,0.92,0.86),bloodPale*0.6)*vTint.g;
+    // The sheet turning plain white ice as the glow dies.
+    if(iceSheet) color.rgb=mix(color.rgb,vec3(0.80,0.86,0.92)*(0.55+0.6*dot(color.rgb,vec3(0.299,0.587,0.114))),vTint.b*0.8);
     // The thick rim of the glass shades the picture's edges, in light steps.
     if(glassy) color.rgb*=round((1.0-0.5*smoothstep(0.7,1.0,max(abs(screen.x),abs(screen.y))))*16.0)/16.0;
     // A dead screen shows nothing but the dark tube behind the glass, and its
@@ -199,8 +226,8 @@ void main() {
     SectorLit lit=sectorLighting(normal,mapped,sector,bakeFlags);
     float light=lit.light;
     // Weather and wear (world/wear.glsl): streaks and wet ground.
-    Wear wear=Wear(0.0,0.0,false,0.0,0.0);
-    if(mapped&&!blood&&!glassy&&cycleMean.a==0.0) wear=surfaceWear(vWorld,normal,sector,bakeFlags);
+    Wear wear=Wear(0.0,0.0,false,0.0,0.0,0.0,0.0);
+    if(mapped&&!blood&&!glassy&&cycleMean.a==0.0) wear=surfaceWear(vWorld,normal,vUV.x,sector,bakeFlags);
     // Worn plates (frameMean.a 16 and up, wornPlate in scene3d/scene.cpp).
     if(mapped&&!blood&&!glassy&&frameMean.a>=15.5) {wear.grime=plateGrime(vUV,vWorld,normal,sector,vStatic);plateWear=wear.grime;}
     // Grounding: things resting on the floor darken over their lowest 24
@@ -251,7 +278,7 @@ void main() {
     // strip (edgeStrip in world/shore.glsl), glowing where the strip does.
     float edgeGlow=0.0;
     if(mapped&&(bakeFlags&FEATURE_GLOW_EDGES)!=0u&&abs(normal.z)<=0.5) {
-        vec3 paint;float amount=edgeStrip(vWorld,normal,paint,edgeGlow);
+        vec3 paint;float amount=edgeStrip(vWorld,normal,vUV.x,paint,edgeGlow);
         color.rgb=mix(color.rgb,paint,amount);
     }
     float emission=0.0;
@@ -276,15 +303,23 @@ void main() {
         }
         // A glowing or fire-flickering sector's lamps fade with it (vLampTint alpha, lampGlow).
         emission*=unpackUnorm4x8(vLampTint).a;
+        if(iceSheet) emission*=vTint.g;   // a frozen pool's glow dying (Phobos)
         emission=max(emission,edgeGlow);
         illumination=max(illumination,vec3(emission));
     }
     // FEATURE_DAMP_SHORES: damp walls and banks above liquids (shoreWet), darker and
-    // a little stained by the liquid; glowing texels stay dry.
+    // a little stained by the liquid; glowing texels stay dry. Round a pool freezing
+    // over (Phobos) the same rim is frost instead: white, taking the texels as their
+    // glow dies.
     if(mapped&&(bakeFlags&FEATURE_DAMP_SHORES)!=0u&&normal.z>-0.5) {
-        vec3 stain;
-        float damp=shoreWet(vWorld,normal,sector,dot(color.rgb,vec3(0.299,0.587,0.114)),stain)*(1.0-emission);
-        if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
+        vec3 stain;vec2 rimIce;
+        // The texel's own color, not the filtered or mipped one, so the line keeps to whole texels.
+        float texelLuma=dot(surfaceLevel(image,floor(uv)+0.5,texelPixel,0).rgb,vec3(0.299,0.587,0.114));
+        vec3 uDir,vDir;textureFrame(normal,dp1,dp2,duv1,duv2,uDir,vDir);
+        float damp=shoreWet(vWorld,normal,vUV.x,normalize(uDir.xy+vec2(1e-6,0)),sector,texelLuma,stain,rimIce)*(1.0-emission);
+        if(damp>0.0&&rimIce.x>0.0)
+            color.rgb=mix(color.rgb,vec3(0.86,0.91,0.96)*max(dot(color.rgb,vec3(0.299,0.587,0.114))*1.4,0.6),damp*0.85);
+        else if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
     }
     color.rgb=applyWear(color.rgb,wear,emission);
     vec3 albedo=color.rgb;

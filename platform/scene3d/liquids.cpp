@@ -66,6 +66,17 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
     if(gamestate!=GS_LEVEL||levelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return false;
     dropOldLevelImpacts();
     int index=int(sector-sectors);float x=units(fx),y=units(fy),z=units(fz),now=gameSeconds();
+    // Phobos: a pool iced over cracks where the shot lands and throws white chips; no splash.
+    if(!ceiling&&crackIce(index,x,y)) {
+        if(debris.size()>512)debris.erase(debris.begin(),debris.begin()+(debris.size()-512));
+        for(int i=0;i<6;++i) {
+            float angle=randomRange(0,2*doomPi),out=randomRange(20,70);
+            debris.push_back({x,y,z+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(40,120),now,
+                randomRange(0.45f,0.8f),randomRange(1.0f,1.8f),{0.82f,0.88f,0.94f},lighting(sector)});
+        }
+        I_MadeSound(IMPACT_GLASS_TINKLE,x,y,z);
+        return true;
+    }
     if(!ceiling&&sectorMist[index].liquid) {
         if(!settings.splashes)return false;
         float tic=leveltime/(float)TICRATE; // As splash() stamps its rings.
@@ -93,7 +104,8 @@ void watchSplashes() {
     if(splashLevelSerial!=r_levelserial) {splashWatch.clear();rings.clear();spouts.clear();plunges.clear();splashLevelSerial=r_levelserial;}
     for(auto &entry:splashWatch)entry.second.seen=false;
     for(int i=0;i<numsectors;++i) {
-        if(!sectorMist[i].liquid||sectors[i].floorpic==skyflatnum)continue;
+        // (Icing over on Phobos: nothing rings it any more.)
+        if(!sectorMist[i].liquid||sectors[i].floorpic==skyflatnum||poolIce(i).ice>0)continue;
         float floor=units(sectors[i].floorheight);
         for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
             bool missile=thing->flags&MF_MISSILE;
@@ -316,7 +328,7 @@ static void buildShoreRipples(const Uniforms &camera) {
         if(std::hypot(nearX-camera.eye[0],nearY-camera.eye[1])>1536)continue;
         if(depthOf(edge.ax,edge.ay)<-32&&depthOf(edge.bx,edge.by)<-32)continue;
         const sector_t &sector=sectors[edge.sector];
-        int look=liquidLook(sector.floorpic);if(look==LIQUID_LOOK_NONE)continue;
+        int look=liquidLook(sector.floorpic);if(look==LIQUID_LOOK_NONE||poolIce(edge.sector).ice>0)continue;   // icing over (Phobos): still
         Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
         float z=floorZ(&sector)+decalLift(nearX,nearY,camera)+0.1f;
         float light=liquidLight(edge.sector,flat,nearX,nearY,z,camera);
@@ -385,6 +397,7 @@ void buildRings(Uniforms &camera) {
     for(const Ring &ring:rings) {
         float age=std::max(0.0f,std::floor((now-ring.born)*TICRATE/frameTics)*frameTics/TICRATE),fade=(1-age/ring.life)*std::max(ring.strength,0.5f);
         const sector_t &sector=sectors[ring.sector];
+        if(poolIce(ring.sector).ice>0)continue;   // icing over (Phobos): its rings stop where they are
         float z=floorZ(&sector)+decalLift(ring.x,ring.y,camera)+0.1f;
         // Points along each circle close enough to touch at the nearest
         // depth it can have on screen, so it reads as one unbroken line.

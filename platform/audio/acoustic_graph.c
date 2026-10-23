@@ -36,6 +36,7 @@ static int glass_lines;
 static unsigned glass_serial = ~0u;
 static int glass_shown = 1;
 static int follow_dirty = 1;
+static float (*sector_air)(int sector);
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
 
@@ -88,6 +89,8 @@ static float crossing(const opening_t *o, float *cutoff)
 {
     const sector_t *a = &sectors[o->a], *b = &sectors[o->b];
     *cutoff = OPEN_HZ;
+    /* Into vacuum: as good as no way (MOST_LOSS gives up long before). */
+    if (sector_air && (sector_air(o->a) <= 0 || sector_air(o->b) <= 0)) { *cutoff = 200; return 100; }
     if (Map_Sky(a) && Map_Sky(b)) return 0;
     float bottom, top;
     Map_Gap(a, b, &bottom, &top);
@@ -289,4 +292,10 @@ void Acoustic_ShowGlass(int shown)
     if (glass_shown == (shown != 0)) return;
     glass_shown = shown != 0;
     follow_dirty = 1;
+}
+
+void Acoustic_SetAir(float (*air)(int sector))
+{
+    if (air != sector_air) follow_dirty = 1;
+    sector_air = air;
 }

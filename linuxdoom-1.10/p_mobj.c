@@ -32,6 +32,7 @@ rcsid[] = "$Id: p_mobj.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_phobos.h"
 #include "sounds.h"
 
 #include "st_stuff.h"
@@ -170,9 +171,31 @@ void P_XYMovement (mobj_t* mo)
 	if (!P_TryMove (mo, ptryx, ptryy))
 	{
 	    // blocked move
-	    if (mo->player)
-	    {	// try to slide along it
+	    if (mo->player || P_Loose (mo))
+	    {	// try to slide along it (on Phobos, anything adrift too)
+		fixed_t	wasx = mo->x, wasy = mo->y, hitx = mo->momx, hity = mo->momy;
+		line_t*	struck = blockline;
 		P_SlideMove (mo);
+		// On Phobos nothing pushes it on again each tic: caught on a corner the
+		// slide gives up on, the walls take what they block and the rest goes on.
+		if (P_Phobos () && !P_Booted (mo) && mo->x == wasx && mo->y == wasy)
+		{
+		    if (!P_TryMove (mo, mo->x + mo->momx, mo->y))
+			mo->momx = 0;
+		    if (!P_TryMove (mo, mo->x, mo->y + mo->momy))
+			mo->momy = 0;
+		    xmove = ymove = 0;
+		}
+		// What the wall (or whatever stopped it) took off its speed: a barrel jolted.
+		{
+		    // Glass that gives way lets it on, slower by what breaking it took; else the
+		    // wall (or whatever stopped it) took what it lost.
+		    fixed_t	lost = P_Strike (mo, struck, hitx, hity);
+		    if (lost < 0)
+			lost = P_AproxDistance (hitx - mo->momx, hity - mo->momy);
+		    P_Jolt (mo, lost);
+		    P_BodyKnock (mo, lost);
+		}
 	    }
 	    else if (mo->flags & MF_MISSILE)
 	    {
@@ -207,6 +230,13 @@ void P_XYMovement (mobj_t* mo)
 		
     if (mo->z > mo->floorz)
 	return;		// no friction when airborne
+
+    // On Phobos only boots grip: the rest slides on, braked by mu*g alone.
+    if (P_Phobos () && !P_Booted (mo))
+    {
+	P_PhobosSlide (mo);
+	return;
+    }
 
     if (mo->flags & MF_CORPSE)
     {
@@ -305,6 +335,9 @@ void P_ZMovement (mobj_t* mo)
 	
 	if (mo->momz < 0)
 	{
+	    P_BodyContact (mo, mo->momz, false);
+	    P_Jolt (mo, mo->momz);
+	    P_Touchdown (mo, mo->momz);
 	    if (mo->player
 		&& mo->momz < -GRAVITY*8
 		&& !P_Flying ())
@@ -329,17 +362,32 @@ void P_ZMovement (mobj_t* mo)
     }
     else if (! (mo->flags & MF_NOGRAVITY) )
     {
+	fixed_t	gravity = P_Gravity (mo);
+
 	if (mo->momz == 0)
-	    mo->momz = -GRAVITY*2;
+	    mo->momz = -gravity*2;
 	else
-	    mo->momz -= GRAVITY;
+	    mo->momz -= gravity;
     }
 	
     if (mo->z + mo->height > mo->ceilingz)
     {
+	// On Phobos the sky is no lid: up through it faster than Phobos'
+	// escape velocity, a thing is gone for good; slower, it rises on out
+	// of sight and Phobos' pull brings it back down, minutes later.
+	if (P_Escaped (mo))
+	    return;
+
+	if (!P_OpenSky (mo))
+	{
 	// hit the ceiling
-	if (mo->momz > 0)
+	if (mo->momz > 0 && !P_CeilingHop (mo))
+	{
+	    P_BodyContact (mo, mo->momz, true);
+	    P_Jolt (mo, mo->momz);
+	    P_Touchdown (mo, mo->momz);
 	    mo->momz = 0;
+	}
 	{
 	    mo->z = mo->ceilingz - mo->height;
 	}
@@ -354,6 +402,7 @@ void P_ZMovement (mobj_t* mo)
 	{
 	    P_ExplodeMissile (mo);
 	    return;
+	}
 	}
     }
 } 
@@ -861,6 +910,10 @@ P_SpawnBlood
     z += ((P_Random()-P_Random())<<10);
     th = P_SpawnMobj (x,y,z, MT_BLOOD);
     th->momz = FRACUNIT*2;
+    // On Phobos nothing brings the hop back down: in air its drag stops it
+    // almost at once, in vacuum there is no hop at all.
+    if (P_Phobos ())
+	th->momz = P_SectorAir (th->subsector->sector) > 0.25f ? FRACUNIT/8 : 0;
     th->tics -= P_Random()&3;
 
     if (th->tics < 1)

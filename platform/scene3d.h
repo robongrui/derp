@@ -49,8 +49,8 @@ struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
 // sky light level (0: off); texFilter: sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],mood[4],weather[4],flicker[4][4]; };
-static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==384,"Shader buffer layout");
+struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],mood[4],weather[4],phobos[4],flicker[4][4]; };
+static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==400,"Shader buffer layout");
 using Flash=doom_flash_t;
 // 63 lights keep the FlashSet uniform block under 4 KB and fit the 64-bit light masks.
 constexpr unsigned maxLights=63;
@@ -117,6 +117,8 @@ struct Settings {
     int splashes=1; // Ripple rings where things land or walk in liquids, spouts where shots hit them; bubbles and sinking in thick ones.
     int dust=1; // Specks glinting in sunbeams and the flashlight beam.
     int embers=1; // A few sparks rising from flames, blown along by the game's wind.
+    int phobos=1; // Physically accurate Phobos (p_phobos.h): DOOM's first episode with Phobos' gravity, friction and real knockback.
+    int phobosSpin=0; // Phobos: the guns' kicks turn the player's view (Game_LookKick).
     int authored=1; // Authored episodes (Game_Mood): hand-picked looks for the game's own maps (DOOM's E1 night in the rain); off: the derived look everywhere.
     int weather=1; // Rain under the sky: 0 never, 1 where an authored episode has it, 2 always.
     int wornPlates=1; // Plain metal plates (Game_WornPlate) show years of use: grime in the seams, dull blotches, scuffs near the floor.
@@ -254,6 +256,8 @@ void applySettings();
 void settingsChanged();
 void buildCloudTexture();
 Image &wallImage(int index);
+// The sky to draw: on Phobos its copy with the painted air cleared (space.cpp).
+const GpuTextureRef &skyImage();
 Image &lumpImage(int lump,bool flat);
 // Builds the camera, layout and (when the world is visible) all geometry and lights.
 FrameView prepareFrame(int width,int height);

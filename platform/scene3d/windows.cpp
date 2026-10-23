@@ -41,6 +41,7 @@ struct Shard {
     doom_glass::Point center;
     std::array<float,3> angle,previous,spin;
     int pane,release,die;
+    bool burst=false;   // Phobos: thrown out by the air behind it; the outflow carries it past the frame
     uint32_t seed;
     bool landed=false,impactPiece=false;
 };
@@ -241,6 +242,16 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy,bool 
         if(len<1||top<=bottom)continue;
         area+=len*(top-bottom);
         I_AmbienceGlaze(p.line,0); // Sound gets through: the wind blows in.
+        // On Phobos the air gets out, and the pane bursts out with it, toward the thinner side
+        // of its line, hard: the room's whole pressure behind it.
+        float burst=0,bx=0,by=0;
+        if(Game_Phobos()) {
+            const line_t &l=lines[p.line];
+            float front=l.frontsector?Game_Air(int(l.frontsector-sectors)):0,back=l.backsector?Game_Air(int(l.backsector-sectors)):0;
+            float nx=-units(l.v2->y-l.v1->y),ny=units(l.v2->x-l.v1->x),nl=std::hypot(nx,ny);
+            if(nl>0&&std::abs(front-back)>0.1f) {burst=std::abs(front-back);bx=nx/nl*(front>back?1:-1);by=ny/nl*(front>back?1:-1);}
+        }
+        Game_Glass(p.line,0);
         ex/=len;ey/=len;
         // A blast in the glass's own plane pushes straight through it.
         if(length<=1e-4f) {dx=ey;dy=-ex;}
@@ -258,6 +269,7 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy,bool 
             if(randomRange(0,1)<0.12f)push*=-0.35f;
             float slide=randomRange(-0.45f,0.45f)+rx/std::max(apart,12.0f)*near*1.3f;
             s.vx=dx*push+ex*slide;s.vy=dy*push+ey*slide;
+            if(burst>0) {float out=randomRange(6,14)*burst;s.vx=bx*out+ex*slide;s.vy=by*out+ey*slide;s.burst=true;}
             s.vz=randomRange(-0.3f,1.1f)+rz/std::max(apart,12.0f)*near;
             s.px=s.x;s.py=s.y;s.pz=s.z;
             s.angle={std::atan2(ey,ex),0,0};s.previous=s.angle;
@@ -309,6 +321,20 @@ void glassShot(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy)
         I_MadeSound(IMPACT_GLASS_TINKLE,hx,hy,hz);
     }
 }
+// A body struck the glass hard enough (Phobos, P_Strike): the window shatters at once
+// where it hit, outward along the way it went.
+void glassStruck(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy) {
+    if(!line||!glassReady())return;
+    int pane=paneOfLine[line-lines];
+    if(pane<0||panes[pane].broken)return;
+    const GlassPane &p=panes[pane];
+    float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
+    if(len<1)return;
+    ex/=len;ey/=len;
+    float along=std::clamp((units(x)-p.ax)*ex+(units(y)-p.ay)*ey,0.0f,len);
+    float bottom,top;paneHeights(p,bottom,top);
+    shatter(p.frame,p.ax+ex*along,p.ay+ey*along,std::clamp(units(z),bottom,top),units(dx),units(dy),true);
+}
 // Explosions break windows within radius of the blast.
 void glassBlast(float x,float y,float z,float radius) {
     if(!glassReady())return;
@@ -341,10 +367,10 @@ static void stepShards() {
         if(s.landed)continue;
         for(int i=0;i<3;++i) {s.angle[i]+=s.spin[i];s.spin[i]*=0.985f;}
         float nx=s.x+s.vx,ny=s.y+s.vy,nz=s.z+s.vz;
-        s.vz-=0.8f;
+        s.vz-=Game_Phobos()?0.8f*Game_PhobosGravity:0.8f;
         float t;
         auto near=nearLines.find(panes[s.pane].frame);
-        if(near!=nearLines.end())for(int i:near->second)
+        if(near!=nearLines.end()&&!s.burst)for(int i:near->second)
             if(crosses(s.x,s.y,nx,ny,lines[i],t)&&stopsShard(lines[i],s.z+(nz-s.z)*t)) {nx=s.x;ny=s.y;s.vx*=-0.18f;s.vy*=-0.18f;break;}
         const sector_t *sector=R_PointInSubsector((fixed_t)(nx*FRACUNIT),(fixed_t)(ny*FRACUNIT))->sector;
         float floor=rawFloor(sector),ceiling=rawCeiling(sector);
@@ -383,7 +409,7 @@ void watchGlass() {
         glassLevelSerial=r_levelserial;shards.clear();missileWatch.clear();
         findWindows();
         // Through the glass ambience comes muffled until it breaks.
-        for(const GlassPane &p:panes)I_AmbienceGlaze(p.line,p.broken?0:1);
+        for(const GlassPane &p:panes) {I_AmbienceGlaze(p.line,p.broken?0:1);Game_Glass(p.line,p.broken?0:1);}
     }
     stepShards();
     if(panes.empty())return;

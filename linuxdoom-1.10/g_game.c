@@ -155,6 +155,7 @@ int             key_strafeleft;
 int		key_straferight; 
 int             key_fire;
 int		key_use;
+int		key_jump;
 int		key_strafe;
 int		key_speed; 
  
@@ -332,6 +333,9 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	|| joybuttons[joybfire]) 
 	cmd->buttons |= BT_ATTACK; 
  
+    if (gamekeydown[key_jump])
+	cmd->buttons |= BT_JUMP;
+
     if (gamekeydown[key_use] || joybuttons[joybuse] ) 
     { 
 	cmd->buttons |= BT_USE;

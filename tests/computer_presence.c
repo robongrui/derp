@@ -49,6 +49,9 @@ float Ambient_Level(int kind)
     return kind == AMBIENT_COMPUTER ? 0.14f : kind == AMBIENT_ROOM ? 0.25f : 1;
 }
 int Game_HasEffect(game_effect effect) { (void)effect; return 0; }
+int Game_Phobos(void) { return 0; }
+float Game_Air(int sector) { (void)sector; return 1; }
+int Game_Vents(game_vent *vents, int most) { (void)vents; (void)most; return 0; }
 void Acoustic_Follow(void) {}
 int Acoustic_Heard(float x, float y, int sector,
                    float (*fade)(float, const void *), const void *data,

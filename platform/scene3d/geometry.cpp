@@ -12,18 +12,28 @@ static void addWall(const line_t &line,int side,Point a,Point b,float bottom,flo
     if(tex<=0||top<=bottom) return;
     tex=texturetranslation[tex]; wallImage(tex);
     float u=units(sides[line.sidenum[side]].textureoffset),len=std::hypot(b.x-a.x,b.y-a.y);
+    // Phobos: a glowing wall by a pool frozen over (its edge) keeps its paint, its glow
+    // fading with the pool's (the lamp fade, vLampTint alpha); the rim frost (shore.glsl)
+    // whitens it as the glow goes.
+    int grey=0;float glow=1;
+    bool frozen=wallImage(tex).emissionWeight>0&&frozenLookBeside(line,grey,glow);
+    Image &image=wallImage(tex);
     auto &out=batches[tex];unsigned mode=sectorMode(sides[line.sidenum[side]].sector);
-    if(wallImage(tex).leaded&&settings.emissive)mode|=MODE_STAINED_GLASS;
+    if(image.leaded&&settings.emissive)mode|=MODE_STAINED_GLASS;
     size_t first=out.size();
     Vertex corners[4]={{a.x,a.y,top,u,anchor-top,light,mode},{b.x,b.y,top,u+len,anchor-top,light,mode},
                        {b.x,b.y,bottom,u+len,anchor-bottom,light,mode},{a.x,a.y,bottom,u,anchor-bottom,light,mode}};
     // Wall coordinates restart on every line, so each section seeds its own tiles.
     unsigned seed=(unsigned)(&line-lines)*8u+(unsigned)side*4u+(unsigned)span+1u;
-    if(!addBrokenWall(out,line,side,span,wallImage(tex),a,b,bottom,top,u,anchor,light,mode,seed)) {
+    if(!addBrokenWall(out,line,side,span,image,a,b,bottom,top,u,anchor,light,mode,seed)) {
         for(int n=0;n<4;++n) {bakeWallCoordinates(line,side,n==1||n==2?len:0,corners[n],true);corners[n].statics=seed;}
         quad(out,corners[0],corners[1],corners[2],corners[3]);
     }
-    lampGlow(out,first,sides[line.sidenum[side]].sector,wallImage(tex));
+    lampGlow(out,first,sides[line.sidenum[side]].sector,image);
+    if(frozen)for(size_t n=first;n<out.size();++n) {
+        unsigned alpha=(unsigned)std::lround(((out[n].lampTint>>24)&255u)*glow);
+        out[n].lampTint=(out[n].lampTint&0xFFFFFFu)|(alpha<<24);
+    }
 }
 // The mirrored pass draws the world a second time, so it runs only while a
 // reflective floor can be on screen. Doom's own visibility answers that: the
@@ -182,15 +192,30 @@ static void flatGeometry(const std::vector<float> &skyTop) {
                 continue;
             }
             int lump=firstflat+flattranslation[flat]; lumpImage(lump,true);
+            // Phobos: a pool frozen over shows only its ice sheet, on its first frame (frozenFlat).
+            PoolIce ice=ceiling?PoolIce{}:poolIce(int(sector-sectors));
+            bool sheet=ice.ice>=1,still=!sheet&&ice.ice>0;   // under forming ice the liquid stops moving
+            Image &image=sheet?frozenFlat(firstflat+flat,0,8):still?stillFlat(firstflat+flat):lumpImage(lump,true);
+            int key=sheet?frozenFlatKey(firstflat+flat,0,8):still?stillFlatKey(firstflat+flat):-1-lump;
             float z=sectorHeight(sector,ceiling),light=lighting(sector);
             // MODE_MIRROR_FLOOR: this floor samples the mirrored pass.
             unsigned mirror=reflectionActive&&!ceiling&&sectorMist[sector-sectors].reflective&&std::abs(z-reflectionPlane)<0.5f?MODE_MIRROR_FLOOR:0;
 
-            auto &out=batches[-1-lump];size_t first=out.size();
-            if(!addBrokenFlat(out,i,int(sector-sectors),ceiling,lumpImage(lump,true),z,light,mirror|sectorMode(sector)))
+            auto &out=batches[key];size_t first=out.size();
+            if(sheet)mirror=0;
+            if(!addBrokenFlat(out,i,int(sector-sectors),ceiling,image,z,light,mirror|sectorMode(sector)))
                 for(size_t n=1;n+1<poly.size();++n) for(Point p:{poly[0],poly[n],poly[n+1]})
                     out.push_back({p.x,p.y,z,p.x,-p.y,light,mirror|sectorMode(sector)});
-            lampGlow(out,first,sector,lumpImage(lump,true));
+            lampGlow(out,first,sector,image);
+            // The ice sheet: how far it has formed, its glow left and how grey it has gone in
+            // vTint (world.frag); while it closes, laid just over the churning liquid.
+            if(ice.ice>0) {
+                auto &over=sheet?out:batches[frozenFlatKey(firstflat+flat,0,8)];
+                size_t from=sheet?first:over.size();
+                if(!sheet)for(size_t n=1;n+1<poly.size();++n) for(Point p:{poly[0],poly[n],poly[n+1]})
+                    over.push_back({p.x,p.y,z+0.25f,p.x,-p.y,light,sectorMode(sector)});
+                for(size_t n=from;n<over.size();++n) {over[n].red=ice.ice;over[n].green=ice.glow;over[n].blue=1-ice.glow;}
+            }
         }
     }
 }
@@ -305,6 +330,19 @@ struct MirrorView { float eye[2],right[2]; };
 // also its quad for the glass mirror (mirrorBatches), from the same light:
 // seen from the mirrored eye, so its frame shows the side facing the glass,
 // and facing the mirrored camera. The player's own sprite gets only that one.
+// Phobos: a living body tumbling free (Game_Tumble): its drawing turned about its
+// middle as its up turns in the view, and shortened as it leans toward or away from
+// the eye. Its frames go on (walking in the air, shooting).
+static void tumbleQuads(std::vector<Vertex> &v,size_t from,float x,float y,float middle,float rx,float ry,const float up[3]) {
+    float side=up[0]*rx+up[1]*ry,rise=up[2],len=std::hypot(side,rise);
+    if(len<1e-4f)return;
+    float c=rise/len,s=-side/len,squash=std::clamp(len,0.35f,1.0f);
+    for(size_t n=from;n<v.size();++n) {
+        float a=(v[n].x-x)*rx+(v[n].y-y)*ry,b=(v[n].z-middle)*squash;
+        float a2=a*c-b*s,b2=a*s+b*c;
+        v[n].x=x+rx*a2;v[n].y=y+ry*a2;v[n].z=middle+b2;
+    }
+}
 static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,const Flash *beam,std::vector<Caster> &casters,
                      const MirrorView *mirror=nullptr) {
     bool self=thing==players[displayplayer].mo;
@@ -312,6 +350,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     // Varied deaths (death_director.cpp) pick a dying monster's frame, facing and mirroring.
     DeathView death={thing->sprite,thing->frame,thing->angle,false,1,0,{}};
     bool directed=!self&&settings.deathDirector&&deathView(*thing,fraction,death);
+    if(!directed&&!self&&settings.deathRagdoll&&thing->health>0)directed=tumbleView(*thing,death);
     if(death.sprite<0||death.sprite>=numsprites) return;
     const auto &sprite=sprites[death.sprite]; int frame=death.frame&FF_FRAMEMASK;
     if(frame>=sprite.numframes) return;
@@ -390,10 +429,15 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     float lift=units(thing->z-thing->floorz)+(posed?pose.lift:0),grounding=1-lift/32;
     bool grounded=settings.detail&&grounding>0&&!(death.frame&FF_FULLBRIGHT)&&!soft&&Game_ThingRole(thing->type)!=GAME_THING_BLOOD&&
         !(thing->flags&(MF_SHADOW|MF_MISSILE|MF_SPAWNCEILING));
+    float tumbleUp[3]={0,0,1};
+    bool tumbling=!self&&!ragdoll&&!death.fall.active&&thing->health>0&&Game_Tumble(thing,fraction,tumbleUp);
     // The quad for one view: that view's frame, facing along its right.
     auto emit=[&](std::map<int,std::vector<Vertex>> &out,unsigned seen,float rx,float ry,bool collar) {
         int lump=firstspritelump+sf.lump[seen]; Image &image=lumpImage(lump,false);
         float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
+        // Phobos: a body swollen in vacuum (bodySwell), wider more than taller, standing on its feet.
+        float swell=self?0:bodySwell(*thing),swellWide=1+0.18f*swell,swellTall=1+0.08f*swell;
+        if(swell>0) {left*=swellWide;right*=swellWide;top=bottom+(top-bottom)*swellTall;}
         if(death.fall.active&&!death.fall.rig) {
             // A fall's drawing set down on the floor, lifted, pressed flat.
             float keep=1-death.fall.flatten;
@@ -407,8 +451,10 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         // Wound holes (wounds.cpp): texels shot through, and their rims.
         std::vector<byte> holes;bool wounded=!self&&woundMask(*thing,image,flipped(seen),rx,ry,holes);
         const std::vector<byte> *cut=wounded?&holes:nullptr;
+        unsigned frost=soft?0u:bodyFrost(*thing)<<MODE_FROST_SHIFT;
         auto finish=[&](std::vector<Vertex> &batch,size_t from) {
             for(size_t n=from;n<batch.size();++n) {
+                batch[n].mode|=frost;
                 batch[n].red=pulse[0];batch[n].green=pulse[1];batch[n].blue=pulse[2];batch[n].statics=packedStatics;
                 batch[n].lampTint=tint;
                 if(grounded) {batch[n].mode|=MODE_GROUNDED;batch[n].sunU=grounding;batch[n].sunV=batch[n].z-z+lift;}
@@ -420,7 +466,7 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
             // A ragdoll: its virtual camera's picture on an upright card (ragdoll.cpp), already mirrored.
             if(ragdollCard(*death.ragdoll,fraction,sink,camera.eye,cut,card)) {
                 auto &batch=out[card.key];size_t from=batch.size();unsigned cm=m&~MODE_FLIPPED;
-                float l=-card.half,r=card.half,t=card.top,b=card.top-card.size,s=(float)card.size;
+                float l=-card.half*swellWide,r=card.half*swellWide,b=card.top-card.size,t=b+card.size*swellTall,s=(float)card.size;
                 quad(batch,{card.x+rx*l,card.y+ry*l,t,0,0,light,cm},{card.x+rx*r,card.y+ry*r,t,s,0,light,cm},
                      {card.x+rx*r,card.y+ry*r,b,s,s,light,cm},{card.x+rx*l,card.y+ry*l,b,0,s,light,cm});
                 finish(batch,from);
@@ -435,11 +481,14 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
             }
             return;
         }
-        if(death.fall.rig)fallQuads(vertices,{0,0,0,0,0,light,m},death.fall,x,y,z-sink,rx,ry,flipped(seen),cut);
+        // (Swollen: the procedural fall and the wounded drawing are widened through rx, ry; the
+        // posed body takes the widened left and right.)
+        if(death.fall.rig)fallQuads(vertices,{0,0,0,0,0,light,m},death.fall,x,y,z-sink,rx*swellWide,ry*swellWide,flipped(seen),cut);
         else if(posed)bodyQuads(vertices,pose,{0,0,0,0,0,light,m},x,y,z-sink,rx,ry,left,right,image.top,image.height,u0,u1,cut);
-        else if(wounded)woundedQuads(vertices,{0,0,0,0,0,light,m},image,holes,x,y,top,rx,ry,flipped(seen),(top-bottom)/image.height);
+        else if(wounded)woundedQuads(vertices,{0,0,0,0,0,light,m},image,holes,x,y,top,rx*swellWide,ry*swellWide,flipped(seen),(top-bottom)/image.height);
         else quad(vertices,{x+rx*left,y+ry*left,top,u0,0,light,m},{x+rx*right,y+ry*right,top,u1,0,light,m},
             {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,m},{x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,m});
+        if(tumbling)tumbleQuads(vertices,first,x,y,z-sink+units(thing->height)/2,rx,ry,tumbleUp);
         finish(vertices,first);
     };
     if(!self)emit(batches,rotation,camera.right[0],camera.right[1],true);
@@ -518,6 +567,7 @@ void geometry(const Uniforms &camera,float fraction) {
     buildHeat(camera);
     buildDust(camera);
     buildEmbers(camera);
+    buildDecompression(camera);
     buildRain(camera);
     buildBubbles(camera);
 }

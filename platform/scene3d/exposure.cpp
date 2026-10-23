@@ -61,6 +61,13 @@ void updateExposure(Uniforms &camera) {
     }
     camera.fx[0]=exposure;
 }
+// Eyes settled to sunlit ground see no stars; settled to a dim room or a
+// shaded corner they come out. Without eye adaptation, a faint few.
+float starVisibility() {
+    if(adaptedLight<0)return 0.35f;
+    float t=std::clamp((0.65f-adaptedLight)/0.3f,0.0f,1.0f);
+    return t*t*(3-2*t);
+}
 // One target-color ray at 30 Hz supplies a smooth, subtle ambient tint.
 // It creates no virtual lights, portal blocker lists, or per-pixel bounce work.
 void updateFlashlightTint(Uniforms &camera) {

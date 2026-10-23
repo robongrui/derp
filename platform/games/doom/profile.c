@@ -3,6 +3,8 @@
 #include "doomdef.h"
 #include "doomstat.h"
 #include "p_local.h"
+#include "p_phobos.h"
+#include "m_argv.h"
 #include "sounds.h"
 #include "i_sound.h"
 #include "w_wad.h"
@@ -98,7 +100,25 @@ int Game_Sprite(game_sprite_role role)
 
 int Game_HasEffect(game_effect effect) { (void)effect; return 1; }
 
-void Game_Sun(game_sun *sun) { *sun = (game_sun){ 0, 0.3f, 0, 0.3f, 0 }; }
+/* On Phobos' night side Mars is the sky light: 42 degrees of sunlit planet,
+   some 3% of full sunlight (ten thousand full moons), and most of the light
+   outside takes its colour. */
+void Game_Sun(game_sun *sun)
+{
+    *sun = (game_sun){ 0, 0.3f, 0, P_Phobos () ? 0.85f : 0.3f, 0 };
+}
+
+void Game_SetPhobos(int on) { phobosphysics = on || M_CheckParm ("-phobos"); }
+int Game_Phobos(void) { return P_Phobos (); }
+float Game_Air(int sector) { return sector >= 0 && sector < numsectors ? P_SectorAir (&sectors[sector]) : 1; }
+void Game_Glass(int line, int whole) { P_PhobosGlass (line, whole); }
+int Game_Vents(game_vent *vents, int most) { return P_AirVents ((phobos_vent_t *)vents, most); }
+int Game_Adrift(const struct mobj_s *thing) { return P_Adrift ((mobj_t *)thing); }
+float Game_Draft(const struct mobj_s *thing, float way[3]) { return P_Draft ((mobj_t *)thing, way); }
+int Game_Tumble(const struct mobj_s *thing, float fraction, float up[3]) { return P_BodyUp ((mobj_t *)thing, fraction, up); }
+float Game_LookKick(void) { return P_LookKick (); }
+int Game_ViewFlipped(void) { return P_ViewFlipped (); }
+void Game_FlipView(void) { P_FlipView (); }
 
 float Game_WaterClarity(void) { return 0; }
 

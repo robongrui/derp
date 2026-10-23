@@ -121,7 +121,7 @@ int Game_HasEffect(game_effect effect)
     {
     case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT:
     case GAME_EFFECT_WIND: case GAME_EFFECT_NATURAL_FALLOFF: case GAME_EFFECT_FREE_AIM:
-    case GAME_EFFECT_AUTHORED_EPISODES: return 0;
+    case GAME_EFFECT_AUTHORED_EPISODES: case GAME_EFFECT_PHOBOS: return 0;
     }
     return 1;
 }
@@ -142,6 +142,18 @@ int Game_Torch(float *flame)
    on the horizon), sunlit stone stands out from the shade, the light takes
    the sky's colour (grey, hell red, night blue), and distance fades into it. */
 void Game_Sun(game_sun *sun) { *sun = (game_sun){ 1, 0.4f, 0.3f, 0.6f, 1 }; }
+
+void Game_SetPhobos(int on) { (void)on; }
+int Game_Phobos(void) { return 0; }
+float Game_Air(int sector) { (void)sector; return 1; }
+void Game_Glass(int line, int whole) { (void)line; (void)whole; }
+int Game_Vents(game_vent *vents, int most) { (void)vents; (void)most; return 0; }
+int Game_Adrift(const struct mobj_s *thing) { (void)thing; return 0; }
+float Game_Draft(const struct mobj_s *thing, float way[3]) { (void)thing; (void)way; return 0; }
+int Game_Tumble(const struct mobj_s *thing, float fraction, float up[3]) { (void)thing; (void)fraction; (void)up; return 0; }
+float Game_LookKick(void) { return 0; }
+int Game_ViewFlipped(void) { return 0; }
+void Game_FlipView(void) {}
 
 /* Heretic's maps keep the light they were made with. */
 /* No authored episodes: Heretic keeps its derived look. */

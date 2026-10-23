@@ -38,7 +38,7 @@ void main() {
         vec3 normal=normalize(cross(dFdx(vWorld),dFdy(vWorld)));
         if(dot(normal,c.eye.xyz-vWorld)<0.0) normal=-normal;
         vec3 paint;float glow;
-        if(abs(normal.z)<=0.5&&edgeStrip(vWorld,normal,paint,glow)>0.0&&glow>e) {color.rgb=paint;e=glow;}
+        if(abs(normal.z)<=0.5&&edgeStrip(vWorld,normal,vUV.x,paint,glow)>0.0&&glow>e) {color.rgb=paint;e=glow;}
     }
     // White strips glow in every channel at once and wash the view out up
     // close; colored bulbs keep their full bloom.

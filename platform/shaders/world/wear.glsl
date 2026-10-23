@@ -15,13 +15,17 @@
 // - Worn plates (Game_WornPlate): plain metal plates marked by use, see
 //   plateGrime. Not weather: they stay as they are.
 // Records follow the sector entries in sectorInfo from c.right.w: per
-// sector (first record, count, -, seed), then two entries a record:
+// sector (first record, count, ice, seed), then two entries a record. ice
+// (Phobos, decompression.cpp poolIceCode): a pool's ice sheet 0-1, plus two
+// times the glow left in fifteenths (poolIce below).
 //   1 streak: (1, line*2+side, sill height, amount; negative: rust), (a, b)
 //   3 wet patch: (3, depth in, -, amount), (a, b) along the room's side
 //   4 ceiling crack: (4, center, reach), (seed, -, -, -)
 //   5 puddle: (5, center, radius), (seed, -, -, amount)
+//   6 frost round a breach (Phobos): (6, reach, -, amount), (a, b) the opening
+//   7 a shot's crack in a pool's ice (Phobos): (7, center, reach), (seed, -, -, -)
 // Part of world.frag, which declares the resources these read.
-struct Wear { float wet,streak;bool rust;float crack,grime; };
+struct Wear { float wet,streak;bool rust;float crack,grime,frost,iceCrack; };
 float wearHash(ivec2 p,uint seed) {return float(tileHash(p,seed)&0xffffu)/65535.0;}
 float wearNoise(vec2 p,float cell,uint seed) {
     vec2 g=p/cell;ivec2 i=ivec2(floor(g));vec2 f=fract(g);f=f*f*(3.0-2.0*f);
@@ -73,9 +77,32 @@ float bakedWetness(vec2 t) {
     float a=texelFetch(flatLight,cell,0).a;
     return a>0.0?(a*255.0-1.0)/254.0:-1.0;
 }
-Wear surfaceWear(vec3 world,vec3 normal,uint sector,uint flags) {
-    Wear w=Wear(0.0,0.0,false,0.0,0.0);
+// Frost round a breach at a texel: whole texels of rime thick at the opening,
+// thinning out in clumps to the record's reach. Clumped on the surface's own grid
+// (a wall's: along it and up), with only a little texel jitter, not salt and pepper.
+float breachFrostAt(vec3 world,vec3 normal,float u,uint sector,uint base) {
+    vec4 head=sectorInfo[base+sector];
+    uint first=uint(head.x),count=uint(head.y);
+    vec2 t=floor(world.xy)+0.5;
+    vec2 face=abs(normal.z)>0.5?world.xy:vec2(u,world.z);   // a wall's texture column (shoreWet)
+    vec2 cell=floor(face)+0.5;
+    float clump=0.85*wearNoise(cell,5.0,0x2f3d5a11u)+0.15*wearHash(ivec2(cell),0x51ed270bu);
+    float frost=0.0;
+    for(uint i=0u;i<count;++i) {
+        vec4 a=sectorInfo[first+2u*i];
+        if(uint(a.x)!=6u) continue;
+        vec4 b=sectorInfo[first+2u*i+1u];
+        float d=segmentDistance(t,b.xy,b.zw);
+        if(d>a.y) continue;
+        float near=1.0-d/a.y;
+        if(clump<near*a.w*1.2) frost=max(frost,a.w*(0.6+0.4*near));
+    }
+    return frost;
+}
+Wear surfaceWear(vec3 world,vec3 normal,float u,uint sector,uint flags) {
+    Wear w=Wear(0.0,0.0,false,0.0,0.0,0.0,0.0);
     uint base=uint(c.right.w);
+    if(base!=0u) w.frost=breachFrostAt(world,normal,u,sector,base);
     vec4 info=sectorInfo[sector];
     bool outdoors=info.w>0.0;
     bool ground=normal.z>0.5,wall=abs(normal.z)<=0.5;
@@ -106,6 +133,10 @@ Wear surfaceWear(vec3 world,vec3 normal,uint sector,uint flags) {
             if(uint(a.x)==5u) {
                 float r=length(t-a.yz),edge=a.w*(0.75+0.5*wearNoise(t,4.0,uint(b.x)*0x85ebca6bu+3u));
                 if(r<edge+2.0) w.wet=max(w.wet,(r<edge?1.0:0.6)*b.w);
+                continue;
+            }
+            if(uint(a.x)==7u) {
+                w.iceCrack=max(w.iceCrack,crackAt(t,a.yz,a.w,uint(b.x)*0x9e3779b9u+7u).x);
                 continue;
             }
             if(uint(a.x)!=3u) continue;
@@ -174,5 +205,7 @@ vec3 applyWear(vec3 color,Wear w,float emission) {
     if(w.wet>0.0) color*=1.0-0.36*min(w.wet,1.0)*keep;
     if(w.crack>0.0) color*=1.0-0.75*w.crack*keep;
     if(w.grime>0.0) color*=mix(vec3(1),vec3(0.6,0.55,0.48),w.grime*keep);
+    if(w.iceCrack>0.0) color=mix(color,vec3(0.92,0.96,1.0),w.iceCrack*0.85*keep);   // fractured ice scatters light: white
+    if(w.frost>0.0) color=mix(color,vec3(0.76,0.83,0.9)*max(dot(color,vec3(0.3,0.59,0.11))*1.5,0.42),min(w.frost,1.0)*0.75*keep);
     return color;
 }

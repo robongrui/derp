@@ -352,6 +352,68 @@ Image &wallImage(int index) {
     if(image.leaded)return withLeadedRelief(withGlassFrame(image,frame));
     return withRelief(withGlassFrame(image,frame),image.opaque&&!animated?wallTiles:nullptr);
 }
+// Phobos: glowing slime frozen solid (decompression.cpp poolIce): the art's first frame,
+// each texel moved toward ice of its own brightness and snapped back to the palette, from
+// frosted (grey 0) to plain white ice (grey 16), its glow mask at glow eighths. Flats take the ice surface's smooth grooved relief. Kept
+// under keys of their own (frozenFlatKey, frozenWallKey) so frozen surfaces are batched,
+// and lit as ice, apart from the live ones.
+static Image &frozenCopy(const Image &source,int key,int grey,int glowStep,bool flat) {
+    auto found=images.find(key);
+    if(found!=images.end())return found->second;
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    float dead=grey/16.0f,glow=glowStep/8.0f;
+    std::array<byte,256> icy;
+    for(int c=0;c<256;++c) {
+        float rgb[3]={palette[3*c]/255.0f,palette[3*c+1]/255.0f,palette[3*c+2]/255.0f},l=0.3f*rgb[0]+0.59f*rgb[1]+0.11f*rgb[2];
+        const float ice[3]={0.62f,0.70f,0.78f},white[3]={0.80f,0.86f,0.92f};
+        float target[3];
+        for(int k=0;k<3;++k) {
+            // A flat (the ice sheet) frosts over; on a wall it is the slime painted on it that froze.
+            float frosted=rgb[k]+(ice[k]*(0.45f+0.8f*l)-rgb[k])*(flat?0.45f:0.6f);
+            // Its glow gone it is plain ice: white, not grey (shore.glsl's strip the same).
+            target[k]=frosted+(white[k]*(0.55f+0.6f*l)-frosted)*dead*0.8f;
+        }
+        int best=0;float bestDistance=1e9f;
+        for(int i=0;i<256;++i) {
+            float d=0;for(int k=0;k<3;++k) {float e=palette[3*i+k]/255.0f-target[k];d+=e*e;}
+            if(d<bestDistance) {bestDistance=d;best=i;}
+        }
+        icy[c]=(byte)best;
+    }
+    // On a wall only its slime freezes: the texels that glowed (the emission mask); the dry
+    // wall above keeps its paint.
+    std::vector<byte> pixels(source.pixels);
+    bool masked=!flat&&source.emission.size()==pixels.size()/2;
+    for(size_t i=0;i<pixels.size()/2;++i)
+        if(!masked||source.emission[i]>=32)pixels[2*i]=icy[pixels[2*i]];
+    std::vector<byte> mask;
+    if(glow>0&&source.emission.size()==pixels.size()/2) {
+        mask=source.emission;
+        for(byte &m:mask)m=(byte)std::lround(m*glow);
+    }
+    Image &image=images.emplace(key,upload(source.width,source.height,pixels.data(),source.left,source.top,mask.empty()?nullptr:mask.data(),
+                                           nullptr,nullptr,true)).first->second;
+    // Its light dims with the glow left, in the slime's own color: upload's weight (coverage
+    // times eight, capped at one) held a mostly glowing flat at full strength until its last
+    // step, and the whitened texels would pale its color.
+    if(!mask.empty()) {image.emissionWeight=source.emissionWeight*glow;image.emissionColor=source.emissionColor;}
+    // An ice sheet is drawn with gaps where it has not frozen yet (world.frag): a cutout, so
+    // the depth prepass doesn't hide the liquid under the gaps.
+    if(flat)image.opaque=false;
+    return flat?withRelief(image,nullptr,2.0f,true):withRelief(image);
+}
+// Phobos: a liquid flat stilled on its first frame as ice starts to form over it (no
+// animation, no crossfade), kept under its own key (stillFlatKey).
+Image &stillFlat(int lump) {
+    int key=stillFlatKey(lump);
+    auto found=images.find(key);
+    if(found!=images.end())return found->second;
+    const Image &source=lumpImage(lump,true);
+    return images.emplace(key,upload(source.width,source.height,source.pixels.data(),0,0,
+                                     source.emission.size()*2==source.pixels.size()?source.emission.data():nullptr,nullptr,nullptr,true)).first->second;
+}
+Image &frozenFlat(int lump,int grey,int glow) {return frozenCopy(lumpImage(lump,true),frozenFlatKey(lump,grey,glow),grey,glow,true);}
+Image &frozenWall(int texture,int grey,int glow) {return frozenCopy(wallImage(texture),frozenWallKey(texture,grey,glow),grey,glow,false);}
 Image &lumpImage(int lump,bool flat) {
     int key=-1-lump; auto found=images.find(key); if(found!=images.end()) return found->second;
     loadingTick();

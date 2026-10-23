@@ -73,6 +73,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "am_map.h"
 
 #include "p_setup.h"
+#include "p_phobos.h"
 #include "r_local.h"
 
 
@@ -854,6 +855,8 @@ void D_DoomMain (void)
     modifiedgame = false;
 	
     classicmovement = M_CheckParm ("-classicmovement");
+    if (M_CheckParm ("-phobos"))
+	phobosphysics = true;
     nomonsters = M_CheckParm ("-nomonsters");
     respawnparm = M_CheckParm ("-respawn");
     fastparm = M_CheckParm ("-fast");

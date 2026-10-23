@@ -226,7 +226,7 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     // Window glass over everything behind it, shards included; it writes no depth.
     if(!glassVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,glassPipeline);
-        SDL_GPUTextureSamplerBinding images[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp},
+        SDL_GPUTextureSamplerBinding images[]={{gpu(skyImage()),linearRepeat},{paletteTexture,nearestClamp},
                                               {glassReflected?glassMirror.color:paletteTexture,nearestClamp},
                                               {probeAtlas?probeAtlas:paletteTexture,nearestClamp}};
         SDL_BindGPUFragmentSamplers(pass,0,images,4);bindLightBlockers(pass);

@@ -28,6 +28,7 @@ rcsid[] = "$Id: p_doors.c,v 1.4 1997/02/03 16:47:53 b1 Exp $";
 #include "z_zone.h"
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_phobos.h"
 
 #include "s_sound.h"
 
@@ -167,8 +168,31 @@ void T_VerticalDoor (vldoor_t* door)
 	}
 	break;
 	
+      case 3:
+	// CYCLING (Phobos): creeping up while the air on each side evens out
+	// a little, then open at full speed
+	if (T_MovePlane (door->sector, door->speed/AIRLOCK_CREEP,
+			 door->topheight, false, 1, 1) == pastdest
+	    || !--door->topcountdown)
+	{
+	    door->direction = 1;
+	    S_StartSound((mobj_t *)&door->sector->soundorg, sfx_doropn);
+	}
+	break;
+
       case 1:
 	// UP
+	// On Phobos a shut door between air and vacuum cycles first, cracked
+	// open a unit so the air starts to hiss through (P_AirlockCycle).
+	if (door->sector->ceilingheight <= door->sector->floorheight
+	    && P_AirlockCycle (door->sector))
+	{
+	    T_MovePlane (door->sector, FRACUNIT, door->topheight, false, 1, 1);
+	    door->direction = 3;
+	    door->topcountdown = AIRLOCK_TICS;
+	    S_StartSound ((mobj_t *)&door->sector->soundorg, sfx_pstart);
+	    break;
+	}
 	res = T_MovePlane(door->sector,
 			  door->speed,
 			  door->topheight,
@@ -425,6 +449,10 @@ EV_VerticalDoor
 	  case	27:
 	  case	28:
 	  case	117:
+	    // Cycling between air and vacuum (Phobos): another press waits with it,
+	    // it doesn't shut it again.
+	    if (door->direction == 3)
+		return;
 	    if (door->direction == -1)
 		door->direction = 1;	// go back up
 	    else

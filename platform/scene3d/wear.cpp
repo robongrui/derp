@@ -15,7 +15,7 @@
 namespace doom3d {
 namespace {
 // Record kinds, as world/wear.glsl reads them.
-enum { WEAR_STREAK=1,WEAR_WET=3,WEAR_CRACK=4,WEAR_PUDDLE=5 };
+enum { WEAR_STREAK=1,WEAR_WET=3,WEAR_CRACK=4,WEAR_PUDDLE=5,WEAR_FROST=6,WEAR_ICE_CRACK=7 };
 struct Record { int sector; std::array<float,4> a,b; };
 unsigned wearLevelSerial=~0u,wearPaneSerial=~0u;
 bool built=false;
@@ -141,7 +141,7 @@ void findLeaks() {
 }
 
 bool wearOn() {
-    return worldPending&&levelSerial==r_levelserial&&built&&(settings.windowStreaks||settings.weather);
+    return worldPending&&levelSerial==r_levelserial&&built&&(settings.windowStreaks||settings.weather||Game_Phobos());
 }
 }
 
@@ -183,8 +183,11 @@ void appendWear(std::vector<std::array<float,4>> &info) {
     if(!wearOn()||info.size()!=(size_t)numsectors)return;
     std::vector<const Record*> all;
     std::vector<Record> dynamic;
-    if(settings.windowStreaks)for(const Record &r:streaks)all.push_back(&r);
+    // On Phobos it has never rained: no streaks, no soaked sills.
+    bool rained=!Game_Phobos();
+    if(settings.windowStreaks&&rained)for(const Record &r:streaks)all.push_back(&r);
     for(const Inside &in:insides) {
+        if(!rained)break;
         float soak=paneSoak(in.pane);
         if(soak<0.01f)continue;
         if(settings.windowStreaks)dynamic.push_back({in.inner,{(float)WEAR_STREAK,(float)in.key,in.sill,(in.metal?-1.0f:1.0f)*soak},{in.ax,in.ay,in.bx,in.by}});
@@ -197,6 +200,12 @@ void appendWear(std::vector<std::array<float,4>> &info) {
         dynamic.push_back({l.sector,{(float)WEAR_CRACK,l.x,l.y,14+6*hashUnit(1,0,l.seed)},{seed,0,0,0}});
         dynamic.push_back({l.sector,{(float)WEAR_PUDDLE,l.x,l.y,7+4*hashUnit(2,0,l.seed)},{seed,0,0,1}});
     }
+    // Phobos: frost round each breach (decompression.cpp), on both sides of the opening.
+    std::vector<BreachFrost> frosted;breachFrost(frosted);
+    for(const BreachFrost &f:frosted)for(int s:f.sectors)
+        if(s>=0&&sectors[s].ceilingpic!=skyflatnum)dynamic.push_back({s,{(float)WEAR_FROST,40+40*f.frost,0,f.frost},{f.ax,f.ay,f.bx,f.by}});
+    for(const IceCrack &k:iceCracksNow())
+        dynamic.push_back({k.sector,{(float)WEAR_ICE_CRACK,k.x,k.y,k.reach},{(float)(k.seed&0xffff),0,0,0}});
     for(const Record &r:dynamic)all.push_back(&r);
     std::vector<int> counts(numsectors,0);
     for(const Record *r:all)if(r->sector>=0&&r->sector<numsectors)++counts[r->sector];
@@ -205,7 +214,7 @@ void appendWear(std::vector<std::array<float,4>> &info) {
     size_t first=base+numsectors;
     std::vector<size_t> next(numsectors);
     for(int s=0;s<numsectors;++s) {
-        info[base+s]={(float)first,(float)counts[s],0,(float)(hash32((uint32_t)s*2654435761u)&0xffff)};
+        info[base+s]={(float)first,(float)counts[s],poolIceCode(s),(float)(hash32((uint32_t)s*2654435761u)&0xffff)};
         next[s]=first;first+=2*counts[s];
     }
     info.resize(first);

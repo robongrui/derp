@@ -73,6 +73,8 @@ set(DOOM_SOURCES
     linuxdoom-1.10/p_map.c
     linuxdoom-1.10/p_maputl.c
     linuxdoom-1.10/p_mobj.c
+    linuxdoom-1.10/p_phobos.c
+    linuxdoom-1.10/p_air.c
     linuxdoom-1.10/p_plats.c
     linuxdoom-1.10/p_pspr.c
     linuxdoom-1.10/p_saveg.c
@@ -259,6 +261,7 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/spray.cpp
         platform/scene3d/body_motion.cpp
         platform/scene3d/death_director.cpp
+        platform/scene3d/decompression.cpp
         platform/scene3d/death_falls.cpp
         platform/scene3d/ragdoll.cpp
         platform/scene3d/ragdoll_body.cpp
@@ -280,6 +283,7 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/scene.cpp
         platform/scene3d/shadows.cpp
         platform/scene3d/shot_lights.cpp
+        platform/scene3d/space.cpp
         platform/scene3d/sprite_normals.cpp
         platform/scene3d/surface_lights.cpp
         platform/scene3d/thing_light.cpp
@@ -317,7 +321,7 @@ if(DOOM_BUILD_SDL)
         platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/acoustic_graph.c platform/audio/steps.c
         platform/audio/impact_synth.c platform/audio/spark_synth.c platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
         platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/computer_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c
-        platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c)
+        platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c platform/audio/vacuum.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)

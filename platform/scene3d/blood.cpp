@@ -233,6 +233,33 @@ static float rainWash(bool rained,float age,float &dark,float &spread) {
     float wash=std::clamp(std::floor((age-6)/15*8)/8,0.0f,1.0f);
     return wash>=1?-1:pale*2+wash;
 }
+// Phobos: blood spilled where there is no air boils. Its boiling point falls
+// below body heat, so for its first boilFor seconds it froths, spitting pale
+// pink vapour a few units up; the boiling cools what is left and it freezes:
+// no gloss from then on, dark and dull. x, y, z: its middle; along, up: the
+// surface's ways across it (a wall's vapour leaves sideways off it).
+constexpr float boilFor=3;
+static bool boiling(int sector,float age,float x,float y,float z,float size,float ox,float oy,float oz,
+                    const Uniforms &camera,float &wet,float &dark) {
+    if(!Game_Phobos()||Game_Air(sector)>=0.25f)return false;
+    wet=0;dark*=0.72f;
+    if(age<0||age>boilFor||std::hypot(x-camera.eye[0],y-camera.eye[1])>800)return true;
+    uint32_t seed=hash32((uint32_t)std::lround(x*13+y*7+z*3));
+    int specks=std::clamp((int)(size/3),3,10);
+    float fade=1-age/boilFor;
+    for(int n=0;n<specks;++n) {
+        float life=0.3f+0.25f*hashUnit(n,0,seed),clock=age+life*hashUnit(n,1,seed);
+        int cycle=(int)std::floor(clock/life);
+        float t=(clock-cycle*life)/life;
+        uint32_t own=seed^(uint32_t)cycle*2654435761u;
+        float r=size*0.4f*std::sqrt(hashUnit(n,2,own)),a=2*doomPi*hashUnit(n,3,own),rise=(2+5*hashUnit(n,4,own))*t;
+        float px=x+r*std::cos(a),py=y+r*std::sin(a),pz=z;
+        px+=ox*rise;py+=oy*rise;pz+=oz*rise;
+        float pale=(0.55f+0.3f*hashUnit(n,5,own))*fade*(1-t);
+        pixelBlock(particleVertices,camera,px,py,pz,0.5f,1,{pale,pale*0.62f,pale*0.6f});
+    }
+    return true;
+}
 void buildBlood(const Uniforms &camera) {
     if(!settings.blood||bloodPalette().empty())return;
     checkBloodLevel();
@@ -254,6 +281,7 @@ void buildBlood(const Uniforms &camera) {
         // The pool spreads over four seconds in eight steps.
         float grow=0.3f+0.7f*std::min(1.0f,std::floor(age*2)/8);
         float wet,dark;bloodAge(age,4,6,wet,dark);
+        boiling(pool.sector,age,pool.x,pool.y,floorZ(&sectors[pool.sector]),pool.size*grow,0,0,1,camera,wet,dark);
         float spread,wash=rainWash(rainedOn(pool.sector,pool.x,pool.y),age,dark,spread);
         if(wash<0)continue;
         flatBlood(bloodPool,pool.sector,pool.x,pool.y,pool.size*grow*spread,pool.angle,1,false,false,wet,dark,wash,camera);
@@ -263,6 +291,7 @@ void buildBlood(const Uniforms &camera) {
         if(now<d.born)continue;
         if(d.ceiling?camera.eye[2]>ceilZ(&sectors[d.sector]):camera.eye[2]<floorZ(&sectors[d.sector]))continue; // Back of the flat.
         float wet,dark;bloodAge(now-d.born,0,3,wet,dark);
+        boiling(d.sector,now-d.born,d.x,d.y,d.ceiling?ceilZ(&sectors[d.sector]):floorZ(&sectors[d.sector]),d.size,0,0,d.ceiling?-1.0f:1.0f,camera,wet,dark);
         float spread,wash=rainWash(!d.ceiling&&rainedOn(d.sector,d.x,d.y),now-d.born,dark,spread);
         if(wash<0)continue;
         flatBlood(d.variant,d.sector,d.x,d.y,d.size*spread,d.angle,d.stretch,d.flip,d.ceiling,d.ceiling?0:wet,dark,wash,camera);
@@ -280,6 +309,8 @@ void buildBlood(const Uniforms &camera) {
         if(u1<=u0||z1<=z0)continue;
         float wet,dark;bloodAge(now-d.born,0,3,wet,dark);
         const line_t &line=lines[d.line];const sector_t *front=sides[line.sidenum[d.side]].sector;
+        boiling(int(front-sectors),now-d.born,span.a.x+ex/len*d.along,span.a.y+ey/len*d.along,span.anchor+d.dz,d.size,
+                            ey/len,-ex/len,0,camera,wet,dark);
         float spread,wash=rainWash(settings.weather&&rainNow>0.01f&&front->ceilingpic==skyflatnum,now-d.born,dark,spread);
         if(wash<0)continue;
         float light=lighting(front);
@@ -298,8 +329,9 @@ void buildBlood(const Uniforms &camera) {
              vertex(u1,z0,texU(u1),texV(z0)),vertex(u0,z0,texU(u0),texV(z0)));
         // Drips run down from the splat's lower half over three seconds,
         // slowing, in four-tic steps: the bead leads, the run follows.
+        // (On Phobos nothing pulls them down.)
         const Image &drip=bloodImage(bloodDrip);
-        for(int n=0;n<d.drips;++n) {
+        for(int n=0;n<(Game_Phobos()?0:d.drips);++n) {
             float age=std::floor((now-d.born-0.3f)*TICRATE/4)*4/TICRATE;
             if(age<=0)continue;
             float grow=std::min(1.0f,age/3),length=std::round(d.dripLength[n]*(1-(1-grow)*(1-grow))),u=d.along+d.dripU[n];

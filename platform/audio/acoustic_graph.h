@@ -40,4 +40,7 @@ void Acoustic_Glass(int line, int whole);
 void Acoustic_ShowGlass(int shown);
 /* Whether a whole pane is shown on line. */
 int Acoustic_GlassWhole(int line);
+/* How much air a sector holds (0-1), or NULL (all of them full): no way
+   crosses an opening into a sector with none. */
+void Acoustic_SetAir(float (*air)(int sector));
 #endif

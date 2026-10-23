@@ -34,6 +34,7 @@ rcsid[] = "$Id: p_map.c,v 1.5 1997/02/03 22:45:11 b1 Exp $";
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_phobos.h"
 
 #include "s_sound.h"
 
@@ -63,6 +64,7 @@ fixed_t		tmdropoffz;
 // keep track of the line that lowers the ceiling,
 // so missiles don't explode against sky hack walls
 line_t*		ceilingline;
+line_t*		blockline;
 
 // keep track of special lines as they are hit,
 // but don't process them until the move is proven valid
@@ -142,6 +144,7 @@ P_TeleportMove
 
     newsubsec = R_PointInSubsector (x,y);
     ceilingline = NULL;
+    blockline = NULL;
     
     // The base floor/ceiling is from the subsector
     // that contains the point.
@@ -215,11 +218,17 @@ boolean PIT_CheckLine (line_t* ld)
 		
     if (!(tmthing->flags & MF_MISSILE) )
     {
-	if ( ld->flags & ML_BLOCKING )
-	    return false;	// explicitly blocking everything
+	// Whole window glass (Phobos, the renderer's panes) holds a body that flies at it,
+	// many a window being no wall in the map; shots and missiles break it their own way.
+	if ( (ld->flags & ML_BLOCKING && !(P_Carried (tmthing) && P_AirPasses (ld)))
+	     || (!(tmthing->flags & MF_MISSILE) && P_Phobos () && P_GlassWhole (ld)) )
+	{
+	    blockline = ld;	// what stopped it (Phobos: glass it may break, P_Strike)
+	    return false;	// explicitly blocking everything (but the air, Phobos)
+	}
 
-	if ( !tmthing->player && ld->flags & ML_BLOCKMONSTERS )
-	    return false;	// block monsters only
+	if ( !tmthing->player && ld->flags & ML_BLOCKMONSTERS && !P_Loose (tmthing) )
+	    return false;	// block monsters only (not one a draft carries, Phobos)
     }
 
     // set openrange, opentop, openbottom
@@ -278,6 +287,10 @@ boolean PIT_CheckThing (mobj_t* thing)
     
     // don't clip against self
     if (thing == tmthing)
+	return true;
+
+    // Two things the air carries (Phobos) don't jam each other in a breach.
+    if (!(tmthing->flags & MF_MISSILE) && P_Carried (tmthing) && P_Carried (thing))
 	return true;
     
     // check for skulls slamming into things
@@ -408,6 +421,7 @@ P_CheckPosition
 
     newsubsec = R_PointInSubsector (x,y);
     ceilingline = NULL;
+    blockline = NULL;
     
     // The base floor / ceiling is from the subsector
     // that contains the point.
@@ -475,20 +489,42 @@ P_TryMove
     
     if ( !(thing->flags & MF_NOCLIP) )
     {
+	// Up in the open sky (Phobos, P_OpenSky): on over other open ground, its sky no
+	// lid either, but never in under a roof.
+	if (P_OpenSky (thing) && thing->z + thing->height > tmceilingz)
+	{
+	    if (R_PointInSubsector (x, y)->sector->ceilingpic != skyflatnum)
+		return false;
+	    tmceilingz = thing->z + thing->height + 64*FRACUNIT;
+	}
+
 	if (tmceilingz - tmfloorz < thing->height)
 	    return false;	// doesn't fit
 
 	floatok = true;
 	
+	// On Phobos the air carries what it has taken off the floor through any
+	// gap it fits: down under a lintel, up over a sill (P_Carried).
 	if ( !(thing->flags&MF_TELEPORT) 
 	     &&tmceilingz - thing->z < thing->height)
-	    return false;	// mobj must lower itself to fit
+	{
+	    if (!P_Carried (thing))
+		return false;	// mobj must lower itself to fit
+	    P_BodyCatch (thing, thing->z + thing->height - tmceilingz, true);
+	    thing->z = tmceilingz - thing->height;
+	}
 
 	if ( !(thing->flags&MF_TELEPORT)
 	     && tmfloorz - thing->z > 24*FRACUNIT )
-	    return false;	// too big a step up
+	{
+	    if (!P_Carried (thing))
+		return false;	// too big a step up
+	    P_BodyCatch (thing, tmfloorz - thing->z, false);
+	    thing->z = tmfloorz;
+	}
 
 	if ( !(thing->flags&(MF_DROPOFF|MF_FLOAT))
+	     && !P_Loose (thing)
 	     && tmfloorz - tmdropoffz > 24*FRACUNIT )
 	    return false;	// don't stand over a dropoff
     }
@@ -1316,6 +1352,10 @@ P_RadiusAttack
     
     fixed_t	dist;
 	
+    // On Phobos no air carries a blast wave: in vacuum only the casing's
+    // fragments and the gas of the charge itself, half of it.
+    if (P_Phobos ())
+	damage = (int)(damage*(0.5f + 0.5f*P_SectorAir (spot->subsector->sector)));
     dist = (damage+MAXRADIUS)<<FRACBITS;
     yh = (spot->y + dist - bmaporgy)>>MAPBLOCKSHIFT;
     yl = (spot->y - dist - bmaporgy)>>MAPBLOCKSHIFT;

@@ -65,6 +65,8 @@ void Room_Measure(room_t *room, room_outline_t *outline) { memset(room, 0, sizeo
 void Beyond_Measure(const room_t *room, const room_outline_t *outline, float facing, beyond_t *space)
 { (void)room; (void)outline; (void)facing; space->coupling = 0.3f; }
 float Beyond_Share(const beyond_t *space, float x, float y) { (void)space; (void)x; (void)y; return 0.25f; }
+float Vacuum_Carry(fixed_t x, fixed_t y, int own, float *cutoff) { (void)x; (void)y; (void)own; *cutoff = OCCLUSION_OPEN_HZ; return 1; }
+void Vacuum_Follow(void) { }
 int Flyby_Near(const mobj_t *ear, const mobj_t *shooter, const mobj_t *hit,
                float x1, float y1, float z1, float x2, float y2, float z2, float *x, float *y, float *z, float *level)
 { (void)ear; (void)shooter; (void)hit; (void)x1; (void)y1; (void)z1; (void)x2; (void)y2; (void)z2; (void)x; (void)y; (void)z; (void)level; return 0; }
@@ -199,7 +201,7 @@ static void check_reuse_and_world(void)
     play_kind(IMPACT_GEAR_ARMOR, listener.x / (float)FRACUNIT, 0, 0, 0.03f, 1, 1);
     CHECK(near(channels[0].send, SFX_GAIN * 0.03f));
     /* The same slot also resets its policy when stolen under full load. */
-    for (int i = 1; i < MIX_CHANNELS; ++i) start_sample(samples[1], 15, 128, 128, OCCLUSION_OPEN_HZ, 0, 1);
+    for (int i = 1; i < MIX_CHANNELS; ++i) start_sample(samples[1], 15, 128, 128, OCCLUSION_OPEN_HZ, 0, 1, 1);
     CHECK(I_StartSound(1, 8, 128, 128, 0) == channels[0].handle);
     CHECK(near(channels[0].send_scale, 1));
     CHECK(near(channels[0].send, SFX_GAIN * sqrtf(8.0f / 15)));

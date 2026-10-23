@@ -30,6 +30,7 @@ bool hasFlashlight(const Settings&) {return Game_HasEffect(GAME_EFFECT_FLASHLIGH
 bool hasFalloff(const Settings&) {return Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF)!=0;}
 bool hasFreeAim(const Settings &s) {return s.look&&Game_HasEffect(GAME_EFFECT_FREE_AIM)!=0;}
 bool hasAuthored(const Settings&) {return Game_HasEffect(GAME_EFFECT_AUTHORED_EPISODES)!=0;}
+bool hasPhobos(const Settings&) {return Game_HasEffect(GAME_EFFECT_PHOBOS)!=0;}
 }
 
 void fitGame(Settings &s) {
@@ -193,6 +194,20 @@ std::vector<OptionTab> optionTabs(Settings &s) {
                 check("dust_motes","Dust motes",&s.dust,"Specks that glint in indoor sunbeams and the flashlight beam."),
                 check("embers","Embers",&s.embers,"A few sparks rise from torches and fires and cool as they climb; where the game's wind blows, it carries them off."),
                 check("heat_haze","Heat haze",&s.heatHaze,"Rows of pixels shimmer above lava, hot damaging floors and flames.")}},
+            {"Physically accurate Phobos",{
+                check("phobos","Physically accurate Phobos",&s.phobos,
+                    "Knee-Deep in the Dead taken literally: it is on Phobos. Anything off the floor falls at 1/1700 of "
+                    "Earth's gravity and slides on with almost no friction; hits and shots push with their real momentum, so "
+                    "bodies drift away slowly for a minute and every shot kicks you back. You have no boots: movement hops you "
+                    "gently (a 30 cm hop floats for 20 seconds), Use with movement kicks you off a wall along the floor, E "
+                    "jumps, run plus movement fires the suit's thrusters. The zombies have none either and tumble; the "
+                    "demons grip with their claws. DOOM's first episode only; never in demos or netgames.",hasPhobos),
+                check("phobos_spin","Guns turn you",&s.phobosSpin,
+                    "Each shot's kick also turns you, as it does the zombies: a shouldered gun's line runs above your middle, "
+                    "so firing spins you back while nothing holds you, about 15 degrees a second for each shotgun blast, "
+                    "until a floor or ceiling stops it. Twisting like a falling cat you keep your view against up to 30 "
+                    "degrees a second of it (10 while firing: your arms hold the gun); long bursts in the air turn it past that, on over the top into a backflip, "
+                    "upside down (the mouse turns as it looks). On a floor or ceiling you right yourself.",[](const Settings &d){return hasPhobos(d)&&d.phobos!=0;})}},
             {"Authored episodes",{
                 check("authored_episodes","Authored episodes",&s.authored,
                     "Looks picked by hand for the game's own episodes, beyond what DERP derives from the WAD: Knee-Deep in the Dead "

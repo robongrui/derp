@@ -11,11 +11,13 @@ struct LightBlocker { vec4 line,opening; };
 // forward.w, up.w: how wet the windows and the ground under the sky are.
 // mood: x how bright the sky is drawn, yzw its tint (the episode's mood, Game_Mood).
 // weather: x how hard it rains (0: dry), yz the wind blowing it (units/s).
+// phobos: x 1 when there is no air outside (sky.frag draws space), y how plainly its stars
+// show, z how far frost has crept over the helmet's visor (present.frag), w unused.
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
 // sky light level (0: off), sun yaw, sun disc strength (0: off); texFilter:
 // sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-#define CAMERA_BLOCK { vec4 eye,right,forward,up,projection,effects,materials,flashlightTint,fog,map,water,sun,bake,fx,fx2,texFilter,outdoor,haze,mood,weather; vec4 flicker[4]; }
+#define CAMERA_BLOCK { vec4 eye,right,forward,up,projection,effects,materials,flashlightTint,fog,map,water,sun,bake,fx,fx2,texFilter,outdoor,haze,mood,weather,phobos; vec4 flicker[4]; }
 #define FLASH_BLOCK { uint flashCount,flashReserved0,flashReserved1,flashReserved2; Flash lights[63]; }
 // count, then four light indices, then padding (see doom3d::FogLights).
 #define FOG_BLOCK { uvec4 fogA,fogB; }

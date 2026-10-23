@@ -47,8 +47,9 @@ int lightBakeInputs() {return (settings.emissive?1:0)|(settings.bakeOnlyLights?2
 static bool poolSurface(int sector,bool ceiling) {
     int pic=ceiling?sectors[sector].ceilingpic:sectors[sector].floorpic;
     if(pic==skyflatnum)return false;
-    int lump=firstflat+flattranslation[pic];
-    const Image &image=lumpImage(lump,true);
+    int lump=firstflat+flattranslation[pic],grey=0,glow=8;
+    bool frozen=!ceiling&&frozenLook(sector,grey,glow);
+    const Image &image=frozen?frozenFlat(firstflat+pic,grey,glow):lumpImage(lump,true);   // frozen (Phobos): its glow dying
     if(image.emissionWeight<=0)return false;
     char name[9];memcpy(name,lumpinfo[lump].name,8);name[8]=0;
     int kind=Game_GlowKind(name,1);
@@ -93,7 +94,9 @@ static void buildPoolAreas() {
             size_t index=found->second;BakeArea &area=bakeAreas[index];
             // Rays test against a point up to 48 units off the surface, inside the room.
             area.clearance=std::min(area.clearance,std::clamp(bakeMap.sectors[i].ceiling-bakeMap.sectors[i].floor-2,0.0f,48.0f));
-            const Image &image=lumpImage(firstflat+flattranslation[ceiling?sectors[i].ceilingpic:sectors[i].floorpic],true);
+            int grey=0,glow=8,pic=ceiling?sectors[i].ceilingpic:sectors[i].floorpic;
+            bool frozen=!ceiling&&frozenLook(i,grey,glow);
+            const Image &image=frozen?frozenFlat(firstflat+pic,grey,glow):lumpImage(firstflat+flattranslation[pic],true);
             for(int leaf:sectorFloors[i]) {
                 const auto &poly=floors[leaf];if(poly.size()<3)continue;
                 std::vector<std::array<float,2>> piece;float twice=0;
@@ -318,6 +321,8 @@ static void classifyLampSectors() {
 // The sky's color: the upper rows of the sky texture, above any horizon art,
 // halfway to white.
 std::array<float,3> skyColor() {
+    // Phobos: no sky light, only Mars-shine, in Mars' rusty butterscotch.
+    if(Game_Phobos())return {1.0f,0.6f,0.4f};
     const Image &sky=wallImage(skytexture);
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     double sum[3]={};

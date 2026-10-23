@@ -16,6 +16,54 @@ layout(location=0) out vec4 outColor;
 // whole length of fog and seem to light the sky itself.
 #define NO_BEAM_FOG
 #include "lighting.glsl"
+// Physically accurate Phobos (c.phobos.x; scene3d/space.cpp): no air, and no painted sky. Black
+// space a Doom pixel at a time, anchored to the world: steady stars (no air to twinkle them) that
+// come out as the eye settles to the dark (c.phobos.y), Mars, and the sun when it is up.
+uint pcgHash(uint v) {uint s=v*747796405u+2891336453u;uint w=((s>>((s>>28u)+4u))^s)*277803737u;return (w>>22u)^w;}
+float hash3(ivec3 p) {return float(pcgHash(uint(p.x)+pcgHash(uint(p.y)+pcgHash(uint(p.z)))))/4294967295.0;}
+float noise3(vec3 p) {
+    ivec3 i=ivec3(floor(p));vec3 f=fract(p);f=f*f*(3.0-2.0*f);
+    float a=mix(hash3(i),hash3(i+ivec3(1,0,0)),f.x),b=mix(hash3(i+ivec3(0,1,0)),hash3(i+ivec3(1,1,0)),f.x);
+    float d=mix(hash3(i+ivec3(0,0,1)),hash3(i+ivec3(1,0,1)),f.x),e=mix(hash3(i+ivec3(0,1,1)),hash3(i+ivec3(1,1,1)),f.x);
+    return mix(mix(a,b,f.y),mix(d,e,f.y),f.z);
+}
+// Mars: Phobos is locked to it, so it hangs at one place, 42 degrees across, high up. With the sun
+// up it stands round from it, a little over half lit; with the sun hidden (the night side, facing
+// Mars, Game_Mood) the sun is behind the moon and lights Mars nearly full. A day on Mars is a long time on
+// Phobos: its ground stays put. Rust and ochre plains, dark uplands, white caps at its poles, and
+// on the day side the faint rim of its thin air. Its night side hides the stars behind it.
+const float marsAround=2.6,marsUp=0.70,marsRadius=0.367;
+vec3 space(vec3 ray,vec3 sunWay,out bool behindMars) {
+    float pixel=160.0*c.projection.x; // Doom pixels per radian
+    vec3 cell=floor(ray*pixel),q=normalize((cell+0.5)/pixel);
+    vec3 color=vec3(0);
+    float yaw=c.fx2.z+marsAround;
+    vec3 mars=vec3(cos(yaw)*cos(marsUp),sin(yaw)*cos(marsUp),sin(marsUp));
+    float a=acos(clamp(dot(q,mars),-1.0,1.0));
+    behindMars=a<marsRadius;
+    if(behindMars) {
+        float s=sin(a)/sin(marsRadius);
+        vec3 across=q-mars*dot(q,mars);across=length(across)>1e-6?normalize(across):vec3(0);
+        vec3 n=-mars*sqrt(max(1.0-s*s,0.0))+across*s;
+        vec3 light=c.sun.w>0.0?sunWay:normalize(-mars+cross(mars,vec3(0,0,1))*0.35+vec3(0,0,0.15));
+        float lit=max(dot(n,light),0.0);
+        vec3 p=n*3.0;
+        float g=0.55*noise3(p*2.0)+0.3*noise3(p*5.0+7.0)+0.15*noise3(p*11.0+13.0);
+        vec3 ground=mix(vec3(0.42,0.23,0.14),vec3(0.80,0.50,0.31),smoothstep(0.32,0.68,g));
+        // The caps: small, ragged at the edge, whole pixels.
+        float cap=max(n.z,-n.z-0.02)+0.04*(g-0.5);
+        ground=cap>0.95?vec3(0.90,0.88,0.86):ground;
+        color=ground*lit+vec3(0.9,0.6,0.45)*0.25*smoothstep(0.85,1.0,s)*sqrt(lit);
+        return color;
+    }
+    float h=hash3(ivec3(cell));
+    if(h<0.006) {
+        float bright=0.25+0.75*pow(hash3(ivec3(cell)+ivec3(17)),3.0);
+        vec3 tint=mix(vec3(1.0,0.86,0.72),vec3(0.78,0.86,1.0),hash3(ivec3(cell)+ivec3(29)));
+        color=tint*bright*0.7*c.phobos.y;
+    }
+    return color;
+}
 void main() {
     vec2 size=vec2(textureSize(image,0));
 #ifdef SURFACE
@@ -33,6 +81,20 @@ void main() {
     float v=0.70-rise*0.68;
     vec2 uv=vec2(-angle/6.2831853*size.x*4.0,clamp(v,0.001,0.999)*size.y);
     bool filtered=c.effects.x>0.0;
+    if(c.phobos.x>0.0) {
+        vec3 sunWay=vec3(cos(c.fx2.z)*cos(c.outdoor.w),sin(c.fx2.z)*cos(c.outdoor.w),sin(c.outdoor.w));
+        bool behindMars;
+        vec3 sky=space(ray,sunWay,behindMars);
+        // The sun, when it is up: a small white disc and only the eye's own tight glare round it,
+        // no air to glow in.
+        if(c.fx2.w>0.0&&!behindMars) {
+            float a=acos(clamp(dot(ray,sunWay),-1.0,1.0));
+            sky=max(sky,vec3(1.0)*(1.0-smoothstep(0.010,0.013,a)))+c.sun.rgb*exp(-a/0.02)*0.5;
+        }
+        outColor=vec4(sky*c.fx.x,1.0);
+        if(c.water.z==0.0&&c.water.w>0.0) outColor.a=0.35;
+        return;
+    }
     // Light distance softening: blend in a 2x2 texel box so the sky sits a
     // touch softer than the crisp walls in front of it. Taps stay inside the
     // texture rows so the top and bottom don't wrap into each other.

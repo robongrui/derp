@@ -119,6 +119,9 @@ extern boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fi
 // Renderer-only: a hitscan shot passes through a two-sided line's opening at
 // x,y,z, travelling along dx,dy (window glass breaks).
 extern void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+// A body struck the glass on line hard enough to break it (Phobos, P_Strike): it shatters at
+// x, y, z, the body going dx, dy.
+extern void (*R_GlassStruck)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
 extern boolean r_uncapped;
 extern unsigned r_levelserial;
 extern fixed_t		viewx;

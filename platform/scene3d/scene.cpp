@@ -74,6 +74,7 @@ static void beforeTic() {
     watchGlass();
     watchWeather();
     watchWear();
+    watchBreaches();
     watchShotLights();
 }
 static void acceleratedView(player_t *player) {
@@ -94,8 +95,10 @@ void applySettings() {
     R_DamageHit=settings.accelerated?bodyDamaged:nullptr;
     R_PlaneImpact=settings.accelerated?planeImpact:nullptr;
     R_ShotPassed=settings.accelerated?glassShot:nullptr;
+    R_GlassStruck=settings.accelerated?glassStruck:nullptr;
     freeaim=settings.accelerated&&settings.look;
     classicaim=settings.classicAim!=0;
+    Game_SetPhobos(settings.phobos);
     quickconfirm=settings.quickConfirm!=0;
     if(!settings.accelerated) clearFlashPulses();
     r_uncapped=settings.accelerated;
@@ -109,9 +112,11 @@ void applySettings() {
     I_SetMusicDevice(settings.musicDevice);
     // The authored episode's mood is baked into the sun, lamps, bounce and
     // sky light (levelMood): switching it re-bakes them all.
-    static int bakedAuthored=-1;
-    if(bakedAuthored>=0&&bakedAuthored!=settings.authored) {sunBaked=false;lightBakeKey=-1;bounceKey=-1;ambientKey=-1;flowKey=-1;}
-    bakedAuthored=settings.authored;
+    // So is Phobos' (levelMood, Game_Sun, skyColor).
+    static int bakedAuthored=-1,bakedPhobos=-1;
+    int phobos=Game_Phobos();
+    if((bakedAuthored>=0&&bakedAuthored!=settings.authored)||(bakedPhobos>=0&&bakedPhobos!=phobos)) {sunBaked=false;lightBakeKey=-1;bounceKey=-1;ambientKey=-1;flowKey=-1;}
+    bakedAuthored=settings.authored;bakedPhobos=phobos;
 }
 void sceneInit(SDL_Window *window) {
     gameWindow=window;
@@ -131,11 +136,11 @@ void sceneInit(SDL_Window *window) {
 }
 void sceneShutdown() {
     stopRelight();
-    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_DamageHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;r_uncapped=0;v_overlayactive=0;
+    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_DamageHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;R_GlassStruck=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     batches.clear();shadowBatches.clear();decalBatches.clear();mirrorBatches.clear();particleVertices.clear();
     mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
-    imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();glassLightShutdown();exposureShutdown();
+    imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();glassLightShutdown();exposureShutdown();spaceShutdown();
     bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
     impactsShutdown();bloodShutdown();splashesShutdown();bodyMotionShutdown();glassShutdown();shotLightsShutdown();
     weatherShutdown();wearShutdown();
@@ -183,7 +188,8 @@ static void planStages(bool level) {
 static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2&&GAME_SURFACE_FLESH==3&&GAME_SURFACE_SOIL==4&&GAME_SURFACE_LIQUID==5&&GAME_SURFACE_FABRIC==6,
               "materialGloss in world/surface.glsl numbers the surfaces");
 static float surfaceMaterial(int key,int pic,bool flat) {
-    if(flat&&iceFlat(pic))return 1;
+    if((flat&&iceFlat(pic))||isFrozenFlatKey(key))return 1;
+    if(isStillFlatKey(key)) {int lump=-1-key-stillFlatOffset;return surfaceMaterial(-1-lump,lump-firstflat,true);}
     static std::unordered_map<int,float> known;
     auto found=known.find(key);
     if(found!=known.end())return found->second;
@@ -344,6 +350,24 @@ FrameView prepareFrame(int w,int h) {
         for(int g=0;g<flickerGroups;++g)camera.flicker[g/4][g%4]=groupFlicker(g);
         player_t *player=&players[displayplayer];mobj_t *mo=player->mo;
         camera.eye[0]=units(mo->x);camera.eye[1]=units(mo->y);camera.eye[2]=units(player->viewz);
+        // Phobos: the player's body turned by his guns' kicks takes the view with it (F4, off
+        // by default), on over the top: past straight up or down he faces the other way
+        // upside down (Game_FlipView turns his facing about; the camera rolls over, below).
+        {
+            float kick=Game_LookKick(),edge=(float)doomPi/2;
+            if(settings.phobosSpin&&settings.look&&!demoplayback&&Game_Phobos()) {
+                float before=pitch;
+                pitch+=Game_ViewFlipped()?-kick:kick;
+                // On over the top once it would pass the view's limit, a hair short of it.
+                if((pitch>=edge-1e-3f&&pitch>before)||(pitch<=-edge+1e-3f&&pitch<before)) {
+                    if(pitch>edge-1e-3f&&pitch<=edge)pitch=edge+1e-3f;
+                    if(pitch<-edge+1e-3f&&pitch>=-edge)pitch=-edge-1e-3f;
+                    pitch=(pitch>0?1:-1)*(float)doomPi-pitch;
+                    Game_FlipView();oldYaw+=(float)doomPi;
+                }
+                pitch=std::clamp(pitch,-edge+1e-3f,edge-1e-3f);
+            } else if(Game_ViewFlipped()) {Game_FlipView();oldYaw+=(float)doomPi;}  // upright again
+        }
         float yaw=(float)(mo->angle*(2.0*doomPi/4294967296.0));
         if(tickTime&&!paused&&!menuactive&&!demoplayback) {
             fraction=std::clamp((SDL_GetTicksNS()-tickTime)/(1e9/TICRATE),0.0,1.0);
@@ -360,6 +384,7 @@ FrameView prepareFrame(int w,int h) {
         camera.right[0]=sin(yaw);camera.right[1]=-cos(yaw);
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
         camera.up[0]=-cos(yaw)*sin(look);camera.up[1]=-sin(yaw)*sin(look);camera.up[2]=cos(look);
+        if(Game_ViewFlipped())for(int c=0;c<3;++c) {camera.right[c]=-camera.right[c];camera.up[c]=-camera.up[c];}
         camera.fog[0]=0.00045f*(player->mo->subsector->sector->ceilingpic==skyflatnum?0.35f:1.0f);
         camera.fog[1]=0.012f;camera.fog[2]=fogReferenceHeight;
         camera.fog[3]=(leveltime+fraction)/TICRATE;
@@ -371,6 +396,10 @@ FrameView prepareFrame(int w,int h) {
         // The far rain sky.frag draws over the sky (weather.cpp's rain stops at the map's sky).
         camera.weather[0]=settings.weather&&camera.effects[2]==0?rainNow:0;
         camera.weather[1]=rainWind[0];camera.weather[2]=rainWind[1];
+        // Phobos: no air outside, the sky is space (sky.frag), how plainly its stars show, and
+        // the frost on the helmet's visor (present.frag).
+        camera.phobos[0]=Game_Phobos()?1:0;camera.phobos[1]=Game_Phobos()?starVisibility():0;
+        camera.phobos[2]=visorFrost();
         renderFraction=fraction;
         // Caustics follow the liquid's frame and crossfade like its floor (surfaceBinding).
         if(!causticFrames.empty()&&causticSpeed>0&&leveltime>0) {
@@ -384,7 +413,7 @@ FrameView prepareFrame(int w,int h) {
         profileAdd(profile.frame.geometryMs,geometryStart);
         if(profile.enabled)skipProfiledLights();
         // Surface lights come from this frame's geometry; the bake applies from the next frame.
-        if(settings.bakedLights&&lightBakeKey!=lightBakeInputs())bakeLights();
+        if(settings.bakedLights&&(poolRebakeWanted()||lightBakeKey!=lightBakeInputs()))bakeLights();
         if(settings.bakedLights&&settings.gridSpriteLight&&lightBakeKey==lightBakeInputs()&&staticSerial!=lightBakeSerial)bakeStaticGrid();
         if(settings.bounce&&bounceKey!=bounceInputs())bakeBounce();
         if((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)bakeAmbient();
@@ -392,7 +421,7 @@ FrameView prepareFrame(int w,int h) {
         camera.bake[1]=settings.bounce&&bounceKey>=0?bounceStrength:0;
         camera.bake[3]=camera.bake[1]>0?settings.bounceTint:0;
         bool ambient=ambientKey==bakeThingsKey;
-        camera.fx2[1]=settings.skyLight&&ambient?skyLevel:0;
+        camera.fx2[1]=settings.skyLight&&ambient?skyLevel*(Game_Phobos()?marsShine:1):0;
         // The fog haze takes the sky's color too, so it follows the sky without the sky-light bake.
         static int tintedSky=-1;
         static std::array<float,3> horizon;
@@ -516,7 +545,12 @@ void I_Render3DLook(float delta) {
     if(settings.invertLook)delta=-delta;
     float gameLook;
     if(Game_LookPitch(&gameLook))Game_Look(-delta*0.002f);
-    else pitch=std::clamp(pitch-delta*0.002f,-1.2f,1.2f);
+    else {
+        // Spinning free (Phobos, Guns turn you) the mouse looks up to straight up or down,
+        // and upside down its up is the world's down; only the spin carries him over.
+        float most=settings.phobosSpin&&Game_Phobos()?(float)doomPi/2-1e-3f:1.2f;
+        pitch=std::clamp(pitch-(Game_ViewFlipped()?-delta:delta)*0.002f,-most,most);
+    }
 }
 void I_Render3DToggleFlashlight(void) {if(settings.accelerated&&Game_HasEffect(GAME_EFFECT_FLASHLIGHT))flashlightOn=!flashlightOn;}
 void I_Render3DScreenshot(void) {screenshotPending=true;}

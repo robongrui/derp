@@ -80,7 +80,8 @@ typedef enum {
     GAME_EFFECT_WIND,             /* made-up wind under the sky and through openings */
     GAME_EFFECT_NATURAL_FALLOFF,  /* sounds fading with distance as in air, in place of the game's own curve */
     GAME_EFFECT_FREE_AIM,         /* mouselook bullets going where the view points (else the game's own aiming) */
-    GAME_EFFECT_AUTHORED_EPISODES /* hand-picked looks for the game's own episodes (Game_Mood) */
+    GAME_EFFECT_AUTHORED_EPISODES, /* hand-picked looks for the game's own episodes (Game_Mood) */
+    GAME_EFFECT_PHOBOS            /* physically accurate Phobos (Game_Phobos) */
 } game_effect;
 int Game_HasEffect(game_effect effect);
 
@@ -165,6 +166,40 @@ float Game_SoundCarry(int id);
 typedef void (*game_shot_traced)(const struct mobj_s *shooter, const struct mobj_s *hit,
                                  float x1, float y1, float z1, float x2, float y2, float z2);
 void Game_TraceShots(game_shot_traced traced);
+
+/* Physically accurate Phobos (DOOM: p_phobos.h): on asks for it (F4);
+   Game_Phobos says whether it applies now (DOOM's first episode, not in
+   demos or netgames). Then things off the floor fall at Phobos' gravity,
+   1.49e-4 units a tic a tic (Game_PhobosGravity), and slide on with the real
+   momentum of what hit them. A game without it: never. */
+void Game_SetPhobos(int on);
+int Game_Phobos(void);
+/* How much air sector holds, 0 (vacuum) to 1: what carries sound. Without
+   Phobos always 1. */
+float Game_Air(int sector);
+/* A window pane on line, whole or broken, as it is found or breaks: on
+   Phobos whole glass holds the air in. */
+void Game_Glass(int line, int whole);
+/* The openings venting air now (Phobos), at most most of them. */
+typedef struct { float x, y, z, dx, dy, speed, width; int sector, line; } game_vent;
+int Game_Vents(game_vent *vents, int most);
+/* Whether a draft tore thing off its feet and it drifts (Phobos). */
+int Game_Adrift(const struct mobj_s *thing);
+/* The draft on a monster still in its boots (Phobos): how hard, units a tic a
+   tic (0: none), and in way its direction. */
+float Game_Draft(const struct mobj_s *thing, float way[3]);
+/* A living body tumbling free (Phobos' brainless zombies): its up, between the last
+   tic and this one by fraction; 0 for anything else (drawn upright). */
+int Game_Tumble(const struct mobj_s *thing, float fraction, float up[3]);
+/* How far the player's body has turned his view up since last asked (radians;
+   Phobos: his guns' kicks spin him while nothing holds him). */
+float Game_LookKick(void);
+/* Whether the player's view is over the top, upside down and facing about (Phobos);
+   Game_FlipView turns it over (his facing turned about, his turning and strafing
+   mirrored to match). */
+int Game_ViewFlipped(void);
+void Game_FlipView(void);
+#define Game_PhobosGravity 1.49e-4f
 
 /* The F4 panel's font: the WAD lump of character c ('!' to '_'), or -1,
    and how many pixels to add after each glyph (the art's own spacing). */

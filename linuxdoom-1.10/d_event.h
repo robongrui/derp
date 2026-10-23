@@ -88,6 +88,9 @@ typedef enum
     BT_WEAPONMASK	= (8+16+32),
     BT_WEAPONSHIFT	= 3,
 
+    // Jump (Phobos only): push off the floor.
+    BT_JUMP		= 64,
+
     // Pause the game.
     BTS_PAUSE		= 1,
     // Save the game at each console.

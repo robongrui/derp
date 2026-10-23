@@ -25,7 +25,7 @@ uint32_t weatherSeed=0;
 float windSpeed=0;
 int weatherTic=-1;
 std::vector<float> soak;
-bool rainy() {return settings.weather==2||(settings.weather==1&&levelMood().rain);}
+bool rainy() {return !Game_Phobos()&&(settings.weather==2||(settings.weather==1&&levelMood().rain));}
 uint32_t levelWeatherSeed() {
     return hash32((uint32_t)gameepisode*7919u+(uint32_t)gamemap*104729u+(uint32_t)skytexture*31u+17u);
 }

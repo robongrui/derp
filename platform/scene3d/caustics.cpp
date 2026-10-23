@@ -205,7 +205,7 @@ void buildShore() {
             const sector_t *wet=side?line.backsector:line.frontsector,*dry=side?line.frontsector:line.backsector;
             if(!wet||wet==dry)continue;
             int s=(int)(wet-sectors);const auto &mist=sectorMist[s];
-            if(!mist.liquid||wet->floorpic==skyflatnum||s>=16384)continue;
+            if((!mist.liquid&&!poolFrozen(s))||wet->floorpic==skyflatnum||s>=16384)continue;   // frozen: its strip ices over (shore.glsl)
             float water=units(wet->floorheight);
             if(dry) {
                 float floor=units(dry->floorheight),ceiling=units(dry->ceilingheight);

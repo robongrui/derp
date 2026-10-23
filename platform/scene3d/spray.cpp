@@ -13,7 +13,9 @@ namespace doom3d {
 // (the floor under it, a wall in its way, the ceiling it rises into) and
 // when. Its splat is laid then, shown from that moment, and the speck flies
 // until it gets there, moving at the tic rate like the debris.
-constexpr float sprayGravity=1225; // Doom's: a unit a tic, each tic.
+// Doom's: a unit a tic, each tic. On Phobos its own, next to nothing: drops
+// fly straight on to whatever wall or ceiling is in their way.
+static float sprayGravity() {return Game_Phobos()?Game_PhobosGravity*1225:1225;}
 struct Drop { float x,y,z,vx,vy,vz,born,end,size;std::array<float,3> color; };
 static std::vector<Drop> drops;
 constexpr size_t maxDrops=768;
@@ -41,7 +43,7 @@ static void throwDrop(float x,float y,float z,float vx,float vy,float vz,float s
     z=std::clamp(z,floorZ(start)+0.5f,ceilZ(start)-0.5f);
     auto fallTime=[&](float floor) {
         float d=z-floor;
-        return d<0?-1.0f:(vz+std::sqrt(vz*vz+2*sprayGravity*d))/sprayGravity;
+        return d<0?-1.0f:(vz+std::sqrt(vz*vz+2*sprayGravity()*d))/sprayGravity();
     };
     // The floor: the start's, then the landing point's (a step's face in
     // between is found as a wall below).
@@ -59,8 +61,8 @@ static void throwDrop(float x,float y,float z,float vx,float vy,float vz,float s
     // The ceiling, when it rises that high first.
     if(vz>0&&start->ceilingpic!=skyflatnum) {
         float rise=ceilZ(start)-0.5f-z;
-        if(rise>0&&vz*vz>2*sprayGravity*rise) {
-            float up=(vz-std::sqrt(vz*vz-2*sprayGravity*rise))/sprayGravity;
+        if(rise>0&&vz*vz>2*sprayGravity()*rise) {
+            float up=(vz-std::sqrt(vz*vz-2*sprayGravity()*rise))/sprayGravity();
             const sector_t *above=sectorAt(x+vx*up,y+vy*up);
             if(up<t&&std::abs(ceilZ(above)-ceilZ(start))<1) {t=up;where=CEILING;landing=above;}
         }
@@ -68,11 +70,11 @@ static void throwDrop(float x,float y,float z,float vx,float vy,float vz,float s
     // A wall in the way, along the chord of its arc.
     float h=std::hypot(vx,vy);WallHit hit;
     if(h>1) {
-        float reach=h*t,end=z+vz*t-0.5f*sprayGravity*t*t;
+        float reach=h*t,end=z+vz*t-0.5f*sprayGravity()*t*t;
         if(firstSolidWall(x,y,z,vx/h,vy/h,(end-z)/reach,reach,hit)) {t=hit.t/h;where=WALL;}
     }
-    if(t>2.5f)splat=0; // Down a pit.
-    float lx=x+vx*t,ly=y+vy*t,lz=z+vz*t-0.5f*sprayGravity*t*t,fall=vz-sprayGravity*t;
+    if(t>(Game_Phobos()?12.0f:2.5f))splat=0; // Down a pit (on Phobos: still on its way).
+    float lx=x+vx*t,ly=y+vy*t,lz=z+vz*t-0.5f*sprayGravity()*t*t,fall=vz-sprayGravity()*t;
     if(splat>0) {
         if(where==WALL) {
             // Glancing drops streak along the wall.
@@ -190,6 +192,7 @@ void spraySmear(float x,float y,float angle,float size) {
 // Wounds drip while they are fresh: about one drop a second from a big
 // hole, thinning out over twenty seconds, falling with the monster's step.
 static void drip(const mobj_t &thing) {
+    if(Game_Phobos())return;   // Nothing pulls a drop off a wound there.
     WoundSpot spots[10];
     int count=woundSpots(&thing,spots,10);
     if(!count)return;
@@ -249,8 +252,8 @@ void buildSpray(const Uniforms &camera) {
     drops.erase(std::remove_if(drops.begin(),drops.end(),[&](const Drop &d){return now>=d.end||now<d.born-0.1f;}),drops.end());
     for(const Drop &d:drops) {
         float t=std::clamp(std::floor((now-d.born)*TICRATE)/TICRATE,0.0f,d.end-d.born);
-        float x=d.x+d.vx*t,y=d.y+d.vy*t,z=d.z+d.vz*t-0.5f*sprayGravity*t*t;
-        float light=lighting(sectorAt(x,y)),tall=std::abs(d.vz-sprayGravity*t)>250?2.0f:1.0f;
+        float x=d.x+d.vx*t,y=d.y+d.vy*t,z=d.z+d.vz*t-0.5f*sprayGravity()*t*t;
+        float light=lighting(sectorAt(x,y)),tall=std::abs(d.vz-sprayGravity()*t)>250?2.0f:1.0f;
         std::array<float,3> lit;for(int c=0;c<3;++c)lit[c]=std::min(1.0f,d.color[c]*light);
         pixelBlock(particleVertices,camera,x,y,z,d.size,tall,lit,false,&d.color);
     }

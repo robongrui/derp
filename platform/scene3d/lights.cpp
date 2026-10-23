@@ -360,8 +360,10 @@ float flashAt(float x,float y,float z,const Flash &f) {
 // bright side's floor. The four nearest join the dynamic lights.
 struct DoorPortal { int door;std::vector<std::pair<int,int>> faces;float fullOpen; }; // faces: line, neighbor sector
 static std::vector<DoorPortal> doorPortals;
+static std::vector<bool> doorLines;
+bool doorLine(int line) {return line>=0&&(size_t)line<doorLines.size()&&doorLines[line];}
 void findDoors() {
-    doorPortals.clear();
+    doorPortals.clear();doorLines.assign(numlines,false);
     for(int i=0;i<numsectors;++i) {
         const sector_t &sector=sectors[i];
         if(sector.ceilingheight>sector.floorheight)continue;
@@ -374,6 +376,7 @@ void findDoors() {
         }
         if(door.faces.size()<2)continue;
         door.fullOpen=std::max(8.0f,lowest-4-units(sector.floorheight));
+        for(auto [line,neighbor]:door.faces)doorLines[line]=true;
         doorPortals.push_back(std::move(door));
     }
 }

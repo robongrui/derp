@@ -41,6 +41,7 @@ void buildEmbers(const Uniforms &camera) {
     float now=gameSeconds();
     for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
         if(!decorationLight(*thing))continue;
+        if(Game_Air(int(thing->subsector->sector-sectors))<0.2f)continue;   // Phobos: no air, no fire
         BakeLight flame=decorationSource(*thing);
         if(std::hypot(flame.x-camera.eye[0],flame.y-camera.eye[1])>1200)continue;
         // Fire only: warm red-orange glows, as for the heat haze.

@@ -166,6 +166,8 @@ static void classifySectorMist() {
         int lump=firstflat+sector.floorpic;
         game_liquid liquid=liquidFlat(sector.floorpic);
         mist.liquid=liquid!=GAME_LIQUID_NONE;
+        // Phobos: a pool open to space boiled off and froze long ago; nothing splashes in it.
+        if(mist.liquid&&mist.outdoor&&Game_Phobos())mist.liquid=false;
         // Only water mirrors the room: nukage, slime, blood and lava are too
         // murky for the toned-down reflection to read as more than a smudge.
         mist.reflective=liquid==GAME_LIQUID_WATER;
@@ -173,7 +175,8 @@ static void classifySectorMist() {
         // collar of goo around things standing in it.
         mist.thick=mist.liquid&&!mist.reflective;
         mist.toxic=Game_DamagingFloor(sector.special);
-        if(mist.liquid&&W_LumpLength(lump)>=4096) {
+        // (Its color even when frozen on Phobos: its frosted rim takes it, shore.glsl.)
+        if(liquid!=GAME_LIQUID_NONE&&W_LumpLength(lump)>=4096) {
             const byte *flat=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
             mist.color={};
             for(int pixel=0;pixel<4096;++pixel)for(int c=0;c<3;++c)
@@ -304,11 +307,12 @@ float sectorHeight(const sector_t *sector,bool ceiling) {
     return old+(now-old)*renderFraction;
 }
 const game_mood &levelMood() {
-    static game_mood mood={1,1,0,0,-1,1,{1,1,1}};static unsigned serial=~0u;static int authored=-1;
-    if(serial!=r_levelserial||authored!=settings.authored) {
-        serial=r_levelserial;authored=settings.authored;
+    static game_mood mood={1,1,0,0,-1,1,{1,1,1}};static unsigned serial=~0u;static int authored=-1,phobos=-1;
+    if(serial!=r_levelserial||authored!=settings.authored||phobos!=Game_Phobos()) {
+        serial=r_levelserial;authored=settings.authored;phobos=Game_Phobos();
         mood={1,1,0,0,-1,1,{1,1,1}};
-        if(authored)Game_Mood(gameepisode,gamemap,&mood);
+        // Phobos' look comes with its physics, F4 Authored episodes or not (Game_Mood).
+        if(authored||phobos)Game_Mood(gameepisode,gamemap,&mood);
     }
     return mood;
 }

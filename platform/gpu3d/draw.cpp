@@ -161,7 +161,7 @@ void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGrap
                SDL_GPUGraphicsPipeline *coverage,SDL_GPUGraphicsPipeline *cutout,bool sprites) {
     SDL_BindGPUGraphicsPipeline(pass,opaque);bindWorld(pass,reflection);
     for(const auto &batch:batches) if(opaqueBatch(batch)) {bindSurface(command,pass,batch.first,3);drawVertices(pass,batch.second);}
-    SDL_GPUTextureSamplerBinding skyImage[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp}};
+    SDL_GPUTextureSamplerBinding skyImage[]={{gpu(doom3d::skyImage()),linearRepeat},{paletteTexture,nearestClamp}};
     if(!skyVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,skySurface);SDL_BindGPUFragmentSamplers(pass,0,skyImage,2);
         drawVertices(pass,skyVertices);
