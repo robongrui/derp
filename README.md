@@ -1,6 +1,7 @@
 # DOOM Engine Remaster Project - DERP
 
 ## A few thoughts: 
+
 The technically correct name would probably be *Remaster Project for DOOM Engine Games*, but RPFDE is a terrible acronym, so DERP it is. Up to v0.4.5 this project was called Duct-Tape DOOM.
 
 This has grown into more than I initially had in mind. The basic idea is described further down and still holds, but during development I realised how much I enjoy thinking about what these environments were supposed to look and feel like, and what the technical constraints of the time kept them from doing.
@@ -11,18 +12,16 @@ This project is a creative undertaking, not a programming exercise or a demonstr
 
 Feedback about whether it works, whether it’s enjoyable, and whether it achieves its creative goals is welcome. But judging it by how much code I personally wrote measures something I’m not claiming to demonstrate.
 
+DERP is a hobby project, and development happens privately. The public GitHub repository contains the versions I choose to release, not my ongoing experiments or unfinished work.
+This is not a build-in-public project. I occasionally show upcoming features on YouTube, but they'll only appear in the public repository when I'm ready to release them.
+
 A note on forks and contributions
 DERP is an ongoing creative project, and I welcome contributions that improve it. If you're primarily interested in fixing bugs, improving performance, or extending existing features, I'd appreciate a pull request rather than another distribution of essentially the same project.
 The GPL gives you every right to fork DERP, and I respect that. I simply believe that improvements to the existing project benefit everyone more when they're developed together.
 
 ## Original Text 
 An idea of how DOOM could have looked if id had kept iterating on this engine,
-and if we still played on CRTs. It tries to look newer without looking modern:
-light comes from lamps and windows, monsters are lit as rounded bodies, water
-reflects the room, and the map hums, bubbles and echoes around you, while the
-light still steps
-like DOOM's light levels, shadow edges break into dither and the pixels stay
-DOOM-sized.
+and if we still played on CRTs. It tries to look newer without looking modern.
 
 Under the hood it is an experimental port of id Software's 1997 DOOM
 source release to macOS, Linux and Windows. It keeps the original game
