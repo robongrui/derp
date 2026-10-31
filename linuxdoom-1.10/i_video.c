@@ -349,6 +349,15 @@ void I_UpdateNoBlit (void)
 }
 
 //
+// I_CapsLock
+// DERP's always run on Caps Lock: this backend doesn't read it.
+//
+boolean I_CapsLock (void)
+{
+    return false;
+}
+
+//
 // I_FinishUpdate
 //
 void I_FinishUpdate (void)

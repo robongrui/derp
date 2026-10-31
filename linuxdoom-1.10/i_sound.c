@@ -905,6 +905,13 @@ int I_QrySongPlaying(int handle)
   return looping || musicdies > gametic;
 }
 
+// A sound lump by name (DERP's episode 0.5 ending): not in this backend.
+int I_SoundLump(const char* name)
+{
+  name = NULL;
+  return 0;
+}
+
 
 
 //
