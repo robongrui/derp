@@ -166,7 +166,7 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         hasTunedMovement)}},
                 {"View",{
                     check("look","Mouse look",&s.look,"Mouse look tilts the camera, and your bullets go where you look."),
-                    check("invert_look","Invert mouse look",&s.invertLook,"Moving the mouse forward tilts the view down, like a flight stick.",
+                    check("invert_look","Invert mouse",&s.invertLook,"Reverses vertical mouse look: moving the mouse forward tilts the view down. Horizontal turning is unchanged.",
                         [](const Settings &d){return d.look!=0;}),
                     check("classic_aim","Classic aim",&s.classicAim,
                         "Bullets aim themselves at a monster in front of you, as in DOOM, and hit it in the middle; with none in front "

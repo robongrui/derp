@@ -716,6 +716,8 @@ void updateTitle(int width,int height,const char *renderer) {
 using namespace doom3d;
 void I_Render3DStartFrame(void) {worldPending=false;v_overlayactive=false;}
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
+int I_Render3DMouseInverted(void) {return settings.invertLook!=0;}
+void I_Render3DToggleMouseInvert(void) {settings.invertLook=!settings.invertLook;saveSettings();}
 #ifdef DOOM_DEVTOOLS
 extern "C" boolean devInputHeld(event_t *event);   // local dev tools: the player held still (null: the mouse's look)
 #endif

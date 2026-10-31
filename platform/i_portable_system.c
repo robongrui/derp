@@ -28,12 +28,32 @@
 #include "d_net.h"
 #include "g_game.h"
 #include "game_profile.h"
+#include "i_controls.h"
+#ifdef DOOM_RENDER3D
+#include "i_render3d.h"
+#endif
 #ifdef DOOM_NATIVE
 #include <SDL3/SDL.h>
 #endif
 
 int mb_used = 16;
 static ticcmd_t emptycmd;
+
+int I_MouseInverted(void)
+{
+#ifdef DOOM_RENDER3D
+    return I_Render3DMouseInverted();
+#else
+    return 0;
+#endif
+}
+
+void I_ToggleMouseInvert(void)
+{
+#ifdef DOOM_RENDER3D
+    I_Render3DToggleMouseInvert();
+#endif
+}
 
 ticcmd_t *I_BaseTiccmd(void) { return &emptycmd; }
 int I_GetHeapSize(void) { return mb_used * 1024 * 1024; }

@@ -8,6 +8,7 @@
 #include "p_local.h"
 #include "r_local.h"
 #include "soundst.h"
+#include "../platform/i_controls.h"
 
 // Macros
 
@@ -73,6 +74,7 @@ static boolean SCQuitGame(int option);
 static boolean SCEpisode(int option);
 static boolean SCSkill(int option);
 static boolean SCMouseSensi(int option);
+static boolean SCInvertMouse(int option);
 static boolean SCSfxVolume(int option);
 static boolean SCMusicVolume(int option);
 static boolean SCScreenSize(int option);
@@ -250,6 +252,7 @@ static MenuItem_t OptionsItems[] =
 	{ ITT_EFUNC, "MESSAGES : ", SCMessages, 0, MENU_NONE },
 	{ ITT_LRFUNC, "MOUSE SENSITIVITY", SCMouseSensi, 0, MENU_NONE },
 	{ ITT_EMPTY, NULL, NULL, 0, MENU_NONE },
+	{ ITT_LRFUNC, "INVERT MOUSE", SCInvertMouse, 0, MENU_NONE },
 	{ ITT_SETMENU, "MORE...", NULL, 0, MENU_OPTIONS2 }
 };
 
@@ -257,7 +260,7 @@ static Menu_t OptionsMenu =
 {
 	88, 30,
 	DrawOptionsMenu,
-	5, OptionsItems,
+	6, OptionsItems,
 	0,
 	MENU_MAIN
 };
@@ -749,6 +752,8 @@ static void DrawOptionsMenu(void)
 		MN_DrTextB("OFF", 196, 50);
 	}
 	DrawSlider(&OptionsMenu, 3, 10, mouseSensitivity);
+	MN_DrTextB(I_MouseInverted() ? "ON" : "OFF", 250,
+		OptionsMenu.y+4*ITEM_HEIGHT);
 }
 
 //---------------------------------------------------------------------------
@@ -983,6 +988,13 @@ static boolean SCMouseSensi(int option)
 	{
 		mouseSensitivity--;
 	}
+	return true;
+}
+
+static boolean SCInvertMouse(int option)
+{
+	(void)option;
+	I_ToggleMouseInvert();
 	return true;
 }
 
