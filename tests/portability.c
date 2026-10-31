@@ -218,16 +218,17 @@ static int sprite_glow(void)
     return 0;
 }
 
-/* Culled blockers light every point exactly like the full list. */
+/* Culled blockers light every point exactly like the full list, from every
+   point of a lamp too. */
 static int flash_culling(void)
 {
     static doom_light_blocker_t all[600],kept[600];
     uint32_t seed=12345,before=0,after=0,sliced=0;
 #define RANDOM() ((seed=seed*1664525u+1013904223u)>>8)/16777216.0f
-    for(int scene=0;scene<40;++scene) {
-        float yaw=RANDOM()*6.2832f,pitch=(RANDOM()-0.5f)*2.6f;
-        doom_flash_t light={{0,0,32,scene%2?900:300},1,0,0,0,{1,1,1,0.85f},{0,0,0,0}};
-        if(scene%2) {
+    for(int scene=0;scene<60;++scene) {
+        float yaw=RANDOM()*6.2832f,pitch=(RANDOM()-0.5f)*2.6f,lamp=scene>=40?12.0f:0.0f;
+        doom_flash_t light={{0,0,32,scene%2?900:300},1,0,0,0,{1,1,1,0.85f},{0,0,0,-lamp}};
+        if(scene%2&&!lamp) {
             light.direction[0]=cosf(yaw)*cosf(pitch);light.direction[1]=sinf(yaw)*cosf(pitch);
             light.direction[2]=sinf(pitch);light.direction[3]=0.90f;
         }
@@ -238,7 +239,7 @@ static int flash_culling(void)
             int kind=i%4;
             if(kind==1) {b.opening[0]=RANDOM()*64;b.opening[1]=b.opening[0]-RANDOM()*8;} /* Closed. */
             else if(kind>=2) {b.opening[0]=RANDOM()*64-16;b.opening[1]=b.opening[0]+RANDOM()*128;}
-            if(doom_flash_segment_distance(0,0,&b)<4) continue; /* The lamp stands in open space. */
+            if(doom_flash_segment_distance(0,0,&b)<4+lamp) continue; /* The lamp stands in open space. */
             if(doom_flash_blocker_relevant(&light,&b,kind==0)) all[count++]=b;
         }
         memcpy(kept,all,sizeof(all));
@@ -255,9 +256,12 @@ static int flash_culling(void)
                 x=(light.direction[0]+(RANDOM()-0.5f)*0.8f)*r;y=(light.direction[1]+(RANDOM()-0.5f)*0.8f)*r;
                 z=32+(light.direction[2]+(RANDOM()-0.5f)*0.8f)*r;
             }
-            float full=doom_flash_at(x,y,z,&light,all);
-            CHECK(full==doom_flash_at(x,y,z,&culled,kept));
-            CHECK(full==doom_flash_at_sliced(x,y,z,&culled,kept,table,indices));
+            for(int k=0;k<doom_flash_lamp_points(&light);++k) {
+                doom_flash_t whole=doom_flash_lamp_point(&light,k),part=doom_flash_lamp_point(&culled,k);
+                float full=doom_flash_at(x,y,z,&whole,all);
+                CHECK(full==doom_flash_at(x,y,z,&part,kept));
+                CHECK(full==doom_flash_at_sliced(x,y,z,&part,kept,table,indices));
+            }
         }
     }
 #undef RANDOM
@@ -377,6 +381,53 @@ static int movement(void)
         CHECK(actor.momx == original);
     }
     demoplayback = demorecording = netgame = false;
+    /* Diagonals: as fast as straight ahead when tuned, faster in DOOM's own. */
+    player.cmd.forwardmove = 50;
+    actor.momx = actor.momy = 0;
+    P_MovePlayer(&player);
+    double straight = (double)actor.momx;
+    player.cmd.sidemove = 40;
+    actor.momx = actor.momy = 0;
+    P_MovePlayer(&player);
+    double diagonal = sqrt((double)actor.momx * actor.momx + (double)actor.momy * actor.momy);
+    CHECK(fabs(diagonal - straight) < straight / 100);
+    classicmovement = true;
+    actor.momx = actor.momy = 0;
+    P_MovePlayer(&player);
+    diagonal = sqrt((double)actor.momx * actor.momx + (double)actor.momy * actor.momy);
+    player.cmd.sidemove = 0;
+    actor.momx = actor.momy = 0;
+    P_MovePlayer(&player);
+    CHECK(diagonal > actor.momx * 1.25);
+    classicmovement = false;
+    /* Normal plus: a held running diagonal builds up to DOOM's push, walking stays held to the longer key. */
+    {
+        player_t *real = &players[0];
+        mobj_t body = {0};
+        double push[2];
+        real->mo = &body;
+        real->playerstate = PST_LIVE;
+        body.player = real;
+        body.state = &states[S_PLAY_RUN1];
+        strafeboost = true;
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            real->cmd.forwardmove = pass ? 25 : 50;
+            real->cmd.sidemove = pass ? 24 : 40;
+            for (int tic = 0; tic < 30; ++tic)
+            {
+                body.momx = body.momy = 0;
+                P_MovePlayer(real);
+            }
+            push[pass] = sqrt((double)body.momx * body.momx + (double)body.momy * body.momy);
+        }
+        CHECK(push[0] > straight * 1.27); /* hypot(50, 40) / 50 */
+        CHECK(push[1] < straight * 0.51); /* the walk key alone, half the run */
+        strafeboost = false;
+        real->mo = NULL;
+    }
+    player.cmd.forwardmove = 25;
+    player.cmd.sidemove = 0;
     actor.z = FRACUNIT;
     actor.momx = actor.momy = 0;
     P_MovePlayer(&player);

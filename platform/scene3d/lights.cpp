@@ -31,6 +31,7 @@ void muzzleFlash(mobj_t *source,int weapon,int projectile) {
     if(flashLevelSerial!=r_levelserial) {flashPulses.clear();flashLevelSerial=r_levelserial;}
     float radius=384,strength=1.9f;int flashState=-1;
     Game_MuzzleFlash(weapon,&radius,&strength,&flashState);
+    disturbanceMuzzle(*source);   // its blast stirs the weather in front (disturbance_sources.cpp)
     float z=source->player?units(source->player->viewz)-8:units(source->z)+units(source->height)*0.65f;
     int sprite=source->sprite,frame=source->frame;
     if(projectile>=0&&projectile<NUMMOBJTYPES) {
@@ -53,12 +54,75 @@ void sparkFlash(float x,float y,float z,float radius,float strength,const std::a
     if(flashPulses.size()==8) flashPulses.erase(flashPulses.begin());
     flashPulses.push_back(pulse);
 }
+// Shadow walls kept between frames. A light's walls (relevant and not hidden)
+// depend only on its position, reach and cone and on the heights and skies of
+// the sectors along the lines around it, so a fixed light's list stays good
+// until one of those sectors changes. With it the GPU words built from the
+// list (buildLightWords). When full, the least recently used entry goes, so
+// passing projectiles never push out the lamps that shine every frame.
+struct BlockerKey {
+    uint32_t bits[8];
+    bool operator==(const BlockerKey &other) const {return !memcmp(bits,other.bits,sizeof(bits));}
+};
+struct BlockerKeyHash {
+    size_t operator()(const BlockerKey &key) const {
+        size_t hash=0;
+        for(uint32_t bits:key.bits)hash=(hash^bits)*0x100000001b3ull;
+        return hash;
+    }
+};
+struct CachedBlockers {
+    std::vector<LightBlocker> blockers;
+    std::vector<int> sectors; // Whose heights and skies decided them.
+    uint64_t built=0,used=0;
+    std::vector<std::array<uint32_t,4>> words; // buildLightWords' copy, with sliced and sliceCost.
+    bool wordsReady=false,sliced=false;
+    float sliceCost=0;
+};
+static constexpr size_t blockerCacheSize=256;
+static std::unordered_map<BlockerKey,CachedBlockers,BlockerKeyHash> blockerCache;
+static std::array<CachedBlockers*,maxLights> lightCache={}; // Each of this frame's lights' entry, or none.
+static std::vector<std::array<float,3>> sectorSeen; // Floor, ceiling, sky.
+static std::vector<uint64_t> sectorChanged;
+static uint64_t lightFrame;
+static unsigned blockerLevel;
+// Once per frame, before lights are added: which sectors moved or changed sky.
+static void noteSectorChanges() {
+    ++lightFrame;lightCache={};
+    if(blockerLevel!=r_levelserial||sectorSeen.size()!=(size_t)numsectors) {
+        blockerCache.clear();blockerLevel=r_levelserial;
+        sectorSeen.assign(numsectors,{NAN,NAN,NAN});sectorChanged.assign(numsectors,0);
+    }
+    for(int i=0;i<numsectors;++i) {
+        std::array<float,3> now={floorZ(&sectors[i]),ceilZ(&sectors[i]),sectors[i].ceilingpic==skyflatnum?1.0f:0.0f};
+        if(now!=sectorSeen[i]) {sectorSeen[i]=now;sectorChanged[i]=lightFrame;}
+    }
+}
+static bool blockersCurrent(const CachedBlockers &entry) {
+    for(int sector:entry.sectors) if(sectorChanged[sector]>entry.built) return false;
+    return true;
+}
+// A slot for a new entry: the stale one under key, a free one, or the least
+// recently used one not in use this frame; none when every entry is.
+static CachedBlockers *blockerSlot(const BlockerKey &key) {
+    auto found=blockerCache.find(key);
+    if(found!=blockerCache.end()) return &found->second;
+    if(blockerCache.size()>=blockerCacheSize) {
+        auto oldest=blockerCache.end();
+        for(auto it=blockerCache.begin();it!=blockerCache.end();++it)
+            if(it->second.used<lightFrame&&(oldest==blockerCache.end()||it->second.used<oldest->second.used)) oldest=it;
+        if(oldest==blockerCache.end()) return nullptr;
+        blockerCache.erase(oldest);
+    }
+    return &blockerCache[key];
+}
 // Directionality: 0 lights every surface alike, 1 is full Lambert facing.
 // Unoccluded lights skip wall blockers, so shading them costs no ray tests.
 // baked: the part of this light already in the bake maps, which world surfaces
 // subtract so they only gain its flicker and detail (0 for dynamic-only lights).
 // spot: a spotlight's unit axis and cone cosine (direction); without a cone,
-// x is a glowing panel's half-height, which softens its wall shadows.
+// x is a glowing panel's half-height, which softens its wall shadows, and a
+// negative w is minus a lamp's radius (lampSpot), which softens all of them.
 void appendLight(float x,float y,float z,float radius,float strength,const std::array<float,3> &color,const mobj_t *source,float directionality,bool occluded,float baked,
                  const std::array<float,4> &spot) {
     if(flashes.count>=maxLights) return;
@@ -67,6 +131,37 @@ void appendLight(float x,float y,float z,float radius,float strength,const std::
     Flash &f=flashes.lights[flashes.count++];
     f={{x,y,z,radius},strength,(unsigned)lightBlockers.size(),0,baked,{color[0],color[1],color[2],directionality},{spot[0],spot[1],spot[2],spot[3]}};
     if(!occluded) return;
+    if(float lamp=doom_flash_lamp(&f);lamp>0) {
+        // The lamp's points keep clear of the floor and ceiling and of every
+        // wall that can stop a ray, or rays from them would start inside one.
+        // They lie up to lamp*0.433 above or below the center and lamp*0.612 across.
+        const sector_t *own=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
+        lamp=std::min(lamp,(std::min(z-floorZ(own),ceilZ(own)-z)-1)/0.433f);
+        for(int i=0;i<numlines&&lamp>0;++i) {
+            const line_t &line=lines[i];
+            float ax=units(line.v1->x),ay=units(line.v1->y),bx=units(line.v2->x),by=units(line.v2->y),reach=lamp*0.6124f+1;
+            if(std::max(ax,bx)<x-reach||std::min(ax,bx)>x+reach||std::max(ay,by)<y-reach||std::min(ay,by)>y+reach) continue;
+            if(line.frontsector&&line.backsector) {
+                if(line.frontsector==line.backsector) continue;
+                float bottom=std::max(floorZ(line.frontsector),floorZ(line.backsector)),top=std::min(ceilZ(line.frontsector),ceilZ(line.backsector));
+                if(bottom<z-lamp-1&&top>z+lamp+1) continue;
+            }
+            LightBlocker segment={{ax,ay,bx,by},{0,0,0,0}};
+            lamp=std::min(lamp,(doom_flash_segment_distance(x,y,&segment)-1)/0.6124f);
+        }
+        f.direction[3]=lamp>=1?-lamp:0;
+    }
+    BlockerKey key;
+    memcpy(key.bits,f.position,sizeof(f.position));memcpy(key.bits+4,f.direction,sizeof(f.direction));
+    auto found=blockerCache.find(key);
+    if(found!=blockerCache.end()&&blockersCurrent(found->second)) {
+        CachedBlockers &entry=found->second;
+        lightBlockers.insert(lightBlockers.end(),entry.blockers.begin(),entry.blockers.end());
+        f.count=(uint32_t)entry.blockers.size();
+        entry.used=lightFrame;lightCache[flashes.count-1]=&entry;
+        return;
+    }
+    std::vector<int> around;
     for(int i=0;i<numlines;++i) {
         const line_t &line=lines[i];
         float ax=units(line.v1->x),ay=units(line.v1->y),bx=units(line.v2->x),by=units(line.v2->y);
@@ -78,6 +173,7 @@ void appendLight(float x,float y,float z,float radius,float strength,const std::
             top=std::min(ceilZ(line.frontsector),ceilZ(line.backsector));
             if(line.frontsector->ceilingpic==skyflatnum&&line.backsector->ceilingpic==skyflatnum) top=32768;
             if(line.frontsector==line.backsector) continue;
+            around.push_back((int)(line.frontsector-sectors));around.push_back((int)(line.backsector-sectors));
         }
         LightBlocker blocker={{ax,ay,bx,by},{bottom,top,0,0}};
         if(!doom_flash_blocker_relevant(&f,&blocker,!line.backsector)) continue;
@@ -85,8 +181,26 @@ void appendLight(float x,float y,float z,float radius,float strength,const std::
     }
     f.count=doom_flash_cull_hidden(&f,lightBlockers.data()+f.first,(uint32_t)lightBlockers.size()-f.first);
     lightBlockers.resize(f.first+f.count);
+    if(CachedBlockers *entry=blockerSlot(key)) {
+        std::sort(around.begin(),around.end());around.erase(std::unique(around.begin(),around.end()),around.end());
+        entry->blockers.assign(lightBlockers.begin()+f.first,lightBlockers.end());
+        entry->sectors=std::move(around);
+        entry->built=entry->used=lightFrame;entry->wordsReady=false;
+        lightCache[flashes.count-1]=entry;
+    }
 }
 static void doorSpill(const Uniforms &camera);
+// Shots, projectiles and barrels shine from a body of light, not a point: the
+// shaders test their walls from a spot on it picked per Doom texel, so their
+// shadows get soft, chunky edges like the bake's (settings.softShotShadows;
+// off, a point with sharp ones). A sixth of the frame's sprite across, 2 to 6
+// units: soft edges about as wide as the bake's.
+static std::array<float,4> lampSpot(float radius) {return {0,0,0,settings.softShotShadows?-radius:0.0f};}
+static float spriteLamp(int sprite,int frame) {
+    if(sprite<0||sprite>=numsprites||(frame&FF_FRAMEMASK)>=sprites[sprite].numframes) return 4;
+    const Image &image=lumpImage(firstspritelump+sprites[sprite].spriteframes[frame&FF_FRAMEMASK].lump[0],false);
+    return std::clamp(image.width/6.0f,2.0f,6.0f);
+}
 
 // Exploding barrels: the light builds through the fireball and peaks on the
 // blast tic (A_Explode), then fades; the blast itself also leaves sparks and
@@ -179,6 +293,7 @@ std::array<float,3> torchColor() {
 }
 void collectFlashes(float fraction,const Uniforms &camera) {
     flashes={};lightBlockers.clear();fogOnly={};lightKind=I_RENDER3D_LIGHT_FLASHLIGHT;
+    noteSectorChanges();
     // A carried torch (Game_Torch): a flame held low at the left hand,
     // lighting all around like the torches on the walls, flickering with
     // the game's own torch and a fine stepped flicker of its own. Things
@@ -224,7 +339,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         // side over 64 tics and dipping twice a cycle, by how fast the player
         // moves, plus a slow drift at rest, so it feels carried rather than
         // glued to the view.
-        float bob=std::min(1.0f,players[displayplayer].bob/16.0f/FRACUNIT),time=leveltime+fraction;
+        float bob=std::min(1.0f,players[displayplayer].bob/16.0f/FRACUNIT),time=leveltime%clockWrapTics+fraction;
         float phase=time*(2*doomPi/64),seconds=time/TICRATE;
         float yaw=(std::cos(phase)*bob*1.2f+std::sin(seconds*(2*doomPi/4.3f))*0.2f)*(doomPi/180);
         float pitch=(-std::abs(std::sin(phase))*bob*0.8f+std::sin(seconds*(2*doomPi/3.1f))*0.15f)*(doomPi/180);
@@ -254,7 +369,8 @@ void collectFlashes(float fraction,const Uniforms &camera) {
     lightKind=I_RENDER3D_LIGHT_SHOT;
     for(const auto &p:flashPulses) {
         float strength=p.strength*doom_flash_fade(leveltime-p.tic,fraction);
-        if(strength>0) appendLight(p.x,p.y,p.z,p.radius,strength,p.color,p.source,0.75f);
+        // Muzzle flashes and sparks, whose sprites are on the HUD or none.
+        if(strength>0) appendLight(p.x,p.y,p.z,p.radius,strength,p.color,p.source,0.75f,true,0,lampSpot(p.source?4.0f:2.0f));
     }
     // Live WAD missile objects supply continuous light, including their bright
     // impact frames. Keep the nearest eight so rapid fire has a bounded cost.
@@ -294,7 +410,8 @@ void collectFlashes(float fraction,const Uniforms &camera) {
     for(size_t n=0;n<std::min(size_t(4),barrels.size());++n) {
         const mobj_t &thing=*barrels[n].thing;
         float x,y,z;interpolatedPosition(thing,fraction,x,y,z);
-        appendLight(x,y,z+24,448,barrelLight(thing),frameGlow(thing.sprite,thing.frame),&thing,0.75f);
+        appendLight(x,y,z+24,448,barrelLight(thing),frameGlow(thing.sprite,thing.frame),&thing,0.75f,true,0,
+                    lampSpot(spriteLamp(thing.sprite,thing.frame)));
     }
     std::sort(decorations.begin(),decorations.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
     staticFog.clear();lightKind=I_RENDER3D_LIGHT_DECORATION;
@@ -340,7 +457,8 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         } else if(clusters.size()<8) clusters.push_back({&thing,x,y,z,radius,strength,1});
     }
     for(const Cluster &c:clusters)
-        appendLight(c.x,c.y,c.z,c.radius,c.strength*std::min(1.5f,1+0.2f*(c.members-1)),frameGlow(c.thing->sprite,c.thing->frame),c.thing,0.75f);
+        appendLight(c.x,c.y,c.z,c.radius,c.strength*std::min(1.5f,1+0.2f*(c.members-1)),frameGlow(c.thing->sprite,c.thing->frame),c.thing,0.75f,
+                    true,0,lampSpot(spriteLamp(c.thing->sprite,c.thing->frame)));
     // Teleport flashes share the projectiles' light kind; the nearest four.
     std::sort(teleports.begin(),teleports.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
     for(size_t n=0;n<std::min(size_t(4),teleports.size());++n) {
@@ -360,8 +478,10 @@ float flashAt(float x,float y,float z,const Flash &f) {
 // bright side's floor. The four nearest join the dynamic lights.
 struct DoorPortal { int door;std::vector<std::pair<int,int>> faces;float fullOpen; }; // faces: line, neighbor sector
 static std::vector<DoorPortal> doorPortals;
+static std::vector<bool> doorLines;
+bool doorLine(int line) {return line>=0&&(size_t)line<doorLines.size()&&doorLines[line];}
 void findDoors() {
-    doorPortals.clear();
+    doorPortals.clear();doorLines.assign(numlines,false);
     for(int i=0;i<numsectors;++i) {
         const sector_t &sector=sectors[i];
         if(sector.ceilingheight>sector.floorheight)continue;
@@ -374,6 +494,7 @@ void findDoors() {
         }
         if(door.faces.size()<2)continue;
         door.fullOpen=std::max(8.0f,lowest-4-units(sector.floorheight));
+        for(auto [line,neighbor]:door.faces)doorLines[line]=true;
         doorPortals.push_back(std::move(door));
     }
 }
@@ -456,7 +577,7 @@ void skipProfiledLights() {
     unsigned kept=0;
     for(unsigned i=0;i<flashes.count;++i) {
         if(profile.skip&(1u<<lightKinds[i]))continue;
-        flashes.lights[kept]=flashes.lights[i];lightSources[kept]=lightSources[i];
+        flashes.lights[kept]=flashes.lights[i];lightSources[kept]=lightSources[i];lightCache[kept]=lightCache[i];
         fogOnly[kept]=fogOnly[i];lightKinds[kept]=lightKinds[i];++kept;
     }
     flashes.count=kept;
@@ -475,28 +596,46 @@ void buildLightWords() {
     for(unsigned i=0;i<flashes.count;++i) {
         const Flash &f=flashes.lights[i];Flash &g=gpuFlashes.lights[i];
         const LightBlocker *own=lightBlockers.data()+f.first;
-        g.first=(uint32_t)lightWords.size();
-        for(uint32_t n=0;n<f.count;++n) {
-            std::array<uint32_t,4> line,opening;
-            memcpy(line.data(),own[n].line,sizeof(line));memcpy(opening.data(),own[n].opening,sizeof(opening));
-            lightWords.push_back(line);lightWords.push_back(opening);
+        size_t start=lightWords.size();
+        g.first=(uint32_t)start;
+        CachedBlockers *entry=lightCache[i];
+        if(entry&&entry->wordsReady) {
+            lightWords.insert(lightWords.end(),entry->words.begin(),entry->words.end());
+            if(entry->sliced)g.first|=0x80000000u;
+            lightSliceCost[i]=entry->sliceCost;
+            continue;
         }
-        lightSliceCost[i]=(float)f.count;
-        if(f.count<=4)continue; // A short list costs less than the lookup.
-        uint32_t table[DOOM_FLASH_SLICES];
-        uint32_t listed=doom_flash_slice_blockers(&f,own,f.count,table,indices.data(),(uint32_t)indices.size());
-        if(listed==UINT32_MAX)continue;
-        for(int n=0;n<DOOM_FLASH_SLICES;n+=4)lightWords.push_back({table[n],table[n+1],table[n+2],table[n+3]});
-        for(uint32_t n=0;n<listed;n+=8) {
-            std::array<uint32_t,4> word={};
-            for(uint32_t k=0;k<8&&n+k<listed;++k)word[k/2]|=(uint32_t)indices[n+k]<<(16*(k%2));
-            lightWords.push_back(word);
+        bool sliced=[&] {
+            for(uint32_t n=0;n<f.count;++n) {
+                std::array<uint32_t,4> line,opening;
+                memcpy(line.data(),own[n].line,sizeof(line));memcpy(opening.data(),own[n].opening,sizeof(opening));
+                lightWords.push_back(line);lightWords.push_back(opening);
+            }
+            lightSliceCost[i]=(float)f.count;
+            if(f.count<=4)return false; // A short list costs less than the lookup.
+            uint32_t table[DOOM_FLASH_SLICES];
+            uint32_t listed=doom_flash_slice_blockers(&f,own,f.count,table,indices.data(),(uint32_t)indices.size());
+            if(listed==UINT32_MAX)return false;
+            for(int n=0;n<DOOM_FLASH_SLICES;n+=4)lightWords.push_back({table[n],table[n+1],table[n+2],table[n+3]});
+            for(uint32_t n=0;n<listed;n+=8) {
+                std::array<uint32_t,4> word={};
+                for(uint32_t k=0;k<8&&n+k<listed;++k)word[k/2]|=(uint32_t)indices[n+k]<<(16*(k%2));
+                lightWords.push_back(word);
+            }
+            lightSliceCost[i]=(float)listed/DOOM_FLASH_SLICES;
+            return true;
+        }();
+        if(sliced)g.first|=0x80000000u;
+        if(entry) {
+            entry->words.assign(lightWords.begin()+start,lightWords.end());
+            entry->sliced=sliced;entry->sliceCost=lightSliceCost[i];entry->wordsReady=true;
         }
-        g.first|=0x80000000u;
-        lightSliceCost[i]=(float)listed/DOOM_FLASH_SLICES;
     }
     if(lightWords.empty())lightWords.push_back({});
 }
 void clearFlashPulses() {flashPulses.clear();}
-void lightsShutdown() {flashPulses.clear();glowColors.clear();burstBarrels.clear();staticFog.clear();doorPortals.clear();}
+void lightsShutdown() {
+    flashPulses.clear();glowColors.clear();burstBarrels.clear();staticFog.clear();doorPortals.clear();
+    blockerCache.clear();lightCache={};sectorSeen.clear();sectorChanged.clear();
+}
 } // namespace doom3d

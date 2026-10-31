@@ -17,6 +17,10 @@ const char *Game_ConfigFile(void);
 const char *Game_ConfigDefaults(void);
 /* Which WADs this program plays: a DOOM_WAD_* kind (wad_probe.h). */
 int Game_WadKind(void);
+/* Whether the game reads typed letters right now (its menus, yes/no
+   prompts, save names, chat): those keys follow the keyboard layout, while
+   playing keys stay where they sit on the keyboard. */
+int Game_TakesText(void);
 
 /* Whether a thinker is a map object (an mobj_t). */
 int Game_ThinkerIsMobj(const struct thinker_s *thinker);
@@ -38,6 +42,11 @@ typedef enum {
     GAME_THING_UNCOUNTED_MONSTER  /* a monster outside the kill count that still casts a shadow */
 } game_thing_role;
 game_thing_role Game_ThingRole(int type);
+
+/* The colour a monster bleeds with F4's enemy-appropriate blood, by thing
+   type: the blood sprite's own red, turned green or blue, or none at all. */
+typedef enum { GAME_BLOOD_RED, GAME_BLOOD_GREEN, GAME_BLOOD_BLUE, GAME_BLOOD_NONE } game_blood_tint;
+game_blood_tint Game_BloodTint(int type);
 
 /* An exploding barrel's place in its blast: the frame 0..GAME_BLAST_FRAMES-1,
    or -1 for anything else. From GAME_BLAST_BURST on, the explosion has hit. */
@@ -80,7 +89,10 @@ typedef enum {
     GAME_EFFECT_WIND,             /* made-up wind under the sky and through openings */
     GAME_EFFECT_NATURAL_FALLOFF,  /* sounds fading with distance as in air, in place of the game's own curve */
     GAME_EFFECT_FREE_AIM,         /* mouselook bullets going where the view points (else the game's own aiming) */
-    GAME_EFFECT_AUTHORED_EPISODES /* hand-picked looks for the game's own episodes (Game_Mood) */
+    GAME_EFFECT_AUTHORED_EPISODES, /* hand-picked looks for the game's own episodes (Game_Mood) */
+    GAME_EFFECT_PHOBOS,           /* physically accurate Phobos (Game_Phobos) */
+    GAME_EFFECT_TUNED_MOVEMENT,   /* DERP's tighter player movement (else the game's own) */
+    GAME_EFFECT_MONSTER_BLOOD     /* blood coloured by the monster (Game_BloodTint) */
 } game_effect;
 int Game_HasEffect(game_effect effect);
 
@@ -101,7 +113,7 @@ void Game_Sun(game_sun *sun);
    mood. Not DERP's derived look: F4 "Authored episodes" switches the whole
    layer off, and maps a custom WAD brings never get it. Game_Mood fills in
    mood for one of the game's own maps and leaves it alone for one it has
-   nothing for (it starts as { 1, 1, 0, 0, -1, 1, { 1, 1, 1 } }).
+   nothing for (it starts as { 1, 1, 0, 0, -1, 1, { 1, 1, 1 }, 0 }).
    outdoor: what the light under the sky keeps (1 as mapped); sun: 0 hides
    the sun (no sunlight, disc or sunbeams); shineOut: window light turns
    round, the lit rooms shining out through their openings into the dark
@@ -110,8 +122,9 @@ void Game_Sun(game_sun *sun);
    as map angles go (0 east, 90 north), whatever the sun does; below 0 the
    level picks its own; rainAmount: how hard (1 a downpour, 0.5 half as
    many drops); skyTint: what the sky and the haze under it are drawn
-   in (1, 1, 1 as painted). */
-typedef struct { float outdoor; int sun, shineOut, rain; float rainAngle, rainAmount, skyTint[3]; } game_mood;
+   in (1, 1, 1 as painted); snow: it snows instead of raining (rainAngle and
+   rainAmount then say how the snow blows and how thick it falls). */
+typedef struct { float outdoor; int sun, shineOut, rain; float rainAngle, rainAmount, skyTint[3]; int snow; } game_mood;
 void Game_Mood(int episode, int map, game_mood *mood);
 
 /* Also authored: windows one of the game's own maps has broken before the
@@ -119,6 +132,12 @@ void Game_Mood(int episode, int map, game_mood *mood);
    spots, returns how many. */
 typedef struct { float x, y; } game_spot;
 int Game_BrokenWindows(int episode, int map, game_spot *spots, int max);
+
+/* Duct tape, not authored (always on): sky sectors of one of the game's own
+   maps that are courtyards ringed by porches where the room heuristics
+   (rooms.c) read a hall round a hole in its ceiling. Fills at most max
+   sector numbers, returns how many. */
+int Game_Courtyards(int episode, int map, int *sectors, int max);
 
 /* How clearly water mirrors the room, 0 to 1: 0 is murky (DOOM: stained in
    the water's hue, only bright things punch through), 1 a clear pool that
@@ -165,6 +184,150 @@ float Game_SoundCarry(int id);
 typedef void (*game_shot_traced)(const struct mobj_s *shooter, const struct mobj_s *hit,
                                  float x1, float y1, float z1, float x2, float y2, float z2);
 void Game_TraceShots(game_shot_traced traced);
+
+/* Physically accurate Phobos (DOOM: p_phobos.h): on asks for it (F4);
+   Game_Phobos says whether it applies now (DOOM's first episode, not in
+   demos or netgames; a map's DERPINFO can switch it either way). Then things
+   off the floor fall at Phobos' gravity, 1.49e-4 units a tic a tic, or the
+   map's own (Game_PhobosGravity), and slide on with the real
+   momentum of what hit them. A game without it: never. */
+void Game_SetPhobos(int on);
+/* How much help on Phobos (F4): the player's gear (0 none, 1 thrusters, 2 grav boots
+   too), the walking monsters' footing (0 mag boots, 1 the former humans brainless, 2 no
+   boots at all), decompression's push (0 off, 1 gentle, 2 real), the guns' recoil. */
+void Game_SetPhobosRules(int player, int enemies, int air, int recoil);
+int Game_Phobos(void);
+/* How much air sector holds, 0 (vacuum) to 1: what carries sound. Without
+   Phobos always 1. */
+float Game_Air(int sector);
+/* A window pane on line, whole or broken, as it is found or breaks: on
+   Phobos whole glass holds the air in. */
+void Game_Glass(int line, int whole);
+/* The openings venting air now (Phobos), at most most of them. */
+typedef struct { float x, y, z, dx, dy, speed, width; int sector, line; } game_vent;
+int Game_Vents(game_vent *vents, int most);
+/* Whether a draft tore thing off its feet and it drifts (Phobos). */
+int Game_Adrift(const struct mobj_s *thing);
+/* The draft on a monster still in its boots (Phobos): how hard, units a tic a
+   tic (0: none), and in way its direction. */
+float Game_Draft(const struct mobj_s *thing, float way[3]);
+/* A living body tumbling free (Phobos' brainless zombies): its up, between the last
+   tic and this one by fraction; 0 for anything else (drawn upright). */
+int Game_Tumble(const struct mobj_s *thing, float fraction, float up[3]);
+/* How far the player's body has turned his view up since last asked (radians;
+   Phobos: his guns' kicks spin him while nothing holds him). */
+float Game_LookKick(void);
+/* Whether the player's view is over the top, upside down and facing about (Phobos);
+   Game_FlipView turns it over (his facing turned about, his turning and strafing
+   mirrored to match). */
+int Game_ViewFlipped(void);
+void Game_FlipView(void);
+/* Phobos grav boots: whether the view should be upside down (on a ceiling, or flown
+   past the room's middle toward one); the renderer rolls it over about where he looks
+   and tells the game once it is past half way (his turning and strafing then reverse). */
+int Game_BootsUpside(void);
+void Game_BootsRolled(int over);
+/* F4's Gameplay changed (Normal, authored episodes, Phobos): the game restarts the
+   map in play if the new one plays or looks differently there, keeping what the
+   player carries; nonzero when it does. */
+int Game_ModeChanged(void);
+/* F4's Weather (0 never, 1 authored, 2 rain, 3 snow, 4 nukage rain, 5 sand, 6 ash): what the
+   game plays by. Game_NukageRain: whether nukage rain falls on this level as
+   a rule (it hurts what lives under the open sky); 0 where the game has no
+   such rule, or not now (demos, netgames, Phobos). */
+void Game_SetWeather(int choice);
+int Game_NukageRain(void);
+float Game_PhobosGravity(void);
+/* How far the game has carried things in all since the level began by
+   stepping them through geometry built alike (DOOM: episode 0.5's library,
+   p_library.h), in map units; 0 in a game without it. Whatever smooths
+   movement between tics adds what this grew by to where a carried thing was
+   (Game_Carried: the player always, and all but the map's fixtures); dz up
+   and down (the library's stairs and its chasm, a storey at a time). The
+   sum runs on without end (a fall goes on for ever), so it is kept wrapped
+   round GAME_SHIFT_WRAP units: take what it grew by with Game_ShiftGrew,
+   never the values themselves. */
+#define GAME_SHIFT_WRAP 8192.0f
+void Game_WorldShift(float *dx, float *dy, float *dz);
+static inline float Game_ShiftGrew(float now, float before)
+{
+    float grew = now - before, turns = grew / GAME_SHIFT_WRAP;
+    return grew - GAME_SHIFT_WRAP * (float)(long)(turns + (turns < 0 ? -0.5f : 0.5f));
+}
+int Game_Carried(const struct mobj_s *thing);
+/* Whether the map in play carries things that way (its fixtures, like the
+   lamps, standing in for many alike, so they keep no state of their own:
+   none are shot out); and a count that grows whenever all round the player
+   is made anew there (a new floor, a morning), when what the renderer keeps
+   of the world (blood, marks) goes. */
+int Game_WorldWraps(void);
+int Game_WorldRenewed(void);
+/* Whether a sector repeats every storey above and below (the library's
+   floors), for the renderer to draw them as copies of the band from bottom
+   up a storey; in map units. 0 where it doesn't. */
+int Game_Storey(int sector, float *storey, float *bottom);
+/* How many floors there are above the player's (the library: none on floor
+   1, its top), so no copies are drawn of storeys that don't exist. */
+int Game_FloorsAbove(void);
+/* And below (the library: none under its last floor). */
+int Game_FloorsBelow(void);
+/* The library's day (DOOM: p_library.h), for the renderer and the sound:
+   how closed the player's eyes are (lids 0-1, tired blinks and falling
+   asleep) and how dark it is for him (black 0-1: asleep, passed out, dead),
+   nonzero only in the library; the yawns so far (one is due each time it
+   grows); and his place at the kiosk last, as a note to copy ("" before). */
+int Game_LibraryEyes(float *lids, float *black);
+int Game_LibraryYawns(void);
+const char *Game_LibraryNote(void);
+/* The library's books (DOOM: p_library_books.c): the one the view points at
+   (its outline on the shelf, corners clockwise from the top left, in map
+   units, and whether it has been read), nonzero when there is one; and the
+   open book's page, GAME_PAGE_LINES lines of GAME_PAGE_LINE characters and a
+   0 each, with marks laid out alike (1: a letter of a real word, shown in
+   red), returning its number from 1 (0: no book open). */
+#define GAME_PAGE_LINE 80
+#define GAME_PAGE_LINES 40
+int Game_LibraryAim(float corners[4][3], int *read);
+int Game_LibraryPage(char *lines, char *marks);
+/* The library's people on the floors above and below (DOOM:
+   p_library_figures.c), to draw on the storeys' copies so every floor has
+   someone: each at seconds of game time, x and y as on the player's floor,
+   storey floors up from his (negative: down), its thing type's sprite and
+   frame. Drawing only: none of them is in the game. Returns how many (at
+   most `most`). */
+typedef struct { float x, y; unsigned angle; int sprite, frame, type, storey; } game_figure;
+/* What one of the library's people says (DOOM: p_library_babel.c), at
+   seconds of game time, for the renderer to write over its head; NULL for
+   nothing; *shown how much of it shows (0-1: its letters coming and
+   going). Drawing only. */
+const char *Game_LibrarySays(const struct mobj_s *thing, double seconds, float *shown);
+/* The player's ears ringing after hitting an edge in the library's chasm
+   (DOOM: p_library_day.c), 0-1, for the sound. */
+float Game_LibraryRinging(void);
+/* How many times the player has hit an edge in the library's chasm since
+   the program started (DOOM: p_library_day.c): a new one is his head's
+   crunch. Never saved, so a loaded game doesn't replay it. */
+int Game_LibraryKnocks(void);
+/* How fast the player falls through the library's chasm (DOOM:
+   p_library_shaft.c), map units a tic, 0 when not: the air rushing by.
+   Kept by the game each tic, so the sound's thread may read it. */
+float Game_LibraryFallSpeed(void);
+/* The library's sound (DOOM: p_library_shaft.c, p_library_day.c): whether
+   the map is the library, how open the player stands to its chasm (0-1)
+   and on which side of him it lies (-1 left .. 1 right as he faces), and
+   how tired he is (0-1). Kept by the game each tic: the sound's thread may
+   read them. */
+int Game_InLibrary(void);
+float Game_LibraryChasm(float *side);
+float Game_LibraryTired(void);
+/* Falling through the library's chasm (DOOM: p_library_shaft.c): nonzero
+   while the player falls, his speed in map units a tic. */
+int Game_LibraryFall(float speed[3]);
+int Game_LibraryFigures(game_figure *out, int most, double seconds);
+/* Whether a thing (a figure's body too) lies asleep in one of the
+   library's beds (DOOM: p_library_people.c): drawn in its frame with the
+   blood left out (images.cpp sleepingImage). */
+int Game_ThingAsleep(const struct mobj_s *thing);
 
 /* The F4 panel's font: the WAD lump of character c ('!' to '_'), or -1,
    and how many pixels to add after each glyph (the art's own spacing). */

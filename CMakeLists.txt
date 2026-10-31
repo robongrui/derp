@@ -53,6 +53,7 @@ set(DOOM_SOURCES
     linuxdoom-1.10/doomstat.c
     linuxdoom-1.10/dstrings.c
     linuxdoom-1.10/f_finale.c
+    linuxdoom-1.10/f_library.c
     linuxdoom-1.10/f_wipe.c
     linuxdoom-1.10/g_game.c
     linuxdoom-1.10/hu_lib.c
@@ -62,6 +63,8 @@ set(DOOM_SOURCES
     linuxdoom-1.10/m_bbox.c
     linuxdoom-1.10/m_cheat.c
     linuxdoom-1.10/m_menu.c
+    linuxdoom-1.10/m_library.c
+    linuxdoom-1.10/m_kiosk.c
     linuxdoom-1.10/m_misc.c
     linuxdoom-1.10/m_random.c
     linuxdoom-1.10/p_ceilng.c
@@ -73,6 +76,27 @@ set(DOOM_SOURCES
     linuxdoom-1.10/p_map.c
     linuxdoom-1.10/p_maputl.c
     linuxdoom-1.10/p_mobj.c
+    linuxdoom-1.10/p_phobos.c
+    linuxdoom-1.10/p_library.c
+    linuxdoom-1.10/p_library_people.c
+    linuxdoom-1.10/p_library_shaft.c
+    linuxdoom-1.10/p_library_day.c
+    linuxdoom-1.10/p_library_books.c
+    linuxdoom-1.10/p_library_census.c
+    linuxdoom-1.10/p_library_reader.c
+    linuxdoom-1.10/p_library_fallers.c
+    linuxdoom-1.10/p_library_figures.c
+    linuxdoom-1.10/p_library_kiosk.c
+    linuxdoom-1.10/p_library_babel.c
+    linuxdoom-1.10/p_library_save.c
+    platform/library/shake256.c
+    platform/library/library.c
+    platform/library/book_check.c
+    platform/library/biography.c
+    platform/library/biography_template.c
+    linuxdoom-1.10/p_boots.c
+    linuxdoom-1.10/p_weather.c
+    linuxdoom-1.10/p_air.c
     linuxdoom-1.10/p_plats.c
     linuxdoom-1.10/p_pspr.c
     linuxdoom-1.10/p_saveg.c
@@ -94,6 +118,7 @@ set(DOOM_SOURCES
     linuxdoom-1.10/s_sound.c
     linuxdoom-1.10/sounds.c
     linuxdoom-1.10/st_lib.c
+    linuxdoom-1.10/st_library.c
     linuxdoom-1.10/st_stuff.c
     linuxdoom-1.10/tables.c
     linuxdoom-1.10/v_video.c
@@ -102,7 +127,7 @@ set(DOOM_SOURCES
 # The engine parts every game program shares: WAD access, the zone, byte
 # order and fixed point.
 add_library(doom_engine STATIC linuxdoom-1.10/m_fixed.c linuxdoom-1.10/m_swap.c
-    linuxdoom-1.10/w_wad.c linuxdoom-1.10/z_zone.c)
+    linuxdoom-1.10/w_wad.c linuxdoom-1.10/z_zone.c platform/derp_info.c)
 target_include_directories(doom_engine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
 target_link_libraries(doom_engine PUBLIC doom_options)
 add_library(doom_core STATIC ${DOOM_SOURCES})
@@ -118,7 +143,8 @@ endif()
 add_library(doom_game INTERFACE)
 target_sources(doom_game INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/profile.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/materials.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/authored.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/authored.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/games/doom/map_fixes.c")
 target_link_libraries(doom_game INTERFACE doom_core)
 
 # Heretic: Raven's game code (heretic/), with heretic/derp/ answering the
@@ -259,46 +285,98 @@ if(DOOM_BUILD_SDL)
         platform/scene3d/spray.cpp
         platform/scene3d/body_motion.cpp
         platform/scene3d/death_director.cpp
+        platform/scene3d/decompression.cpp
         platform/scene3d/death_falls.cpp
         platform/scene3d/ragdoll.cpp
         platform/scene3d/ragdoll_body.cpp
         platform/scene3d/ragdoll_test.cpp
         platform/scene3d/wounds.cpp
+        platform/scene3d/carried.cpp
+        platform/scene3d/book_view.cpp
+        platform/scene3d/rush.cpp
+        platform/scene3d/eyes.cpp
+        platform/scene3d/speech.cpp
         platform/scene3d/caustics.cpp
         platform/scene3d/liquid_edges.cpp
         platform/scene3d/embers.cpp
         platform/scene3d/config.cpp
+        platform/scene3d/window_size.cpp
         platform/scene3d/exposure.cpp
         platform/scene3d/geometry.cpp
         platform/scene3d/images.cpp
         platform/scene3d/impacts.cpp
         platform/scene3d/lights.cpp
         platform/scene3d/liquids.cpp
+        platform/scene3d/puddles.cpp
         platform/scene3d/loading.cpp
         platform/scene3d/map.cpp
         platform/scene3d/relight.cpp
         platform/scene3d/scene.cpp
+        platform/scene3d/pacing.cpp
+        platform/scene3d/frame_stats.cpp
+        platform/scene3d/stats_overlay.cpp
         platform/scene3d/shadows.cpp
         platform/scene3d/shot_lights.cpp
+        platform/scene3d/space.cpp
         platform/scene3d/sprite_normals.cpp
         platform/scene3d/surface_lights.cpp
         platform/scene3d/thing_light.cpp
         platform/scene3d/weapon.cpp
         platform/scene3d/wear.cpp
         platform/scene3d/weather.cpp
+        platform/scene3d/sun.cpp
+        platform/scene3d/wind.cpp
+        platform/scene3d/climate.cpp
+        platform/scene3d/ground_heat.cpp
+        platform/scene3d/trapped_air.cpp
+        platform/scene3d/drafts.cpp
+        platform/scene3d/rooms.cpp
+        platform/scene3d/rain.cpp
+        platform/scene3d/nukage_rain.cpp
+        platform/scene3d/craters.cpp
+        platform/scene3d/snow.cpp
+        platform/scene3d/sand.cpp
+        platform/scene3d/whiteout.cpp
+        platform/scene3d/water_ice.cpp
+        platform/scene3d/ash.cpp
+        platform/scene3d/fog.cpp
+        platform/scene3d/dry_ice.cpp
+        platform/scene3d/dry_ice_basins.cpp
+        platform/scene3d/dry_ice_intake.cpp
+        platform/scene3d/floor_film.cpp
+        platform/scene3d/blown_in.cpp
+        platform/scene3d/air_push.cpp
+        platform/scene3d/beam_air.cpp
+        platform/scene3d/open_air.cpp
+        platform/scene3d/disturbances.cpp
+        platform/scene3d/powder.cpp
+        platform/scene3d/disturbance_sources.cpp
+        platform/scene3d/ground_dents.cpp
         platform/scene3d/windows.cpp
+        platform/scene3d/wall_mirrors.cpp
     )
     # The SDL_gpu backend that draws it; gpu3d/internal.h holds what its files share.
     set(DOOM_GPU3D_SOURCES
         platform/gpu3d/device.cpp
         platform/gpu3d/draw.cpp
         platform/gpu3d/frame.cpp
+        platform/gpu3d/presentation.cpp
         platform/gpu3d/loading.cpp
         platform/gpu3d/pipelines.cpp
     )
+    # Local dev tools (devtools/, not published): devtools.cmake adds their sources to the
+    # scene's and sets DOOM_DEVTOOLS, which builds the hooks they use.
+    include(devtools/devtools.cmake OPTIONAL)
+    # The FPS readout's version line: the release's tag, else a local build's.
+    if(DOOM_RELEASE_VERSION STREQUAL "0.1.0")
+        set(DOOM_SHOWN_VERSION "DEV")
+    else()
+        set(DOOM_SHOWN_VERSION "${DOOM_RELEASE_VERSION}")
+    endif()
+    set_source_files_properties(platform/scene3d/stats_overlay.cpp PROPERTIES COMPILE_DEFINITIONS "DOOM_SHOWN_VERSION=\"${DOOM_SHOWN_VERSION}\"")
     if(NOT MSVC)
         # The engine headers' #pragma interface, once per file.
-        set_source_files_properties(${DOOM_SCENE3D_SOURCES} ${DOOM_GPU3D_SOURCES} platform/settings_menu.cpp PROPERTIES COMPILE_OPTIONS -Wno-unknown-pragmas)
+        set_source_files_properties(${DOOM_SCENE3D_SOURCES} ${DOOM_GPU3D_SOURCES} platform/settings_menu.cpp platform/small_font.cpp PROPERTIES COMPILE_OPTIONS -Wno-unknown-pragmas)
     endif()
     # The accelerated 3D renderer: SDL_gpu drives Metal on macOS and Vulkan on
     # Linux and Windows (SDL_GPU_DRIVER=vulkan selects MoltenVK on a Mac).
@@ -307,17 +385,23 @@ if(DOOM_BUILD_SDL)
             return()
         endif()
         target_sources(${target} PRIVATE ${DOOM_SCENE3D_SOURCES} ${DOOM_GPU3D_SOURCES} platform/settings_panel.cpp
-            platform/settings_menu.cpp)
+            platform/settings_menu.cpp platform/small_font.cpp platform/cpu_time.c)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
         target_compile_definitions(${target} PRIVATE DOOM_RENDER3D)
+        if(DOOM_DEVTOOLS)
+            target_compile_definitions(${target} PRIVATE DOOM_DEVTOOLS)
+        endif()
     endfunction()
     # Sound in the map for the SDL mixer: room reverb, muffling, the map reads they share, sample playback,
-    # and the made-up sounds: impacts and the ambience read from the map's textures.
-    set(DOOM_AUDIO_SOURCES platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c platform/audio/beyond.c platform/audio/relief.c platform/audio/flyby.c
-        platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/acoustic_graph.c platform/audio/steps.c
+    # and the made-up sounds: impacts and the ambience read from the map's textures. The room map
+    # (rooms.c) is for the renderer and the sound alike, so every program builds it here.
+    set(DOOM_AUDIO_SOURCES platform/rooms.c platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c platform/audio/beyond.c platform/audio/relief.c platform/audio/flyby.c
+        platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/acoustic_graph.c platform/audio/steps.c platform/audio/frozen.c
         platform/audio/impact_synth.c platform/audio/spark_synth.c platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
         platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/computer_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c
-        platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c)
+        platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c platform/audio/vacuum.c
+        platform/audio/ringing.c platform/audio/head_knock.c platform/audio/falling_air.c platform/audio/library_steps.c
+        platform/audio/library_acoustics.c)
     add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
@@ -326,16 +410,19 @@ if(DOOM_BUILD_SDL)
     set_target_properties(doom PROPERTIES WIN32_EXECUTABLE TRUE)
     doom_add_renderer(doom ${DOOM_RENDER3D})
     if(APPLE)
-        target_sources(doom PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm)
+        target_sources(doom PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm platform/icon/derp.icns)
         set_source_files_properties(platform/i_wad_launcher.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-D_DARWIN_C_SOURCE")
+        # Made from platform/icon/derp-logo.png by scripts/make-mac-icon.swift.
+        set_source_files_properties(platform/icon/derp.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         target_link_libraries(doom PRIVATE "-framework AudioToolbox" "-framework CoreFoundation" "-framework Cocoa")
         # The identifier keeps the project's old name: changing it would make
         # macOS treat the app as new and forget the launcher's WAD folder.
         set_target_properties(doom PROPERTIES
-            OUTPUT_NAME "Play DOOM"
+            OUTPUT_NAME "Play DERP"
             OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES
             MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.robongrui.duct-tape-doom"
-            MACOSX_BUNDLE_BUNDLE_NAME "Play DOOM"
+            MACOSX_BUNDLE_BUNDLE_NAME "Play DERP"
+            MACOSX_BUNDLE_ICON_FILE derp.icns
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/Info.plist.in")
         if(DOOM_SOUNDFONT)
             add_custom_command(TARGET doom POST_BUILD
@@ -350,6 +437,17 @@ if(DOOM_BUILD_SDL)
                     "$<TARGET_BUNDLE_DIR:doom>/Contents/Resources/default.wad")
         endif()
     else()
+        if(WIN32)
+            target_sources(doom PRIVATE platform/icon/derp.rc)
+            set_target_properties(doom PROPERTIES OUTPUT_NAME "Play DERP")
+        else()
+            # The window icon, loaded beside the program (i_sdl_video.c).
+            # Made from platform/icon/derp-logo.png by scripts/make-icons.py.
+            set_target_properties(doom PROPERTIES OUTPUT_NAME play-derp)
+            add_custom_command(TARGET doom POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/platform/icon/derp.png"
+                    "$<TARGET_FILE_DIR:doom>/play-derp.png")
+        endif()
         if(DOOM_SOUNDFONT)
             add_custom_command(TARGET doom POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:doom>/soundfonts"
@@ -361,6 +459,42 @@ if(DOOM_BUILD_SDL)
         add_custom_command(TARGET doom POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DOOM_GAME_DATA}" "$<TARGET_FILE_DIR:doom>/default.wad")
     endif()
+    # Episode 0.5's map (scp_7179_b/library.wad, committed), shipped beside
+    # the game, which loads it (d_main.c, I_ProgramFile). Its generator
+    # (scp_7179_b/mapgen) is private: where it is, the map is generated by it
+    # and the committed copy kept the same; elsewhere the committed copy is it.
+    set(library_map "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/library.wad")
+    set(library_generator "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/mapgen/library.py")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND AND EXISTS "${library_generator}")
+        file(GLOB library_map_sources "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/mapgen/*.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/ending/*.wav")
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.wad"
+            COMMAND Python3::Interpreter "${library_generator}" "${CMAKE_CURRENT_BINARY_DIR}/library.wad"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_BINARY_DIR}/library.wad" "${library_map}"
+            DEPENDS ${library_map_sources} "${CMAKE_CURRENT_SOURCE_DIR}/platform/library/layout.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/words/2of12.txt"
+            COMMENT "Generating episode 0.5's map")
+    elseif(EXISTS "${library_map}")
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.wad"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${library_map}" "${CMAKE_CURRENT_BINARY_DIR}/library.wad"
+            DEPENDS "${library_map}"
+            COMMENT "Episode 0.5's map, as committed")
+    endif()
+    if(EXISTS "${library_generator}" OR EXISTS "${library_map}")
+        add_custom_target(doom-library-map DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/library.wad")
+        add_dependencies(doom doom-library-map)
+        if(APPLE)
+            add_custom_command(TARGET doom POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:doom>/Contents/Resources"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_BINARY_DIR}/library.wad"
+                    "$<TARGET_BUNDLE_DIR:doom>/Contents/Resources/library.wad")
+        else()
+            add_custom_command(TARGET doom POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_BINARY_DIR}/library.wad"
+                    "$<TARGET_FILE_DIR:doom>/library.wad")
+        endif()
+    endif()
     # The Heretic program: derp-heretic -iwad heretic.wad
     add_executable(derp-heretic platform/sdl_main.c platform/i_sdl_video.c
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
@@ -368,15 +502,18 @@ if(DOOM_BUILD_SDL)
     target_link_libraries(derp-heretic PRIVATE heretic_game SDL3::SDL3 doom_music)
     target_compile_definitions(derp-heretic PRIVATE DOOM_NATIVE)
     doom_add_renderer(derp-heretic ${DOOM_RENDER3D})
+    if(WIN32)
+        target_sources(derp-heretic PRIVATE platform/icon/derp.rc)
+    endif()
     if(APPLE)
         target_sources(derp-heretic PRIVATE platform/i_mac_music.c platform/i_wad_launcher.mm)
         target_link_libraries(derp-heretic PRIVATE "-framework AudioToolbox" "-framework CoreFoundation" "-framework Cocoa")
         set_target_properties(derp-heretic PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES)
         # One app plays both: the launcher hands Heretic WADs to derp-heretic
-        # beside Play DOOM in Contents/MacOS (sdl_main.c).
+        # beside Play DERP in Contents/MacOS (sdl_main.c).
         add_dependencies(doom derp-heretic)
         # A target of its own, so a Heretic-only change reaches the bundle
-        # even when Play DOOM itself doesn't relink.
+        # even when Play DERP itself doesn't relink.
         add_custom_target(derp-heretic-bundle ALL
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:derp-heretic>"
                 "$<TARGET_BUNDLE_DIR:doom>/Contents/MacOS/derp-heretic"
@@ -385,7 +522,7 @@ if(DOOM_BUILD_SDL)
     endif()
     if(BUILD_TESTING)
         add_executable(doom-movement-audio-tests tests/movement_audio.c
-            platform/audio/resample.c platform/audio/treble.c platform/audio/step_synth.c)
+            platform/audio/resample.c platform/audio/treble.c platform/audio/step_synth.c platform/audio/frozen.c)
         target_include_directories(doom-movement-audio-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10"
             "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
         target_link_libraries(doom-movement-audio-tests PRIVATE SDL3::SDL3 doom_options)
@@ -405,6 +542,9 @@ if(DOOM_BUILD_SDL)
                 target_link_libraries(${target} PRIVATE "-framework AudioToolbox" "-framework CoreFoundation")
             endif()
         endfunction()
+        # Measures what the reverb hears at spots of a level, hidden (tests/acoustic_levels.py drives it):
+        # doom-room-probe <iwad> [-file pwad] [-warp ...] [-out dir] [-at name:x,y,facing]...
+        doom_add_smoke(doom-room-probe doom_game OFF tests/room_probe.c)
         # Plays every map of a WAD and reports slow views and their causes:
         # doom-perf-smoke <iwad> [-maps MAP01,MAP02] [-spacing units] [-budget ms]
         if(DOOM_RENDER3D)
@@ -434,6 +574,13 @@ if(DOOM_BUILD_SDL)
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/smoke-data"
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy"
             TIMEOUT 30 LABELS game)
+        # Room acoustics on test levels: tunnels told apart, ringing as tubes, other rooms as before.
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME tunnel-acoustics COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/acoustic_levels.py"
+                check "$<TARGET_FILE:doom-room-probe>" "${DOOM_GAME_DATA}" "${CMAKE_CURRENT_BINARY_DIR}/acoustic-levels")
+            set_tests_properties(tunnel-acoustics PROPERTIES TIMEOUT 120 LABELS game)
+        endif()
         if(DOOM_TEST_GPU)
             doom_add_smoke(doom-gpu-smoke doom_game ON tests/native_smoke.c)
             add_test(NAME gpu-gameplay-save-load COMMAND doom-gpu-smoke "${DOOM_GAME_DATA}")
@@ -498,6 +645,12 @@ if(BUILD_TESTING)
         target_link_libraries(doom-acoustic-glass-tests PRIVATE m)
     endif()
     add_test(NAME acoustic-glass-break COMMAND doom-acoustic-glass-tests)
+    add_executable(doom-tunnel-reverb-tests tests/tunnel_reverb.c platform/audio/reverb.c)
+    target_include_directories(doom-tunnel-reverb-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(doom-tunnel-reverb-tests PRIVATE m)
+    endif()
+    add_test(NAME tunnel-reverb-stability COMMAND doom-tunnel-reverb-tests)
     add_executable(doom-glass-audio-tests tests/glass_audio.c
         platform/audio/made_bank.c platform/audio/impact_synth.c platform/audio/spark_synth.c
         platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
@@ -524,6 +677,38 @@ if(BUILD_TESTING)
     add_test(NAME computer-room-presence COMMAND doom-computer-presence-tests)
     add_executable(doom-wad-probe-tests tests/wad_probe.c platform/wad_probe.c)
     add_test(NAME wad-loader-probe COMMAND doom-wad-probe-tests)
+    add_executable(doom-derp-info-tests tests/derp_info.c)
+    target_link_libraries(doom-derp-info-tests PRIVATE doom_headless_platform)
+    add_test(NAME derpinfo-reader COMMAND doom-derp-info-tests)
+    add_executable(doom-library-tests tests/library.c platform/library/shake256.c
+        platform/library/library.c platform/library/book_check.c)
+    add_test(NAME library-math COMMAND doom-library-tests)
+    add_executable(doom-library-biography-tests tests/library_biography.c platform/library/shake256.c
+        platform/library/library.c platform/library/book_check.c platform/library/biography.c
+        platform/library/biography_template.c)
+    add_test(NAME library-biography COMMAND doom-library-biography-tests)
+    # The library map's generator: its BSP lands every point in its own sector.
+    # The generator and the scenarios built on it are private (scp_7179_b/mapgen):
+    # these run only where it is.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/mapgen/verify.py")
+        add_test(NAME library-map-bsp COMMAND Python3::Interpreter
+            "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/mapgen/verify.py" --people)
+        # Playing the library headless (scp_7179_b/scenarios.py): its
+        # shelves need DOOM II's or Freedom's textures, so only with those.
+        get_filename_component(library_iwad "${DOOM_GAME_DATA}" NAME)
+        string(TOLOWER "${library_iwad}" library_iwad)
+        if(library_iwad MATCHES "^(freedoom1|freedoom2|doom2|tnt|plutonia)\\.wad$")
+            set(library_smoke)
+            if(TARGET doom-native-smoke)
+                set(library_smoke --smoke "$<TARGET_FILE:doom-native-smoke>")
+            endif()
+            add_test(NAME library-scenarios COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/scp_7179_b/scenarios.py"
+                --headless "$<TARGET_FILE:doom-headless>" --iwad "${DOOM_GAME_DATA}" ${library_smoke})
+            set_tests_properties(library-scenarios PROPERTIES TIMEOUT 3600)
+        endif()
+    endif()
     add_executable(doom-portability-tests tests/portability.c)
     target_link_libraries(doom-portability-tests PRIVATE doom_headless_platform)
     add_test(NAME portability COMMAND doom-portability-tests)

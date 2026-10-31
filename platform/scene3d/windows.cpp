@@ -7,6 +7,7 @@
    (Game_BrokenWindows). */
 #include "internal.h"
 #include "../glass_fracture.h"
+#include "../rooms.h"
 extern "C" {
 #include "../audio/impact_synth.h"
 #include "../audio/sound_options.h"
@@ -14,7 +15,7 @@ extern "C" {
 
 namespace doom3d {
 std::vector<Vertex> glassVertices;
-bool glassMirrorActive=false;
+bool glassMirrorActive=false,glassMirrorSilvered=false;
 float glassMirrorPlane[4]={},glassMirrorFade=1;
 std::vector<GlassProbe> glassProbes;
 std::vector<int> glassCaptures;
@@ -41,6 +42,7 @@ struct Shard {
     doom_glass::Point center;
     std::array<float,3> angle,previous,spin;
     int pane,release,die;
+    bool burst=false;   // Phobos: thrown out by the air behind it; the outflow carries it past the frame
     uint32_t seed;
     bool landed=false,impactPiece=false;
 };
@@ -77,11 +79,6 @@ static constexpr float fractureSpeed=12;
 static float rawFloor(const sector_t *s) {return units(s->floorheight);}
 static float rawCeiling(const sector_t *s) {return units(s->ceilingheight);}
 static bool skySector(const sector_t *s) {return s->ceilingpic==skyflatnum;}
-// Doors that open the sector behind them without a tag.
-static bool manualDoor(int special) {
-    switch(special) {case 1:case 26:case 27:case 28:case 31:case 32:case 33:case 34:case 117:case 118:return true;}
-    return false;
-}
 static std::array<float,4> sectorBox(const sector_t &s) {
     std::array<float,4> box={1e9f,1e9f,-1e9f,-1e9f};
     for(int n=0;n<s.linecount;++n)for(const vertex_t *v:{s.lines[n]->v1,s.lines[n]->v2}) {
@@ -104,7 +101,6 @@ static void findProbes() {
         float nx=ey/len,ny=-ex/len; // Toward the line's front side.
         if(lines[p.line].frontsector-sectors!=p.outer) {nx=-nx;ny=-ny;}
         auto frameBox=sectorBox(sectors[p.frame]);
-        float depth=std::min(frameBox[2]-frameBox[0],frameBox[3]-frameBox[1]);
         float bottom=std::max(rawFloor(&sectors[p.frame]),rawFloor(&sectors[p.outer])),top=std::min(rawCeiling(&sectors[p.frame]),rawCeiling(&sectors[p.outer]));
         for(int side=0;side<2;++side) {
             int room=side==0?p.outer:p.inner;
@@ -113,7 +109,7 @@ static void findProbes() {
             auto found=made.find(key);
             if(found!=made.end()) {p.probe[side]=found->second;continue;}
             if(glassProbes.size()>=maxGlassProbes)continue;
-            float out=side==0?32+p.shift:-(depth-p.shift+24),cx=(p.ax+p.bx)/2+nx*out,cy=(p.ay+p.by)/2+ny*out;
+            float out=side==0?32+p.shift:-(p.shift+24),cx=(p.ax+p.bx)/2+nx*out,cy=(p.ay+p.by)/2+ny*out;
             const sector_t &s=sectors[room];
             auto box=sectorBox(s);
             GlassProbe probe={{cx,cy,(bottom+top)/2},
@@ -125,53 +121,19 @@ static void findProbes() {
         }
     }
 }
-// A window is a thin frame sector between two others, with a sill and a
-// lintel: its floor above both neighbors and its ceiling below them (or
-// under the sky beside it), too high a step to walk in or behind an
-// impassable line, at least 32 units wide and tall and at most 96 deep (deep
-// recesses like E1M2's side windows, sectors 50 and 57, are 72; deeper ones
-// are alcoves). Sectors that move or
-// that line specials act on are left alone: a lift is not a window. The
-// glass goes on the line facing the sky, or else the larger room, moved
-// halfway across the frame (its farthest corner from that line).
+// The windows are the room map's frames (rooms.c: the rule for what a
+// window is lives there, whatever the glass setting). The glass goes on the
+// frame's lines onto its outer side, moved halfway across the frame (its
+// farthest corner from that line).
 static void findWindows() {
     panes.clear();paneOfLine.assign(numlines,-1);nearLines.clear();
-    std::set<int> tags;
-    for(int i=0;i<numlines;++i)if(lines[i].special&&lines[i].tag)tags.insert(lines[i].tag);
-    std::vector<char> excluded(numsectors,0);
-    for(int i=0;i<numsectors;++i)if(sectors[i].tag&&tags.count(sectors[i].tag))excluded[i]=1;
-    for(int i=0;i<numlines;++i) {
-        const line_t &line=lines[i];
-        if(!line.special||!line.frontsector||!line.backsector)continue;
-        excluded[line.frontsector-sectors]=excluded[line.backsector-sectors]=1;
-        if(manualDoor(line.special))excluded[line.backsector-sectors]=1;
-    }
-    std::vector<float> area(numsectors);
-    for(int i=0;i<numsectors;++i) {auto b=sectorBox(sectors[i]);area[i]=(b[2]-b[0])*(b[3]-b[1]);}
-    for(int s=0;s<numsectors;++s) {
+    Rooms_Build();
+    for(int f=0;f<Rooms_FrameCount();++f) {
+        const rooms_frame &found=*Rooms_Frame(f);
+        int s=found.sector,outer=found.outer,inner=found.inner;
         const sector_t &frame=sectors[s];
-        if(excluded[s]||skySector(&frame)||rawCeiling(&frame)-rawFloor(&frame)<32)continue;
-        bool window=true;std::vector<int> sides;
-        for(int n=0;n<frame.linecount&&window;++n) {
-            const line_t *line=frame.lines[n];
-            if(!line->frontsector||!line->backsector)continue;
-            const sector_t *other=line->frontsector==&frame?line->backsector:line->frontsector;
-            if(other==&frame)continue;
-            float bottom=std::max(rawFloor(&frame),rawFloor(other)),top=std::min(rawCeiling(&frame),rawCeiling(other));
-            if(top-bottom<16)continue;
-            bool walkable=rawFloor(&frame)-rawFloor(other)<=24&&top-bottom>=56&&!(line->flags&ML_BLOCKING);
-            bool lintel=rawCeiling(&frame)<rawCeiling(other)||skySector(other);
-            if(walkable||!lintel||rawFloor(&frame)<=rawFloor(other)) {window=false;break;}
-            int o=int(other-sectors);
-            if(std::find(sides.begin(),sides.end(),o)==sides.end())sides.push_back(o);
-        }
-        if(!window||sides.size()<2)continue;
         auto box=sectorBox(frame);
-        float thin=std::min(box[2]-box[0],box[3]-box[1]),wide=std::max(box[2]-box[0],box[3]-box[1]);
-        if(thin>96||wide<32)continue;
-        auto rank=[&](int o){return std::make_pair(skySector(&sectors[o]),area[o]);};
-        int outer=*std::max_element(sides.begin(),sides.end(),[&](int a,int b){return rank(a)<rank(b);}),inner=-1;
-        for(int o:sides)if(o!=outer&&(inner<0||area[o]>area[inner]))inner=o;
+        float thin=std::min(box[2]-box[0],box[3]-box[1]);
         for(int n=0;n<frame.linecount;++n) {
             const line_t *line=frame.lines[n];
             if(!line->frontsector||!line->backsector)continue;
@@ -187,6 +149,18 @@ static void findWindows() {
                 float across=0;
                 for(int k=0;k<frame.linecount;++k)for(const vertex_t *v:{frame.lines[k]->v1,frame.lines[k]->v2})
                     across=std::max(across,(units(v->x)-pane.ax)*nx+(units(v->y)-pane.ay)*ny);
+                // Angled frames (E1M5's west windows: 16 deep, 80 across their
+                // box) are as deep as the frame straight behind the line's middle.
+                float mx=(pane.ax+pane.bx)/2,my=(pane.ay+pane.by)/2;
+                for(int k=0;k<frame.linecount;++k) {
+                    const line_t *edge=frame.lines[k];
+                    if(edge==line)continue;
+                    float px=units(edge->v1->x),py=units(edge->v1->y),fx=units(edge->v2->x)-px,fy=units(edge->v2->y)-py;
+                    float d=nx*fy-ny*fx;
+                    if(std::fabs(d)<1e-6f)continue;
+                    float t=((px-mx)*fy-(py-my)*fx)/d,u=((px-mx)*ny-(py-my)*nx)/d;
+                    if(t>0.5f&&u>=-1e-4f&&u<=1+1e-4f)across=std::min(across,t);
+                }
                 pane.shift=std::min(across,thin)/2;
                 pane.ax+=nx*pane.shift;pane.ay+=ny*pane.shift;pane.bx+=nx*pane.shift;pane.by+=ny*pane.shift;
             }
@@ -230,17 +204,28 @@ static void paneHeights(const GlassPane &p,float &bottom,float &top) {
 // Breaks every pane of a window. Shards scatter from all over the glass:
 // fast along the shot near where it went through, slower further away, a few
 // back toward the shooter; they fall, bounce once and lie glinting a while.
+static unsigned panesBroken=0;   // panes broken during play, all levels (windowPaneBreaks)
 static void shatter(int frame,float hx,float hy,float hz,float dx,float dy,bool spreading=false) {
     float length=std::hypot(dx,dy),area=0;
     if(length>1e-4f) {dx/=length;dy/=length;}
     for(GlassPane &p:panes) {
         if(p.frame!=frame||p.broken)continue;
-        p.broken=true;
+        p.broken=true;++panesBroken;
         float bottom,top;paneHeights(p,bottom,top);
         float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
         if(len<1||top<=bottom)continue;
         area+=len*(top-bottom);
         I_AmbienceGlaze(p.line,0); // Sound gets through: the wind blows in.
+        // On Phobos the air gets out, and the pane bursts out with it, toward the thinner side
+        // of its line, hard: the room's whole pressure behind it.
+        float burst=0,bx=0,by=0;
+        if(Game_Phobos()) {
+            const line_t &l=lines[p.line];
+            float front=l.frontsector?Game_Air(int(l.frontsector-sectors)):0,back=l.backsector?Game_Air(int(l.backsector-sectors)):0;
+            float nx=-units(l.v2->y-l.v1->y),ny=units(l.v2->x-l.v1->x),nl=std::hypot(nx,ny);
+            if(nl>0&&std::abs(front-back)>0.1f) {burst=std::abs(front-back);bx=nx/nl*(front>back?1:-1);by=ny/nl*(front>back?1:-1);}
+        }
+        Game_Glass(p.line,0);
         ex/=len;ey/=len;
         // A blast in the glass's own plane pushes straight through it.
         if(length<=1e-4f) {dx=ey;dy=-ex;}
@@ -258,6 +243,7 @@ static void shatter(int frame,float hx,float hy,float hz,float dx,float dy,bool 
             if(randomRange(0,1)<0.12f)push*=-0.35f;
             float slide=randomRange(-0.45f,0.45f)+rx/std::max(apart,12.0f)*near*1.3f;
             s.vx=dx*push+ex*slide;s.vy=dy*push+ey*slide;
+            if(burst>0) {float out=randomRange(6,14)*burst;s.vx=bx*out+ex*slide;s.vy=by*out+ey*slide;s.burst=true;}
             s.vz=randomRange(-0.3f,1.1f)+rz/std::max(apart,12.0f)*near;
             s.px=s.x;s.py=s.y;s.pz=s.z;
             s.angle={std::atan2(ey,ex),0,0};s.previous=s.angle;
@@ -309,6 +295,20 @@ void glassShot(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy)
         I_MadeSound(IMPACT_GLASS_TINKLE,hx,hy,hz);
     }
 }
+// A body struck the glass hard enough (Phobos, P_Strike): the window shatters at once
+// where it hit, outward along the way it went.
+void glassStruck(line_t *line,fixed_t x,fixed_t y,fixed_t z,fixed_t dx,fixed_t dy) {
+    if(!line||!glassReady())return;
+    int pane=paneOfLine[line-lines];
+    if(pane<0||panes[pane].broken)return;
+    const GlassPane &p=panes[pane];
+    float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
+    if(len<1)return;
+    ex/=len;ey/=len;
+    float along=std::clamp((units(x)-p.ax)*ex+(units(y)-p.ay)*ey,0.0f,len);
+    float bottom,top;paneHeights(p,bottom,top);
+    shatter(p.frame,p.ax+ex*along,p.ay+ey*along,std::clamp(units(z),bottom,top),units(dx),units(dy),true);
+}
 // Explosions break windows within radius of the blast.
 void glassBlast(float x,float y,float z,float radius) {
     if(!glassReady())return;
@@ -341,10 +341,10 @@ static void stepShards() {
         if(s.landed)continue;
         for(int i=0;i<3;++i) {s.angle[i]+=s.spin[i];s.spin[i]*=0.985f;}
         float nx=s.x+s.vx,ny=s.y+s.vy,nz=s.z+s.vz;
-        s.vz-=0.8f;
+        s.vz-=Game_Phobos()?0.8f*Game_PhobosGravity():0.8f;
         float t;
         auto near=nearLines.find(panes[s.pane].frame);
-        if(near!=nearLines.end())for(int i:near->second)
+        if(near!=nearLines.end()&&!s.burst)for(int i:near->second)
             if(crosses(s.x,s.y,nx,ny,lines[i],t)&&stopsShard(lines[i],s.z+(nz-s.z)*t)) {nx=s.x;ny=s.y;s.vx*=-0.18f;s.vy*=-0.18f;break;}
         const sector_t *sector=R_PointInSubsector((fixed_t)(nx*FRACUNIT),(fixed_t)(ny*FRACUNIT))->sector;
         float floor=rawFloor(sector),ceiling=rawCeiling(sector);
@@ -383,7 +383,7 @@ void watchGlass() {
         glassLevelSerial=r_levelserial;shards.clear();missileWatch.clear();
         findWindows();
         // Through the glass ambience comes muffled until it breaks.
-        for(const GlassPane &p:panes)I_AmbienceGlaze(p.line,p.broken?0:1);
+        for(const GlassPane &p:panes) {I_AmbienceGlaze(p.line,p.broken?0:1);Game_Glass(p.line,p.broken?0:1);}
     }
     stepShards();
     if(panes.empty())return;
@@ -442,37 +442,43 @@ static void chooseMirror(const Uniforms &camera) {
     if(!settings.glassReflections||camera.effects[2]!=0||(profile.skip&I_RENDER3D_SKIP_REFLECTIONS)) {lastActive=false;return;}
     const float *e=camera.eye,*f=camera.forward;
     float best=1e9f,kept=1e9f,bestPlane[4]={};
-    for(const GlassPane &p:panes) {
-        if(p.broken&&leveltime>p.fractureEnd)continue;
-        float bottom,top;paneHeights(p,bottom,top);
-        float ex=p.bx-p.ax,ey=p.by-p.ay,len=std::hypot(ex,ey);
-        if(top-bottom<4||len<4)continue;
-        float nx=ey/len,ny=-ex/len,facing=(e[0]-p.ax)*nx+(e[1]-p.ay)*ny;
+    bool bestSilvered=false,keptSilvered=false;
+    // A pane, or a wall mirror (wall_mirrors.cpp), from ax,ay to bx,by.
+    auto consider=[&](float ax,float ay,float bx,float by,float bottom,float top,bool silvered) {
+        float ex=bx-ax,ey=by-ay,len=std::hypot(ex,ey);
+        if(top-bottom<4||len<4)return;
+        float nx=ey/len,ny=-ex/len,facing=(e[0]-ax)*nx+(e[1]-ay)*ny;
         if(facing<0) {nx=-nx;ny=-ny;facing=-facing;}
-        if(facing<1)continue;
+        if(facing<1)return;
         // Where the center ray meets the pane's plane, clamped onto the
         // pane, 2 units inside its frame.
         float toward=-(f[0]*nx+f[1]*ny),hit[3];
         if(toward>1e-3f) {float t=facing/toward;for(int i=0;i<3;++i)hit[i]=e[i]+f[i]*t;}
-        else {hit[0]=p.ax+ex*0.5f;hit[1]=p.ay+ey*0.5f;hit[2]=(bottom+top)/2;}
-        float along=std::clamp(((hit[0]-p.ax)*ex+(hit[1]-p.ay)*ey)/len,2.0f,len-2);
-        float px=p.ax+ex/len*along,py=p.ay+ey/len*along,pz=std::clamp(hit[2],bottom+2,top-2);
+        else {hit[0]=ax+ex*0.5f;hit[1]=ay+ey*0.5f;hit[2]=(bottom+top)/2;}
+        float along=std::clamp(((hit[0]-ax)*ex+(hit[1]-ay)*ey)/len,2.0f,len-2);
+        float px=ax+ex/len*along,py=ay+ey/len*along,pz=std::clamp(hit[2],bottom+2,top-2);
         float dx=px-e[0],dy=py-e[1],dz=pz-e[2],distance=std::sqrt(dx*dx+dy*dy+dz*dz);
-        if(distance>1024||distance<1)continue;
+        if(distance>1024||distance<1)return;
         float angle=std::acos(std::clamp((dx*f[0]+dy*f[1]+dz*f[2])/distance,-1.0f,1.0f));
-        if(angle>0.9f)continue; // Off screen, about.
+        if(angle>0.9f)return; // Off screen, about.
         float flat=std::hypot(dx,dy);WallHit wall;
-        if(flat>1&&firstSolidWall(e[0],e[1],e[2],dx/flat,dy/flat,dz/flat,flat-1,wall))continue;
-        float plane[4]={nx,ny,0,nx*p.ax+ny*p.ay};
+        if(flat>1&&firstSolidWall(e[0],e[1],e[2],dx/flat,dy/flat,dz/flat,flat-1,wall))return;
+        float plane[4]={nx,ny,0,nx*ax+ny*ay};
         bool same=lastActive&&nx*lastPlane[0]+ny*lastPlane[1]>0.999f&&std::abs(plane[3]-lastPlane[3])<1;
-        if(same)kept=std::min(kept,angle);
-        if(angle<best) {best=angle;std::copy(plane,plane+4,bestPlane);}
+        if(same&&angle<kept) {kept=angle;keptSilvered=silvered;}
+        if(angle<best) {best=angle;bestSilvered=silvered;std::copy(plane,plane+4,bestPlane);}
+    };
+    for(const GlassPane &p:panes) {
+        if(p.broken&&leveltime>p.fractureEnd)continue;
+        float bottom,top;paneHeights(p,bottom,top);
+        consider(p.ax,p.ay,p.bx,p.by,bottom,top,false);
     }
+    for(const WallMirror &m:wallMirrors())consider(m.ax,m.ay,m.bx,m.by,m.bottom,m.top,true);
     if(best>=1e9f) {lastActive=false;return;}
     glassMirrorActive=true;
-    if(kept<1e9f&&kept<best+0.1f) std::copy(lastPlane,lastPlane+4,glassMirrorPlane);
+    if(kept<1e9f&&kept<best+0.1f) {std::copy(lastPlane,lastPlane+4,glassMirrorPlane);glassMirrorSilvered=keptSilvered;}
     else {
-        std::copy(bestPlane,bestPlane+4,glassMirrorPlane);
+        std::copy(bestPlane,bestPlane+4,glassMirrorPlane);glassMirrorSilvered=bestSilvered;
         std::copy(bestPlane,bestPlane+4,lastPlane);mirrorSince=SDL_GetTicksNS();
     }
     if(!lastActive)mirrorSince=SDL_GetTicksNS();
@@ -484,6 +490,29 @@ static void chooseMirror(const Uniforms &camera) {
 // worth spreads over a few frames, and only once the bakes switched on have
 // all finished, so a level is captured once rather than per bake. The
 // capture key covers what changes how the world looks lit.
+// A pane's weather for glass.frag, in its statics' bits 23..30: how hard
+// the wind presses the falling kind onto it (paneInward, 0-15) and how cold
+// the room behind it is (0 heated .. 15 as cold as outside: snow freezes on
+// it there instead of sliding); for dry ice how far the curtain climbing
+// the wall outside reaches the pane's bottom (as dry_ice_intake.cpp lifts
+// it: 96 units at a full push over the layer's top).
+static unsigned paneWeather(int index) {
+    PaneView v;
+    Weather kind=falling();
+    if(kind==WEATHER_NONE||!windowPane(index,v))return 0;
+    float press=paneInward(v),cold=0;
+    if(kind==WEATHER_DRY_ICE) {
+        if(dryIceReady()&&v.outer>=0&&v.outer<numsectors) {
+            float push=windPress(v.inX,v.inY,(v.ax+v.bx)/2,(v.ay+v.by)/2);
+            cold=std::clamp((96*push-(v.bottom-dryIceTop(v.outer)))/24,0.0f,1.0f);
+        }
+    } else {
+        int behind=v.inner>=0?v.inner:v.frame;
+        float air=behind>=0&&behind<numsectors?draftTemperature(Rooms_Of(behind)):NAN,out=weatherKind(kind).outside;
+        if(!std::isnan(air)&&out<20)cold=std::clamp((20-air)/(20-out),0.0f,1.0f);
+    }
+    return (unsigned)std::lround(std::clamp(press,0.0f,1.0f)*15)<<23|(unsigned)std::lround(cold*15)<<27;
+}
 static int captureKey=-1;
 static std::vector<char> captured;
 bool planGlassCaptures(const Uniforms &camera) {
@@ -528,7 +557,8 @@ void buildGlass(const Uniforms &camera) {
         // Rain gathers on panes looking out under the sky, drawn the same
         // from both sides: u from the pane's first end (flipped: from b).
         unsigned rain=(skySector(&sectors[p.outer])?1u:0u)|(flipped?2u:0u);
-        unsigned statics=(p.seed&0x7fffffffu)|(p.broken?0x80000000u:0u);
+        unsigned weather=paneWeather(int(&p-panes.data()));
+        unsigned statics=(p.seed&0x007fffffu)|weather|(p.broken?0x80000000u:0u);
         bool mirror=glassMirrorActive&&nx*glassMirrorPlane[0]+ny*glassMirrorPlane[1]>0.999f&&std::abs(nx*p.ax+ny*p.ay-glassMirrorPlane[3])<1;
         int probe=p.probe[outside?0:1];
         unsigned probeId=probe>=0&&(size_t)probe<captured.size()&&captured[probe]?(unsigned)probe+1:0;
@@ -555,7 +585,7 @@ void buildGlass(const Uniforms &camera) {
         auto heldVertex=[&](doom_glass::Point at,unsigned mode) {
             Point world={p.ax+(p.bx-p.ax)*at.x/len,p.ay+(p.by-p.ay)*at.x/len};
             Vertex v=vertex(world,flipped?len-at.x:at.x,bottom+at.y);
-            v.mode=mode;v.statics=p.seed&0x7fffffffu;
+            v.mode=mode;v.statics=(p.seed&0x007fffffu)|weather;
             return v;
         };
         for(const Shard &s:shards)if(s.pane==(int)(&p-panes.data())&&leveltime<=s.release) {
@@ -609,6 +639,30 @@ void buildGlass(const Uniforms &camera) {
             }
         }
         record(first,(a.x+b.x)/2,(a.y+b.y)/2,(bottom+top)/2);
+    }
+    // Wall mirrors (wall_mirrors.cpp): panes all reflection (lightMask.x bit
+    // 1, glass.frag's silvered), seen only from the room they face.
+    for(const WallMirror &m:wallMirrors()) {
+        float ex=m.bx-m.ax,ey=m.by-m.ay,len=std::hypot(ex,ey);
+        if((camera.eye[0]-m.ax)*m.nx+(camera.eye[1]-m.ay)*m.ny<0.01f||len<1)continue;
+        // Past the far fog's solid end (DERPINFO farfog) it is gone, as the walls are.
+        if(camera.farFog[3]>0&&std::hypot((m.ax+m.bx)/2-camera.eye[0],(m.ay+m.by)/2-camera.eye[1])>camera.farFogRange[1]+len)continue;
+        bool mirror=glassMirrorActive&&m.nx*glassMirrorPlane[0]+m.ny*glassMirrorPlane[1]>0.999f&&
+                    std::abs(m.nx*m.ax+m.ny*m.ay-glassMirrorPlane[3])<1;
+        float mx=(m.ax+m.bx)/2+m.nx*8,my=(m.ay+m.by)/2+m.ny*8;
+        const sector_t *room=R_PointInSubsector((fixed_t)(mx*FRACUNIT),(fixed_t)(my*FRACUNIT))->sector;
+        float light=camera.effects[2]!=0?1:lighting(room);
+        // u along (-ny, nx), as the panes'.
+        Point a={m.ax,m.ay},b={m.bx,m.by};
+        if((b.x-a.x)*-m.ny+(b.y-a.y)*m.nx<0)std::swap(a,b);
+        auto vertex=[&](Point at,float u,float z) {
+            Vertex v={at.x,at.y,z,u,z-m.bottom,light,0};v.lightMask[0]=(mirror?1u:0u)|2u;v.lightMask[1]=0;v.lampTint=0;
+            v.red=m.nx;v.green=m.ny;v.blue=0;v.sunU=len;v.sunV=m.top-m.bottom;v.statics=0;
+            return v;
+        };
+        size_t first=glassVertices.size();
+        quad(glassVertices,vertex(a,0,m.top),vertex(b,len,m.top),vertex(b,len,m.bottom),vertex(a,0,m.bottom));
+        record(first,mx,my,(m.bottom+m.top)/2);
     }
     // Large pieces keep their shape and tumble, but their silhouettes are
     // cut from whole texels like the broken glass left in the window frame.
@@ -674,6 +728,7 @@ void buildGlass(const Uniforms &camera) {
     glassVertices.swap(ordered);
 }
 unsigned windowPaneSerial() {return glassLevelSerial==r_levelserial?glassLevelSerial:~0u;}
+unsigned windowPaneBreaks() {return panesBroken;}
 int windowPaneCount() {return glassLevelSerial==r_levelserial?(int)panes.size():0;}
 bool windowPane(int index,PaneView &out) {
     if(index<0||index>=windowPaneCount())return false;

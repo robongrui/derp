@@ -70,6 +70,8 @@ void G_WorldDone (void);
 
 void G_Ticker (void);
 boolean G_Responder (event_t*	ev);
+// The mouse's turn in the newest ticcmd and still queued (angleturn).
+void G_MouseTurn (int* last, int* pending);
 
 void G_ScreenShot (void);
 

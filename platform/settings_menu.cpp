@@ -1,4 +1,4 @@
-/* The in-game F4 graphics panel. It draws into its own 640x400 image on a
+/* The in-game F4 settings panel. It draws into its own 640x400 image on a
  * grid of 8x16 cells, like a text-mode setup program, in the WAD's own small
  * font (STCFN), uppercase as in DOOM's messages; the renderer scales it by
  * whole pixels over the dimmed view. Changes apply when the panel closes. */
@@ -21,6 +21,7 @@ extern boolean paused;
 #include "scene3d.h"
 #include "settings_panel.h"
 #include "game_profile.h"
+#include "small_font.h"
 
 using namespace doom3d;
 
@@ -31,15 +32,16 @@ struct Line { const OptionSection *section; Option *option; };
 struct Panel {
     bool open=false,wasPaused=false;
     Settings draft,defaults; // defaults: as R sets them, for the per-option reset and marks
-    std::vector<OptionTab> tabs;
+    std::vector<OptionGroup> groups;
     std::vector<Line> lines;
-    int tab=0,selected=0,scroll=0;
-    std::vector<std::pair<int,int>> tabSpans; // left and right pixel of each tab's bar
+    int group=0,tab=0,selected=0,scroll=0;
+    std::vector<int> groupTab;                // the tab last shown in each group
+    std::vector<std::pair<int,int>> groupSpans,tabSpans; // left and right pixel of each group's title and tab's bar
 } panel;
 
 // The image is a grid of 8x16 character cells, 80 columns by 25 rows.
 const int width=DOOM_SETTINGS_WIDTH,height=DOOM_SETTINGS_HEIGHT,cellWidth=8,cellHeight=16;
-const int tabRow=0,listRow=2,visibleLines=17,descriptionRow=20,descriptionLines=4,helpRow=24;
+const int groupRow=0,tabRow=1,listRow=3,visibleLines=16,descriptionRow=20,descriptionLines=4,helpRow=24;
 const int leftColumn=2,rightColumn=78,sliderColumns=20,valueColumns=6;
 
 // Colors as 0xAARRGGBB, the byte order of the B8G8R8A8 texture.
@@ -54,95 +56,12 @@ void fill(int x,int y,int w,int h,unsigned color) {
         std::fill(image+row*width+std::max(0,x),image+row*width+std::min(width,x+w),color);
 }
 
-// The game's small font ('!' to '_', Game_FontLump: DOOM's STCFN, Heretic's
-// FONTA) as brightness masks: 0 is transparent, otherwise the palette color's
-// brightness relative to the font's brightest pixel, so the artwork's
-// shading survives any text color. glyphHeight is the tallest letter's.
-struct Glyph { int width=0,height=0,left=0,top=0;std::vector<unsigned char> shade; };
-const int firstGlyph='!',lastGlyph='_',spaceWidth=4;
-int glyphHeight=7;
-std::vector<Glyph> glyphs;
-
-void loadFont() {
-    if(!glyphs.empty())return;
-    glyphs.resize(lastGlyph-firstGlyph+1);
-    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
-    std::vector<int> brightness(256);
-    for(int i=0;i<256;++i)brightness[i]=palette[3*i]*299+palette[3*i+1]*587+palette[3*i+2]*114;
-    std::vector<std::vector<int>> raw(glyphs.size());
-    int brightest=1,letterHeight=0;
-    for(int c=firstGlyph;c<=lastGlyph;++c) {
-        int lump=Game_FontLump(c);
-        if(lump<0)continue;
-        const byte *data=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
-        int size=W_LumpLength(lump);
-        if(size<8)continue;
-        Glyph &glyph=glyphs[(size_t)(c-firstGlyph)];
-        int w=(short)(data[0]|data[1]<<8),h=(short)(data[2]|data[3]<<8);
-        if(w<=0||h<=0||w>32||h>32||8+4*w>size)continue;
-        std::vector<int> &pixels=raw[(size_t)(c-firstGlyph)];
-        pixels.assign((size_t)(w*h),-1);
-        // Patch columns: posts of (top, length, pad, pixels, pad) up to 0xff.
-        for(int x=0;x<w;++x) {
-            int at=data[8+4*x]|data[9+4*x]<<8|data[10+4*x]<<16|data[11+4*x]<<24;
-            while(at>=0&&at<size&&data[at]!=0xff) {
-                if(at+2>=size)break;
-                int top=data[at],length=data[at+1];
-                if(at+3+length>size)break;
-                for(int y=0;y<length;++y)if(top+y<h) {
-                    int index=data[at+3+y];
-                    pixels[(size_t)((top+y)*w+x)]=index;
-                    brightest=std::max(brightest,brightness[(size_t)index]);
-                }
-                at+=length+4;
-            }
-        }
-        glyph.width=w;glyph.height=h;
-        if(c>='A'&&c<='Z')letterHeight=std::max(letterHeight,h);
-        glyph.left=(short)(data[4]|data[5]<<8);glyph.top=(short)(data[6]|data[7]<<8);
-    }
-    if(letterHeight)glyphHeight=letterHeight;
-    for(size_t i=0;i<glyphs.size();++i) {
-        Glyph &glyph=glyphs[i];
-        glyph.shade.resize(raw[i].size());
-        for(size_t p=0;p<raw[i].size();++p)
-            glyph.shade[p]=raw[i][p]<0?0:(unsigned char)std::max(1,brightness[(size_t)raw[i][p]]*255/brightest);
-    }
-}
-
-const Glyph *glyphFor(char c) {
-    int upper=std::toupper((unsigned char)c);
-    if(upper<firstGlyph||upper>lastGlyph)return nullptr;
-    const Glyph &glyph=glyphs[(size_t)(upper-firstGlyph)];
-    return glyph.width?&glyph:nullptr;
-}
-
-int textWidth(const std::string &string) {
-    int w=0;
-    for(char c:string) {const Glyph *glyph=glyphFor(c);w+=glyph?glyph->width+Game_FontSpacing():spaceWidth;}
-    return w;
-}
-
-unsigned shaded(unsigned color,int shade) {
-    unsigned r=(color>>16&255)*shade/255,g=(color>>8&255)*shade/255,b=(color&255)*shade/255;
-    return (color&0xff000000)|r<<16|g<<8|b;
-}
+// The game's small font (small_font.h), vertically centered in a row's cell.
+int textWidth(const std::string &string) { return smallFont::width(string); }
 
 // Draws from pixel x, vertically centered in the row's cell; returns the end.
 int drawTextAt(const std::string &string,int x,int row,unsigned color) {
-    int baseline=row*cellHeight+(cellHeight-glyphHeight)/2;
-    for(char c:string) {
-        const Glyph *glyph=glyphFor(c);
-        if(!glyph) {x+=spaceWidth;continue;}
-        int left=x-glyph->left,top=baseline-glyph->top;
-        for(int y=0;y<glyph->height;++y)
-            for(int i=0;i<glyph->width;++i) {
-                int shade=glyph->shade[(size_t)(y*glyph->width+i)],px=left+i,py=top+y;
-                if(shade&&px>=0&&px<width&&py>=0&&py<height)image[py*width+px]=shaded(color,shade);
-            }
-        x+=glyph->width+Game_FontSpacing();
-    }
-    return x;
+    return smallFont::draw(image,width,height,string,x,row*cellHeight+(cellHeight-smallFont::letterHeight())/2,color);
 }
 
 void drawText(const std::string &string,int column,int row,unsigned color) { drawTextAt(string,column*cellWidth,row,color); }
@@ -193,15 +112,33 @@ std::string valueText(const Option &option) {
     return value;
 }
 
+std::vector<OptionTab> &groupTabs() { return panel.groups[(size_t)panel.group].tabs; }
+
 void selectTab(int tab) {
-    int count=(int)panel.tabs.size();
-    panel.tab=(tab%count+count)%count;
+    int count=(int)groupTabs().size();
+    panel.tab=panel.groupTab[(size_t)panel.group]=(tab%count+count)%count;
     panel.lines.clear();
-    for(OptionSection &section:panel.tabs[(size_t)panel.tab].sections) {
+    for(OptionSection &section:groupTabs()[(size_t)panel.tab].sections) {
         panel.lines.push_back({&section,nullptr});
         for(Option &option:section.options)panel.lines.push_back({&section,&option});
     }
     panel.selected=1;panel.scroll=0;
+}
+
+// A group shows the tab it showed last.
+void selectGroup(int group) {
+    int count=(int)panel.groups.size();
+    panel.group=(group%count+count)%count;
+    selectTab(panel.groupTab[(size_t)panel.group]);
+}
+
+// Tab and Shift+Tab: the next or previous tab, on into the next or previous group.
+void stepTab(int direction) {
+    int tab=panel.tab+direction;
+    if(tab>=0&&tab<(int)groupTabs().size()) {selectTab(tab);return;}
+    int count=(int)panel.groups.size();
+    panel.group=((panel.group+direction)%count+count)%count;
+    selectTab(direction>0?0:(int)groupTabs().size()-1);
 }
 
 void keepSelectionVisible() {
@@ -248,16 +185,23 @@ void changeOption(int direction) {
     else if(option.kind==OptionKind::Choice) {
         int count=(int)option.values.size(),index=0;
         for(int i=0;i<count;++i)if(option.values[(size_t)i]==*option.flag)index=i;
-        *option.flag=option.values[(size_t)(((index+direction)%count+count)%count)];
+        // On to the next value that goes with the other settings.
+        for(int step=1;step<count;++step) {
+            int value=option.values[(size_t)(((index+direction*step)%count+count)%count)];
+            if(option.isAllowed(panel.draft,value)) {*option.flag=value;break;}
+        }
     } else setSlider(option,*option.number+direction*option.step);
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
 }
 
 void closePanel() {
+    // A new Gameplay (Normal, Authored, Phobos) takes a map built for it: the game restarts the map if it plays differently.
+    bool modeChanged=panel.draft.mode!=settings.mode;
     settings=panel.draft;
     paused=panel.wasPaused;
     panel.open=false;
     settingsChanged();
+    if(modeChanged)Game_ModeChanged();
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_CLOSE));
 }
 
@@ -289,8 +233,11 @@ void I_Render3DSettingsMenu(void) {
     if(panel.open)return;
     panel.draft=settings;
     panel.defaults=Settings{};fitGame(panel.defaults);
-    panel.tabs=optionTabs(panel.draft);
-    selectTab(panel.tab);
+    panel.groups=optionGroups(panel.draft);
+    panel.groupTab.resize(panel.groups.size(),0);
+    for(size_t g=0;g<panel.groups.size();++g)panel.groupTab[g]=std::min(panel.groupTab[g],(int)panel.groups[g].tabs.size()-1);
+    panel.group=std::min(panel.group,(int)panel.groups.size()-1);
+    selectGroup(panel.group);
     panel.wasPaused=paused;paused=true;
     panel.open=true;
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_OPEN));
@@ -306,14 +253,14 @@ void I_Render3DSettingsKey(int scancode,int shift) {
     case SDL_SCANCODE_LEFT: changeOption(-1); break;
     case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: case SDL_SCANCODE_SPACE:
         changeOption(1); break;
-    case SDL_SCANCODE_TAB: selectTab(panel.tab+(shift?-1:1)); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
-    case SDL_SCANCODE_PAGEUP: selectTab(panel.tab-1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
-    case SDL_SCANCODE_PAGEDOWN: selectTab(panel.tab+1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
+    case SDL_SCANCODE_TAB: stepTab(shift?-1:1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
+    case SDL_SCANCODE_PAGEUP: selectGroup(panel.group-1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
+    case SDL_SCANCODE_PAGEDOWN: selectGroup(panel.group+1); S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE)); break;
     case SDL_SCANCODE_BACKSPACE: case SDL_SCANCODE_DELETE: resetOption(); break;
     case SDL_SCANCODE_R: panel.draft=panel.defaults; S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE)); break;
     case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_F4: closePanel(); break;
     default:
-        if(scancode>=SDL_SCANCODE_1&&scancode<SDL_SCANCODE_1+(int)panel.tabs.size()) {
+        if(scancode>=SDL_SCANCODE_1&&scancode<SDL_SCANCODE_1+(int)groupTabs().size()) {
             selectTab(scancode-SDL_SCANCODE_1);S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));
         }
         break;
@@ -323,6 +270,15 @@ void I_Render3DSettingsKey(int scancode,int shift) {
 void I_Render3DSettingsClick(int x,int y,int button) {
     if(!panel.open||x<0||y<0||x>=width||y>=height)return;
     int row=y/cellHeight;
+    if(row==groupRow) {
+        if(button!=1)return;
+        for(size_t i=0;i<panel.groupSpans.size();++i)
+            if(x>=panel.groupSpans[i].first&&x<panel.groupSpans[i].second) {
+                if((int)i!=panel.group) {selectGroup((int)i);S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));}
+                return;
+            }
+        return;
+    }
     if(row==tabRow) {
         if(button!=1)return;
         for(size_t i=0;i<panel.tabSpans.size();++i)
@@ -348,14 +304,27 @@ void I_Render3DSettingsClick(int x,int y,int button) {
 void I_Render3DSettingsDraw(unsigned *pixels) {
     if(!panel.open)return;
     image=pixels;
-    loadFont();
+    smallFont::load();
     fill(0,0,width,height,backdrop);
 
-    // Tabs across the top, the current one on a red bar.
-    panel.tabSpans.clear();
+    // The groups across the top, the current one in gold and underlined, the panel's name at the right.
+    panel.groupSpans.clear();
     int x=leftColumn*cellWidth;
-    for(size_t i=0;i<panel.tabs.size();++i) {
-        std::string title=panel.tabs[i].title;
+    for(size_t i=0;i<panel.groups.size();++i) {
+        std::string title=panel.groups[i].title;
+        bool current=(int)i==panel.group;
+        int w=textWidth(title);
+        drawTextAt(title,x,groupRow,current?heading:dim);
+        if(current)fill(x,rowY(groupRow)+cellHeight-3,w,1,heading);
+        panel.groupSpans.push_back({x-cellWidth,x+w+cellWidth});
+        x+=w+4*cellWidth;
+    }
+    drawTextRight("F4 Settings",rightColumn,groupRow,dim);
+    // The group's tabs below them, the current one on a red bar.
+    panel.tabSpans.clear();
+    x=leftColumn*cellWidth;
+    for(size_t i=0;i<groupTabs().size();++i) {
+        std::string title=groupTabs()[i].title;
         bool current=(int)i==panel.tab;
         int w=textWidth(title);
         if(current)fill(x-cellWidth,rowY(tabRow),w+2*cellWidth,cellHeight,tabBar);
@@ -363,7 +332,6 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
         panel.tabSpans.push_back({x-cellWidth,x+w+cellWidth});
         x+=w+3*cellWidth;
     }
-    drawTextRight("F4 Graphics",rightColumn,tabRow,dim);
     drawSeparator(tabRow+1);
 
     for(int i=0;i<visibleLines&&panel.scroll+i<(int)panel.lines.size();++i) {
@@ -387,7 +355,7 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
     const Option &option=selectedOption();
     std::vector<std::string> lines=wrap(option.tip?option.tip:"",(rightColumn-leftColumn)*cellWidth,descriptionLines);
     for(size_t i=0;i<lines.size();++i)drawText(lines[i],leftColumn,descriptionRow+(int)i,description);
-    std::string help="Up/Down select   Left/Right change   Tab page   Backspace reset   R reset all   Esc done";
+    std::string help="Arrows select, change   Tab page   PgDn group   Backspace reset   R reset all   Esc done";
     drawTextAt(help,(width-textWidth(help))/2,helpRow,dim);
     // The renderer repeats the border texels beyond the image, so they stay plain backdrop.
     fill(0,0,width,1,backdrop);fill(0,height-1,width,1,backdrop);
@@ -396,7 +364,7 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
 
 void I_Render3DLoadingDraw(unsigned *pixels,const char *title,const char *stage,float fraction) {
     image=pixels;
-    loadFont();
+    smallFont::load();
     const unsigned black=0xff000000;
     fill(0,0,width,height,black);
     const int titleRow=11,barY=rowY(titleRow+1)+4,barWidth=320,barX=(width-barWidth)/2,barHeight=6;

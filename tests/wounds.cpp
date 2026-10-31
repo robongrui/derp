@@ -20,7 +20,12 @@ namespace doom3d {
 Settings settings;
 static std::array<Image,3> spriteImages;
 static unsigned bodyQuadCalls=0;
-const std::vector<byte> &bloodPalette() {
+// Nukage rain's bites (craters.cpp): none here.
+bool craterMask(const mobj_t&,const Image&,std::vector<byte>&,bool) {return false;}
+void forgetCraters(const mobj_t*) {}
+void cratersShutdown() {}
+int bloodTint(const mobj_t*) {return BLOOD_RED;}
+const std::vector<byte> &bloodPalette(int) {
     static const std::vector<byte> shades={16,32,48,64,80,96,112,128,144};
     return shades;
 }
@@ -35,7 +40,7 @@ void quad(std::vector<Vertex> &out,Vertex a,Vertex b,Vertex c,Vertex d) {
 // A small deforming surface with known UVs. Capture must use the same
 // triangle path as a drawn body, including lateral bend, depth and lift.
 void bodyQuads(std::vector<Vertex> &out,const BodyPose &pose,const Vertex &base,float x,float y,float feet,float rx,float ry,
-               float left,float right,int imageTop,int rows,float u0,float u1,const std::vector<byte> *holes) {
+               float left,float right,int imageTop,int rows,float u0,float u1,const std::vector<byte> *holes,int) {
     check(!holes,"Impact capture must intersect the uncut body surface");
     ++bodyQuadCalls;
     auto corner=[&](float across,float u,float v) {

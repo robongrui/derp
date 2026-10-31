@@ -23,6 +23,18 @@ layout(std140,set=3,binding=1) uniform Camera CAMERA_BLOCK c;
 layout(location=0) out vec4 outColor;
 #include "indexed.glsl"
 #include "world/shore.glsl"
+#include "whiteout.glsl"
+#include "fog_bank.glsl"
+// The bloom is laid over the finished view, so it sinks into the weather as
+// the glow it comes from does (world.frag), or lamps and screens stood sharp
+// in the fog: the fog bank as seen from the eye's, glowing (it cuts through
+// a little), and a blizzard's whiteout (a map surface out under the sky in
+// full, the rest as much as is round the eye).
+float shownThroughWeather(bool outside) {
+    float shown=1.0-whiteout(vWorld,outside);
+    if(c.bank.w>0.0) shown*=bankAlong(vWorld,c.bank.x,c.bank.y,c.bank.z,1.0).a;
+    return shown;
+}
 void main() {
     bool sprite=(vMode&MODE_SPRITE)!=0u;
     vec4 color=indexed(image,palette,vUV,false,!sprite);
@@ -38,11 +50,13 @@ void main() {
         vec3 normal=normalize(cross(dFdx(vWorld),dFdy(vWorld)));
         if(dot(normal,c.eye.xyz-vWorld)<0.0) normal=-normal;
         vec3 paint;float glow;
-        if(abs(normal.z)<=0.5&&edgeStrip(vWorld,normal,paint,glow)>0.0&&glow>e) {color.rgb=paint;e=glow;}
+        if(abs(normal.z)<=0.5&&edgeStrip(vWorld,normal,vUV.x,paint,glow)>0.0&&glow>e) {color.rgb=paint;e=glow;}
     }
     // White strips glow in every channel at once and wash the view out up
     // close; colored bulbs keep their full bloom.
     float hi=max(color.r,max(color.g,color.b)),lo=min(color.r,min(color.g,color.b));
     float neutral=1.0-saturate((hi-lo)/max(hi,0.001)*2.0);
+    uint sector=(vMode>>MODE_SECTOR_SHIFT);
+    e*=shownThroughWeather(!sprite&&sector>0u&&sectorInfo[sector-1u].w>0.0);
     outColor=vec4(color.rgb*e*2.5*(1.0-0.6*neutral),1);
 }

@@ -1,16 +1,18 @@
-# Play DOOM on your Mac
-
-Double-click **Play DOOM.app**. No installation is needed, and you can move
-the app to Applications. If you have the source code rather than the app,
-build it first as described in [BUILDING.md](BUILDING.md).
+# Play DERP
 
 **On Windows and Linux**, put your `.wad` files into the `wads` folder next to
-`doom.exe` (or `doom`) and start the game. Base games are found automatically;
+`Play DERP.exe` (or `play-derp`) and start the game. Base games are found automatically;
 with several, the game asks which one to play, and also offers the included
 Freedoom. One custom map WAD in the folder is loaded on top of the base game;
 with several, the game asks. A `.deh` or `.bex` patch with the same name as the
 map is applied too. With no WADs in the folder, Freedoom starts. The rules below
 are the same on the Mac.
+
+**On the Mac**, double-click **Play DERP.app**. No installation is needed, and
+you can move the app to Applications.
+
+If you have the source code rather than a download, build it first as
+described in [BUILDING.md](BUILDING.md).
 
 At startup, choose **Choose WAD Folder…**, then select the folder directly
 containing your `.wad` files. The loader finds base games and custom WADs;
@@ -53,8 +55,11 @@ Change sound volume and mouse sensitivity under **Options**.
 
 Movement accelerates and changes direction faster, with less glide after
 releasing the keys and reduced camera/weapon bob. Walking and running
-retain their original top speeds. Launch with `-classicmovement` to restore the
-original feel; demo playback and recording always use the original movement.
+retain their original top speeds. **F4 → Game → Controls → Movement** picks
+Normal, Normal plus (a running diagonal held for a moment builds up to DOOM's
+full strafe-running) or Classic; launching with `-classicmovement` also restores
+the original feel. Demo playback, recording and netgames always use the
+original movement.
 
 The **3D** renderer draws the level at the window's actual pixel
 resolution, including Retina pixels. Resize the window to any aspect ratio,
@@ -83,20 +88,24 @@ Launch with `-flashlight` to start with the light on. `-flashlighttint 0` disabl
 the tint, `-flashlighttint 1` selects the default, and `-flashlighttint 2` makes it stronger.
 
 Press **F4** for the settings panel. It opens inside the game as a text-mode
-style panel over the paused, dimmed view. Its options are sorted into tabs, the
-description of the highlighted option is shown at the bottom, and options that
-only refine another one are greyed out while that one is off.
+style panel over the paused, dimmed view. Its options are sorted into three
+groups, Game, Graphics and Sound, each with its own tabs; the description of
+the highlighted option is shown at the bottom, options that only refine
+another one are greyed out while that one is off, and a small diamond marks
+each option you changed from its default.
 
 Use **Up/Down** (or the mouse wheel) to choose an option, **Left/Right** or
-**Return** to change it, **Tab** (or **1**–**6**) to switch tabs, **R** to
-restore the defaults, and **Esc** or **F4** to close the panel and apply the
-changes. The mouse works too: click an option to change it (right-click goes
+**Return** to change it, **Tab** (Shift+Tab backwards) to step through every
+page, **PgUp/PgDn** to switch groups, **1**, **2**, ... to jump to a tab in
+the group, **Backspace** to reset one option, **R** to restore all defaults,
+and **Esc** or **F4** to close the panel and apply the changes. The mouse works too: click an option to change it (right-click goes
 backwards), click a slider to set it, and click a tab to open it. **F7** still
 takes a screenshot.
 
 **Display**
 
 - **Renderer:** accelerated 3D or the classic 320×200 software view.
+- **Window size:** the window itself made exactly 1280×720, 1600×900, 1920×1080, 2560×1440 or 3840×2160 pixels, for recordings and screenshots at a standard size; the picture inside still draws at the Resolution setting. Free (the default) lets you drag it to any size.
 - **Resolution:** native pixels, 75%, or 50% for a lighter GPU workload.
 - **Anti-aliasing (MSAA):** off by default, or 2x, 4x or 8x as far as the GPU offers; smooths the edges of walls, floors and ledges while texels and sprites stay crisp.
 - **Field of view:** 60–120 degrees, measured against the classic 4:3 view.
@@ -162,6 +171,7 @@ takes a screenshot.
 - **Grid lighting for monsters:** monsters and items take static light from a grid baked at level load instead of tracing rays every frame.
 - **Unblocked glowing-texture light:** light from lamp strips and glowing flats skips the per-pixel wall tests; cheaper near light panels, but their highlights can show on shiny surfaces through walls.
 - **Fewer glowing-texture lights:** only the 8 nearest lamp strips and glowing flats light their surroundings per pixel, not 24; farther ones keep their baked glow but lose their moving highlights.
+- **Skip hidden walls and floors:** walls, floors and ceilings hidden behind solid walls and closed doors, or outside the view, are left out each frame, found front to back through the map as DOOM did; fewer triangles for older graphics chips, but a wall can pop in at the screen's edge where the test misses it.
 
 All settings are saved in `graphics.cfg`, one `key value` per line. Each F4 option lists its key beside it in `platform/settings_panel.cpp` (switches are `0` or `1`).
 
@@ -229,10 +239,11 @@ To use an original DOOM or DOOM II IWAD you own, launch the executable with an
 absolute path:
 
 ```sh
-"./Play DOOM.app/Contents/MacOS/Play DOOM" -iwad "/absolute/path/to/doom.wad"
+"./Play DERP.app/Contents/MacOS/Play DERP" -iwad "/absolute/path/to/doom.wad"
 ```
 
-For an exact initial window size, use `-width 1920 -height 1080` (in window
+For an exact window size, pick one under **F4 → Graphics → Display → Window size**,
+or launch with `-width 1920 -height 1080` (in window
 coordinates; Retina displays may supply more physical pixels). You can also
 use `-fullscreen`, `-fov 100`, or `-classic`. Sizes between 320×240 and
 8192×8192 are accepted; resizing adjusts the render targets automatically.

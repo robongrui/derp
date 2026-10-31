@@ -8,10 +8,10 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=${1:-"$project_dir/build/play"}
 output_dir=${2:-"$project_dir"}
 freedoom_dir=${FREEDOOM_DIR:-"$project_dir/build/game-data"}
-output_app="$output_dir/Play DOOM.app"
-source_app="$build_dir/Play DOOM.app"
+output_app="$output_dir/Play DERP.app"
+source_app="$build_dir/Play DERP.app"
 
-if [ ! -x "$source_app/Contents/MacOS/Play DOOM" ]; then
+if [ ! -x "$source_app/Contents/MacOS/Play DERP" ]; then
     echo "Build the SDL app first; see BUILDING.md." >&2
     exit 1
 fi

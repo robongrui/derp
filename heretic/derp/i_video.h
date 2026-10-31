@@ -5,6 +5,7 @@
 #include "doomdef.h"
 void I_ShutdownGraphics(void);
 void I_UpdateNoBlit(void);
+boolean I_CapsLock(void);
 void I_FinishUpdate(void);
 void I_ReadScreen(byte *scr);
 #endif

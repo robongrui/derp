@@ -10,8 +10,10 @@
 // Broken panes keep only jagged teeth along the frame.
 // Vertex: vUV the point on the pane in units, vSun its size, vTint the face
 // normal (xy) and whether the face is outdoors (z), vLight that side's light,
-// vStatic the pane's seed with the top bit set once broken; vLightMask.y
-// bit 1 on panes out under the sky (rain gathers on them), bit 2 where u
+// vStatic the pane's seed (23 bits), how hard the wind presses the weather
+// onto it (4 bits, 0-15) and how cold the room behind it is (4 bits; dry
+// ice: how far its curtain reaches the pane), the top bit set once broken; vLightMask.y
+// bit 1 on panes out under the sky (rain or frost gathers on them), bit 2 where u
 // runs from the pane's far end. In each mask, bit 30 marks a bullet hole,
 // bits 2..15 and 16..29 hold its canonical pane coordinates.
 // MODE_GLASS_SHARD: vTint is the rotating normal, vSun is the pixel size and
@@ -42,6 +44,8 @@ layout(location=0) out vec4 outColor;
 #include "indexed.glsl"
 #define BLOCKERS
 #include "lighting.glsl"
+#include "whiteout.glsl"
+#include "fog_bank.glsl"
 float hash(vec2 p,uint seed) {
     uvec2 q=uvec2(ivec2(floor(p))+32768);
     uint h=q.x*73856093u^q.y*19349663u^seed;
@@ -88,52 +92,6 @@ vec3 bulletMark(vec2 texel,uint packed,uint seed) {
     }
     return vec3(0,bright,dark);
 }
-// Rain on the glass (c.forward.w: how wet the windows are), on panes out
-// under the sky, in the same place from both sides: x and y count texels
-// from the pane's first end and its sill. Beads sit in some of its 5x6
-// cells, each for its own few seconds before it goes and another forms;
-// in some 7-texel columns now and then one runs down, a texel a step at
-// the tic rate, wandering a texel left or right every five rows and leaving
-// a broken trail. A drop is a texel catching the light over a dark one,
-// as water lenses the view: 1 the lit texel, -1 the dark, 0.5 the trail.
-float bead(vec2 cell,float t,uint seed,float wet,out vec2 at) {
-    at=vec2(-1e4);
-    if(hash(cell,seed^0x2a1d64f3u)>wet*0.22) return 0.0;
-    float period=4.0+5.0*hash(cell,seed^0x6b43a9b5u),clock=t+hash(cell,seed^0x1e3779b1u)*period;
-    float cycle=floor(clock/period);
-    if(clock-cycle*period>period*0.85) return 0.0;
-    at=cell*vec2(5,6)+floor(vec2(hash(cell+cycle*13.0,seed^0x4cf5ad43u)*5.0,1.0+hash(cell+cycle*17.0,seed^0x7a2b3c4du)*5.0));
-    return 1.0;
-}
-float runner(float x,float y,float top,float t,uint seed,float wet) {
-    float column=floor(x/7.0);
-    for(int k=-1;k<=1;++k) {
-        float col=column+float(k);
-        if(hash(vec2(col,7),seed)>wet*0.7) continue;
-        float period=3.0+5.0*hash(vec2(col,8),seed),clock=t+hash(vec2(col,9),seed)*period;
-        float cycle=floor(clock/period),age=clock-cycle*period;
-        float speed=12.0+14.0*hash(vec2(col,cycle),seed^0x5d0f1a2bu);
-        float head=top-1.0-floor(age*speed);
-        if(head<-2.0) continue;
-        float shift=floor(hash(vec2(col,floor(y/5.0)+cycle*31.0),seed^0x3c1f9e77u)*3.0)-1.0;
-        float base=col*7.0+1.0+floor(hash(vec2(col,cycle+50.0),seed)*5.0);
-        if(x!=base+shift) continue;
-        if(y==head) return 1.0;
-        if(y==head-1.0) return -1.0;
-        if(y>head&&y<head+10.0&&hash(vec2(x,y+cycle*7.0),seed^0x18a4c3e9u)<0.5*(1.0-(y-head)/10.0)) return 0.5;
-    }
-    return 0.0;
-}
-float rainOnGlass(vec2 texel,vec2 extent,bool flipped,uint seed,float wet) {
-    float x=floor(flipped?extent.x-texel.x:texel.x),y=floor(texel.y);
-    float t=floor(c.fog.w*35.0)/35.0;
-    float run=runner(x,y,floor(extent.y),t,seed,wet);
-    if(run!=0.0) return run;
-    vec2 at;
-    if(bead(floor(vec2(x/5.0,y/6.0)),t,seed,wet,at)>0.0&&at==vec2(x,y)) return 1.0;
-    if(bead(floor(vec2(x/5.0,(y+1.0)/6.0)),t,seed,wet,at)>0.0&&at==vec2(x,y+1.0)) return -1.0;
-    return 0.0;
-}
 // The sky as sky.frag maps it, along a ray; below the horizon it falls off
 // to a dark ground so the reflection keeps a hard bright-over-dark line.
 vec3 skyAlong(vec3 ray) {
@@ -164,8 +122,30 @@ vec3 probeAlong(uint probe,vec3 point,vec3 ray) {
     ivec2 texel=ivec2(clamp(floor(at*size),vec2(0),vec2(size-1.0)));
     return texelFetch(probes,texel+ivec2(face,int(probe))*int(size),0).rgb;
 }
+// The far fog (DERPINFO farfog, as world.frag): how far into it a point is,
+// 0 clear to 1 solid. Opaque glass (a mirror) takes its colour; see-through
+// glass fades away, the world behind it fogged already.
+float farFogAt(float distance) {
+    return c.farFog.w>0.0?saturate((distance-c.farFogRange.x)/max(c.farFogRange.y-c.farFogRange.x,1.0)):0.0;
+}
 // Premultiplied layering, front layer last.
 void over(inout vec4 result,vec3 color,float alpha) {result=vec4(color*alpha+result.rgb*(1.0-alpha),alpha+result.a*(1.0-alpha));}
+// The weather on the glass, one file a kind (glass/*.glsl), shared drops and
+// frost in their own: each draws over result at a texel of the pane (its
+// extent, flipped: u from its far end), as wet as the windows are (wet,
+// c.forward.w), as hard as the wind presses it onto this pane (press) and
+// as cold as the room behind it is (cold; dry ice: how far its curtain
+// reaches the pane), lit like the glass (lit, light, grazing; edge: texels
+// to the frame).
+#include "glass/drops.glsl"
+#include "glass/frost.glsl"
+#include "glass/rain.glsl"
+#include "glass/nukage.glsl"
+#include "glass/snow.glsl"
+#include "glass/sand.glsl"
+#include "glass/ash.glsl"
+#include "glass/fog.glsl"
+#include "glass/dry_ice.glsl"
 // The moving pieces are cut from square texels like the broken frame glass.
 // Reflections and lighting stay on the face, with chunky edge pixels instead
 // of a fine vector outline. Settled pieces keep only simple lit glass color.
@@ -215,16 +195,60 @@ void shard() {
     float shine=max(specular.r,max(specular.g,specular.b));
     if(shine>0.004)over(result,specular/shine,shine);
     vec3 color=result.rgb/max(result.a,0.001)*c.fx.x;
-    result.a*=vSun.y;
+    color=mix(color,c.haze.rgb*c.fx.x*c.fx.x,whiteout(vWorld,outdoors));   // a blizzard's whiteout (whiteout.glsl), out in it under the sky
+    result.a*=vSun.y*(1.0-farFogAt(distance));
     if(c.materials.z>0.0&&c.effects.z==0.0)
         result.a*=exp(-heightFogTau(c.eye.z,vWorld.z,distance,c.fog.x,c.fog.y,c.fog.z));
     outColor=vec4(saturate(color),result.a);
 }
+// A wall mirror (lightMask.x bit 1, wall_mirrors.cpp): silvered glass, all
+// reflection. Chosen as the mirror (bit 0) it shows the world drawn again
+// behind it, the player too, whole, a little dark and warm with age; until
+// then it is dull grey, and fades in from that. A dark rim of two texels at
+// its frame, and the lights glinting on it as on the glass. No weather,
+// grime, streaks or breaks: it hangs indoors.
+void silvered() {
+    vec2 extent=vSun,texel=floor(vUV)+0.5;
+    vec3 normal=vec3(vTint.xy,0.0),toEye=c.eye.xyz-vWorld;
+    float distance=length(toEye);
+    vec3 view=toEye/max(distance,1e-3);
+    float light=vLight;
+    if(c.effects.z==0.0) light*=clamp(1.0-vDistance/3200.0,0.35,1.0);
+    vec3 color=vec3(0.16,0.16,0.15)*light;
+    if((vLightMask.x&1u)!=0u&&mirrorView.z>0.0) {
+        vec2 uv=(gl_FragCoord.xy-mirrorView.xy)*mirrorView.zw;
+        vec3 seen;
+        if((uint(c.flashlightTint.w)&FEATURE_RETRO_REFLECTIONS)!=0u) {
+            ivec2 size=textureSize(mirror,0);
+            seen=texelFetch(mirror,clamp(ivec2(floor(uv*vec2(size))),ivec2(0),size-1),0).rgb;
+        } else seen=textureLod(mirror,uv,0.0).rgb;
+        color=mix(color,seen/max(c.fx.x,0.01)*vec3(0.86,0.83,0.76),probeInfo.y);
+    }
+    float edge=min(min(texel.x,extent.x-texel.x),min(texel.y,extent.y-texel.y));
+    if(edge<2.0) color=vec3(0.05,0.045,0.04)*light;
+    vec3 specular=vec3(0);
+    float stipple=flashStipple(vWorld,normal);
+    for(uint i=0u;i<flashCount;++i) {
+        float amount=flashAt(vWorld,normal,i,stipple);
+        if(amount<=0.0) continue;
+        vec3 toLight=normalize(lights[i].position.xyz-vWorld);
+        specular+=lights[i].color.rgb*amount*pow(saturate(dot(normal,normalize(toLight+view))),128.0)*saturate(dot(normal,toLight)*4.0);
+    }
+    color+=saturate(specular)*0.6;
+    color=mix(color*c.fx.x,c.farFog.rgb,farFogAt(distance))/max(c.fx.x,0.01);
+    float alpha=1.0;
+    if(c.materials.z>0.0&&c.effects.z==0.0)
+        alpha*=exp(-heightFogTau(c.eye.z,vWorld.z,distance,c.fog.x,c.fog.y,c.fog.z));
+    if(c.effects.z==0.0) alpha*=bankNear(vWorld).a;
+    outColor=vec4(saturate(color*c.fx.x),alpha);
+}
 void main() {
     if((vMode&MODE_GLASS_SHARD)!=0u) {shard();return;}
+    if((vLightMask.x&2u)!=0u) {silvered();return;}
     vec2 extent=vSun,texel=floor(vUV)+0.5;
-    uint seed=vStatic&0x7fffffffu;
+    uint seed=vStatic&0x007fffffu;
     bool broken=(vStatic&0x80000000u)!=0u;
+    float press=float((vStatic>>23u)&15u)/15.0,cold=float((vStatic>>27u)&15u)/15.0;
     bool held=(vMode&MODE_GLASS_HELD)!=0u,crack=(vMode&MODE_GLASS_CRACK)!=0u;
     vec3 normal=vec3(vTint.xy,0.0);
     vec3 toEye=c.eye.xyz-vWorld;
@@ -305,11 +329,20 @@ void main() {
             alpha*=exp(-heightFogTau(c.eye.z,vWorld.z,distance,c.fog.x,c.fog.y,c.fog.z));
         outColor=vec4(saturate(shade*c.fx.x),alpha);return;
     }
-    // Rain on the glass, lit like it: bright drops, dark lenses under them.
-    if((vLightMask.y&1u)!=0u&&c.forward.w>0.0&&!broken) {
-        float drop=rainOnGlass(texel,extent,(vLightMask.y&2u)!=0u,seed,c.forward.w);
-        if(drop>0.0) over(result,saturate(vec3(0.82,0.92,1.0)*min(vec3(0.2)+lit*0.8,vec3(1.2))),drop*(0.3+0.25*grazing));
-        else if(drop<0.0) over(result,vec3(0.04,0.05,0.06)*light,0.35);
+    // The weather on panes out under the sky, each kind its own (glass/*.glsl);
+    // under a clear sky in the cold (c.climate.y) they frost as under snow.
+    float wet=c.forward.w,weather=c.weather.w;
+    if(wet<=0.0&&c.climate.y>0.0) {wet=c.climate.y;weather=WEATHER_SNOW;}
+    if((vLightMask.y&1u)!=0u&&wet>0.0&&!broken) {
+        float kind=weather;
+        bool flipped=(vLightMask.y&2u)!=0u;
+        if(kind==WEATHER_RAIN) rainGlass(result,texel,extent,flipped,seed,wet,press,cold,lit,light,grazing,edge);
+        else if(kind==WEATHER_NUKAGE) nukageGlass(result,texel,extent,flipped,seed,wet,press,cold,lit,light,grazing,edge);
+        else if(kind==WEATHER_SNOW) snowGlass(result,texel,extent,flipped,seed,wet,press,cold,lit,light,grazing,edge);
+        else if(kind==WEATHER_SAND) sandGlass(result,texel,extent,flipped,seed,wet,press,cold,lit,light,grazing,edge);
+        else if(kind==WEATHER_ASH) ashGlass(result,texel,extent,flipped,seed,wet,press,cold,lit,light,grazing,edge);
+        else if(kind==WEATHER_FOG) fogGlass(result,texel,extent,flipped,seed,wet,press,cold,lit,light,grazing,edge);
+        else if(kind==WEATHER_DRY_ICE) dryIceGlass(result,texel,extent,flipped,seed,wet,press,cold,lit,light,grazing,edge);
     }
     // Shine streaks painted on the glass, as in Duke Nukem 3D's window
     // texture: fixed to the pane, never sliding. They slant up across it in
@@ -354,7 +387,12 @@ void main() {
     if(broken&&!held&&cut<1.5) over(result,vec3(0.85,0.95,1.0)*min(lit,vec3(1.2)),0.45);
     if(result.a<=0.002) discard;
     vec3 color=result.rgb/result.a*c.fx.x;
+    // A blizzard's whiteout (whiteout.glsl): a pane looking out under the sky
+    // (lightMask.y bit 0) fades as the storm it looks onto, from either side.
+    color=mix(color,c.haze.rgb*c.fx.x*c.fx.x,whiteout(vWorld,(vLightMask.y&1u)!=0u));
     if(c.materials.z>0.0&&c.effects.z==0.0)
         result.a*=exp(-heightFogTau(c.eye.z,vWorld.z,distance,c.fog.x,c.fog.y,c.fog.z));
+    if(c.effects.z==0.0) result.a*=bankNear(vWorld).a;   // far panes sink into the fog bank
+    result.a*=1.0-farFogAt(distance);
     outColor=vec4(saturate(color),result.a);
 }

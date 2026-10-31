@@ -37,25 +37,43 @@ float glassCracks(vec2 uv,vec2 origin,vec2 extent,uint seed,out uint shard) {
 }
 // FEATURE_LIVE_READOUTS: blocks of LED cells outside the screens
 // (doom_screen_readouts; the frame holds where a texel sits on its block,
-// zero elsewhere). Now and then a cell takes the light of another cell in
-// its row, so the block keeps the artwork's own colors in new places; about
-// half the time a cell shows its own. Each cell keeps its own pace, 0.5 to
-// 2 seconds a change, set per block, texture repeat and wall section.
+// zero elsewhere). Old console lamps on a plain flipbook loop: each cell is
+// a whole lamp, only on or off, and a block steps through eight frames,
+// 0.7 seconds each, over and over: one loop goes as painted twice, all out,
+// a sparse frame, all on twice, a dense frame, a sparse one; the other mixes
+// the same frames in another order. A frame's pattern is fixed per block, so
+// the loop repeats exactly. Each block picks its loop and where it starts,
+// so neighbouring blocks (often painted alike) show different frames on the
+// same beat. A lamp switched away from its
+// painting shows a lamp painted that way, from its own row when one is,
+// so the block keeps the artwork's colors.
 // Returns the texture coordinate to read in place of uv.
+bool readoutLit(ivec2 p,ivec2 size) {
+    return (int(round(texelFetch(glassFrame,wrapTexel(p,size),0).r*255.0))&128)!=0;
+}
 vec2 readoutCell(vec2 uv,uint section) {
-    ivec2 p=ivec2(floor(uv));
-    vec4 f=texelFetch(glassFrame,wrapTexel(p,textureSize(glassFrame,0)),0)*255.0;
+    const int fill[16]=int[16](-1,-1,0,30,100,100,70,30, // Percent of lamps on; -1 as painted.
+                               -1,30,-1,0,70,100,-1,30);
+    ivec2 p=ivec2(floor(uv)),size=textureSize(glassFrame,0);
+    vec4 f=texelFetch(glassFrame,wrapTexel(p,size),0)*255.0;
     if(f.b<0.5) return uv;
-    ivec2 bytes=ivec2(round(f.ba)),local=ivec2(round(f.rg));
-    ivec2 cell=ivec2(1)+ivec2(notEqual(bytes&128,ivec2(0))),extent=bytes&127;
-    ivec2 origin=p-local,at=local/cell;
-    int cells=max((extent.x+cell.x-1)/cell.x,1);
-    uint seed=tileHash(origin,section^0x5bd1e995u),own=tileHash(at,seed);
-    float slot=floor(c.fog.w/(0.5+1.5*float(own&255u)/255.0)+float((own>>8)&255u)/255.0);
-    uint pick=tileHash(at,seed^uint(int(slot))*0x9e3779b9u);
-    if((pick&1u)==0u) return uv;
-    int x=min(int((pick>>1)%uint(cells))*cell.x+local.x%cell.x,extent.x-1);
-    return vec2(origin+ivec2(x,local.y))+fract(uv);
+    ivec4 bytes=ivec4(round(f));
+    ivec2 cell=ivec2(1)+ivec2(notEqual(bytes.ba&128,ivec2(0))),extent=bytes.ba&127,local=bytes.rg&127;
+    ivec2 origin=p-local,at=local/cell,grid=max((extent+cell-1)/cell,ivec2(1));
+    int lamp=at.y*grid.x+at.x,lamps=grid.x*grid.y;
+    bool painted=(bytes.r&128)!=0;
+    uint wall=tileHash(ivec2(int(section&0xffffu),int(section>>16)),0x5bd1e995u),seed=tileHash(origin,wall);
+    int frame=((int(c.fog.w/0.7)+int(seed&7u))&7)|int((seed>>3)&8u);
+    bool on=fill[frame]<0?painted:int(tileHash(at,seed^uint(frame)*0x9e3779b9u)%100u)<fill[frame];
+    if(on==painted) return uv;
+    ivec2 within=local-at*cell;
+    for(int k=0;k<10;++k) {
+        uint h=tileHash(ivec2(lamp,k),seed);
+        ivec2 from=k<6?ivec2(int(h%uint(grid.x)),at.y):ivec2(int(h%uint(grid.x)),int((h>>8)%uint(grid.y)));
+        ivec2 q=origin+min(from*cell+within,extent-1);
+        if(readoutLit(q,size)==on) return vec2(q)+fract(uv);
+    }
+    return uv;
 }
 // The CRT dome, peaking at a quarter of the shorter side: its smooth normal.
 vec3 glassDome(vec2 screen,vec2 extent,vec3 normal,vec3 tangent,vec3 bitangent) {

@@ -22,11 +22,33 @@ static SDL_Texture *texture;
 static uint32_t palette[256], pixels[SCREENWIDTH * SCREENHEIGHT];
 static int buttons, keys[SDL_SCANCODE_COUNT];
 static boolean captured;
+#ifdef DOOM_RENDER3D
+/* Mouse motion held for I_LatchMouse, and when it last ran (SDL ticks). */
+static int heldDx;
+static float heldDy;
+static Uint64 latchedAt;
+#endif
 extern boolean menuactive;
 extern boolean paused;
 
-static int translate(SDL_Scancode key)
+/* The key as its label reads in the user's keyboard layout, given as the
+   key a US keyboard has there: AZERTY's A key comes back as SDL_SCANCODE_A,
+   though it sits where QWERTY has Q. */
+static SDL_Scancode labelled(SDL_Scancode scan, SDL_Keycode key)
 {
+    if (key >= 'a' && key <= 'z') return SDL_SCANCODE_A + (key - 'a');
+    if (key >= '1' && key <= '9') return SDL_SCANCODE_1 + (key - '1');
+    if (key == '0') return SDL_SCANCODE_0;
+    return scan;
+}
+
+/* While the game reads typed text (menus, prompts, save names, chat), keys
+   give what their labels say; while playing they keep their place on the
+   keyboard, so the controls sit under the same fingers on any layout. */
+static int translate(SDL_Scancode key, SDL_Keycode typed)
+{
+    if (typed > ' ' && typed < 127 && Game_TakesText())
+        return typed;
     switch (key)
     {
         case SDL_SCANCODE_LEFT: return KEY_LEFTARROW;
@@ -63,9 +85,18 @@ static int translate(SDL_Scancode key)
     }
 }
 
+#ifdef DOOM_DEVTOOLS
+/* Local dev tools (devtools/) may hold the player still: they drop or empty what the game
+   would play with (null: the mouse's look) and pass what the menus need. */
+boolean devInputHeld(event_t *event);
+#endif
+
 static void post(evtype_t type, int a, int b, int c)
 {
     event_t event = { type, a, b, c };
+#ifdef DOOM_DEVTOOLS
+    if (devInputHeld(&event)) return;
+#endif
     D_PostEvent(&event);
 }
 
@@ -77,6 +108,22 @@ static void capture_mouse(boolean value)
         captured = value;
     }
 }
+
+#if !defined(__APPLE__) && !defined(_WIN32)
+// The Mac app and the Windows program carry their icon; on Linux it sits
+// beside the program as play-derp.png.
+static void set_window_icon(void)
+{
+    const char *folder = SDL_GetBasePath();
+    char *path = NULL;
+    if (!folder || SDL_asprintf(&path, "%splay-derp.png", folder) < 0) return;
+    SDL_Surface *icon = SDL_LoadPNG(path);
+    SDL_free(path);
+    if (!icon) return;
+    SDL_SetWindowIcon(window, icon);
+    SDL_DestroySurface(icon);
+}
+#endif
 
 void I_InitGraphics(void)
 {
@@ -98,6 +145,9 @@ void I_InitGraphics(void)
     if (!window)
         I_Error("Could not open the game window: %s", SDL_GetError());
     SDL_SetWindowMinimumSize(window, 320, 240);
+#if !defined(__APPLE__) && !defined(_WIN32)
+    set_window_icon();
+#endif
 #ifdef DOOM_RENDER3D
     accel = I_Render3DInit(window);
 #endif
@@ -140,6 +190,16 @@ void I_StartFrame(void)
 }
 void I_UpdateNoBlit(void) { }
 
+/* Caps Lock's own on/off state (its light), read by G_BuildTiccmd for always run. */
+boolean I_CapsLock(void)
+{
+#ifdef DOOM_TEST_DRIVER
+    return false;
+#else
+    return window && (SDL_GetModState() & SDL_KMOD_CAPS) != 0;
+#endif
+}
+
 void I_StartTic(void)
 {
     if (!window)
@@ -147,6 +207,17 @@ void I_StartTic(void)
     boolean focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
     capture_mouse(focused && gamestate == GS_LEVEL && !menuactive && !paused);
     int dx = 0;
+#ifdef DOOM_RENDER3D
+    /* While the 3D renderer reads the mouse at its steady moment (I_LatchMouse),
+       motion read here waits for it; otherwise it goes on at once. */
+    boolean hold = accel && captured && latchedAt && SDL_GetTicks() - latchedAt < 100;
+    if (!hold && (heldDx || heldDy != 0))
+    {
+        dx += heldDx;
+        if (accel) I_Render3DLook(heldDy);
+        heldDx = 0; heldDy = 0;
+    }
+#endif
     SDL_Event event;
     while (SDL_PollEvent(&event))
     {
@@ -166,14 +237,14 @@ void I_StartTic(void)
             if (accel && I_Render3DSettingsOpen() && scan != SDL_SCANCODE_F7)
             {
                 if (event.type == SDL_EVENT_KEY_DOWN)
-                    I_Render3DSettingsKey(scan, (event.key.mod & SDL_KMOD_SHIFT) != 0);
+                    I_Render3DSettingsKey(labelled(scan, event.key.key), (event.key.mod & SDL_KMOD_SHIFT) != 0);
                 continue;
             }
 #endif
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.repeat)
                 continue;
             if (event.type == SDL_EVENT_KEY_DOWN &&
-                scan == SDL_SCANCODE_Q && (event.key.mod & SDL_KMOD_GUI))
+                labelled(scan, event.key.key) == SDL_SCANCODE_Q && (event.key.mod & SDL_KMOD_GUI))
                 I_Quit();
             if (scan == SDL_SCANCODE_F11)
             {
@@ -187,6 +258,11 @@ void I_StartTic(void)
             {
                 /* Also passed on, so cheats such as "idfly" can be typed. */
                 if (event.type == SDL_EVENT_KEY_DOWN) I_Render3DToggleFlashlight();
+            }
+            else if (accel && I_Render3DIsAccelerated() && scan == SDL_SCANCODE_GRAVE)
+            {
+                if (event.type == SDL_EVENT_KEY_DOWN) I_Render3DCycleStats();
+                continue;
             }
             else if (accel && (scan == SDL_SCANCODE_F4 || scan == SDL_SCANCODE_F7))
             {
@@ -205,7 +281,10 @@ void I_StartTic(void)
                 continue;
             }
 #endif
-            int key = translate(scan);
+            /* A release lets go of what the press gave, though the menu
+               may have opened or closed in between. */
+            int key = event.type == SDL_EVENT_KEY_UP && keys[scan] ? keys[scan]
+                    : translate(scan, event.key.key);
             if (key)
             {
                 keys[scan] = event.type == SDL_EVENT_KEY_DOWN ? key : 0;
@@ -222,6 +301,9 @@ void I_StartTic(void)
         }
         else if (event.type == SDL_EVENT_MOUSE_MOTION && captured)
         {
+#ifdef DOOM_RENDER3D
+            if (hold) { heldDx += (int)event.motion.xrel; heldDy += event.motion.yrel; continue; }
+#endif
             dx += (int)event.motion.xrel;
 #ifdef DOOM_RENDER3D
             if (accel) I_Render3DLook(event.motion.yrel);
@@ -256,6 +338,40 @@ void I_StartTic(void)
     if (dx)
         post(ev_mouse, buttons, dx * 4, 0);
 }
+
+#ifdef DOOM_RENDER3D
+/* The 3D renderer reads the mouse when the call that waits for the display
+   returns (scene3d/pacing.cpp): each frame then takes one display interval
+   of motion, so a steady hand turns and looks steadily. Read anywhere else
+   in the frame, the interval stretched and shrank with the work before it.
+   Motion I_StartTic met meanwhile was held for this; other events keep
+   their order for I_StartTic. */
+void I_LatchMouse(void)
+{
+    if (!window || !accel || !captured)
+    {
+        latchedAt = 0;
+        return;
+    }
+    latchedAt = SDL_GetTicks();
+    if (!latchedAt) latchedAt = 1;
+    SDL_PumpEvents();
+    SDL_Event events[64];
+    int count, dx = heldDx;
+    float dy = heldDy;
+    heldDx = 0; heldDy = 0;
+    while ((count = SDL_PeepEvents(events, 64, SDL_GETEVENT, SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_MOTION)) > 0)
+        for (int i = 0; i < count; ++i)
+        {
+            dx += (int)events[i].motion.xrel;
+            dy += events[i].motion.yrel;
+        }
+    if (dy != 0)
+        I_Render3DLook(dy);
+    if (dx)
+        post(ev_mouse, buttons, dx * 4, 0);
+}
+#endif
 
 void I_SetPalette(byte *data)
 {

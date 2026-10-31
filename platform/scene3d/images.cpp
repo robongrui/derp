@@ -215,6 +215,20 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smo
         cell[0]=(byte)std::lround(128+127*sx*soften);cell[1]=(byte)std::lround(128+127*sy*soften);
         cell[2]=smooth?0:(byte)std::lround(std::clamp(rough[(size_t)y*w+x]/0.25f,0.0f,1.0f)*255);cell[3]=255;
     }
+    // Brush direction for bare metal: the artwork's streaks run the way it
+    // changes least from texel to texel. Only a clear lead along v turns it;
+    // blank plates keep the default along u.
+    float alongU=0,alongV=0;
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
+        alongU+=std::fabs(at(height,x+1,y)-at(height,x,y));alongV+=std::fabs(at(height,x,y+1)-at(height,x,y));
+    }
+    image.brushedDown=alongV*1.25f<alongU;
+    // How much of it is blank plate (smooth texels, by the grain below):
+    // busy panels (COMPTALL about 0.4) are not brushed, plain ones (COMPSPAN
+    // about 0.8) are.
+    size_t blankTexels=0;
+    for(size_t i=0;i<count;++i)blankTexels+=rough[i]/0.25f<0.2f;
+    image.blank=(float)blankTexels/count;
     std::vector<uint16_t> anchors=tiles?tiles(height,w,h):std::vector<uint16_t>();
     if(std::any_of(anchors.begin(),anchors.end(),[](uint16_t a){return a!=noPaintedTile;})) {
         std::vector<uint16_t> wide(count*4);
@@ -352,6 +366,111 @@ Image &wallImage(int index) {
     if(image.leaded)return withLeadedRelief(withGlassFrame(image,frame));
     return withRelief(withGlassFrame(image,frame),image.opaque&&!animated?wallTiles:nullptr);
 }
+// Phobos: glowing slime frozen solid (decompression.cpp poolIce): the art's first frame,
+// each texel moved toward ice of its own brightness and snapped back to the palette, from
+// frosted (grey 0) to plain white ice (grey 16), its glow mask at glow eighths. Flats take the ice surface's smooth grooved relief. Kept
+// under keys of their own (frozenFlatKey, frozenWallKey) so frozen surfaces are batched,
+// and lit as ice, apart from the live ones.
+static Image &frozenCopy(const Image &source,int key,int grey,int glowStep,bool flat) {
+    auto found=images.find(key);
+    if(found!=images.end())return found->second;
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    float dead=grey/16.0f,glow=glowStep/8.0f;
+    std::array<byte,256> icy;
+    for(int c=0;c<256;++c) {
+        float rgb[3]={palette[3*c]/255.0f,palette[3*c+1]/255.0f,palette[3*c+2]/255.0f},l=0.3f*rgb[0]+0.59f*rgb[1]+0.11f*rgb[2];
+        const float ice[3]={0.62f,0.70f,0.78f},white[3]={0.80f,0.86f,0.92f};
+        float target[3];
+        for(int k=0;k<3;++k) {
+            // A flat (the ice sheet) frosts over; on a wall it is the slime painted on it that froze.
+            float frosted=rgb[k]+(ice[k]*(0.45f+0.8f*l)-rgb[k])*(flat?0.45f:0.6f);
+            // Its glow gone it is plain ice: white, not grey (shore.glsl's strip the same).
+            target[k]=frosted+(white[k]*(0.55f+0.6f*l)-frosted)*dead*0.8f;
+        }
+        int best=0;float bestDistance=1e9f;
+        for(int i=0;i<256;++i) {
+            float d=0;for(int k=0;k<3;++k) {float e=palette[3*i+k]/255.0f-target[k];d+=e*e;}
+            if(d<bestDistance) {bestDistance=d;best=i;}
+        }
+        icy[c]=(byte)best;
+    }
+    // On a wall only its slime freezes: the texels that glowed (the emission mask); the dry
+    // wall above keeps its paint.
+    std::vector<byte> pixels(source.pixels);
+    bool masked=!flat&&source.emission.size()==pixels.size()/2;
+    for(size_t i=0;i<pixels.size()/2;++i)
+        if(!masked||source.emission[i]>=32)pixels[2*i]=icy[pixels[2*i]];
+    std::vector<byte> mask;
+    if(glow>0&&source.emission.size()==pixels.size()/2) {
+        mask=source.emission;
+        for(byte &m:mask)m=(byte)std::lround(m*glow);
+    }
+    Image &image=images.emplace(key,upload(source.width,source.height,pixels.data(),source.left,source.top,mask.empty()?nullptr:mask.data(),
+                                           nullptr,nullptr,true)).first->second;
+    // Its light dims with the glow left, in the slime's own color: upload's weight (coverage
+    // times eight, capped at one) held a mostly glowing flat at full strength until its last
+    // step, and the whitened texels would pale its color.
+    if(!mask.empty()) {image.emissionWeight=source.emissionWeight*glow;image.emissionColor=source.emissionColor;}
+    // An ice sheet is drawn with gaps where it has not frozen yet (world.frag): a cutout, so
+    // the depth prepass doesn't hide the liquid under the gaps.
+    if(flat)image.opaque=false;
+    return flat?withRelief(image,nullptr,2.0f,true):withRelief(image);
+}
+// Phobos: a liquid flat stilled on its first frame as ice starts to form over it (no
+// animation, no crossfade), kept under its own key (stillFlatKey).
+Image &stillFlat(int lump) {
+    int key=stillFlatKey(lump);
+    auto found=images.find(key);
+    if(found!=images.end())return found->second;
+    const Image &source=lumpImage(lump,true);
+    return images.emplace(key,upload(source.width,source.height,source.pixels.data(),0,0,
+                                     source.emission.size()*2==source.pixels.size()?source.emission.data():nullptr,nullptr,nullptr,true)).first->second;
+}
+// The library: one asleep in a bed (Game_ThingAsleep) lies as a body does,
+// without its blood. What is strongly red (the blood's ramp, found by colour)
+// takes the body's colour around it, filled in from its edges, so the chest
+// keeps its shape; what has no body beside it (spatter, the pool) goes.
+Image &sleepingImage(int lump) {
+    int key=sleepingKey(lump);
+    auto found=images.find(key);
+    if(found!=images.end())return found->second;
+    const Image &source=lumpImage(lump,false);
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    int w=source.width,h=source.height;
+    std::vector<byte> pixels(source.pixels);
+    std::vector<char> blood((size_t)w*h);
+    for(size_t i=0;i<blood.size();++i) {
+        const byte *c=palette+3*pixels[2*i];
+        blood[i]=pixels[2*i+1]&&c[0]>=48&&c[1]*3<=c[0]&&c[2]*3<=c[0];
+    }
+    const int step[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
+    for(bool filled=true;filled;) {
+        filled=false;
+        std::vector<std::pair<size_t,byte>> fills;
+        for(int y=0;y<h;++y) for(int x=0;x<w;++x) {
+            size_t i=(size_t)y*w+x;
+            if(!blood[i])continue;
+            byte beside[4];int n=0;
+            for(const auto &d:step) {
+                int bx=x+d[0],by=y+d[1];
+                if(bx<0||by<0||bx>=w||by>=h)continue;
+                size_t j=(size_t)by*w+bx;
+                if(pixels[2*j+1]&&!blood[j])beside[n++]=pixels[2*j];
+            }
+            if(n<2)continue;
+            // The commonest colour beside it, the first on a tie.
+            int best=0,most=0;
+            for(int a=0;a<n;++a) {int same=0;for(int b=0;b<n;++b)same+=beside[a]==beside[b];if(same>most) {most=same;best=a;}}
+            fills.push_back({i,beside[best]});
+        }
+        for(const auto &f:fills) {pixels[2*f.first]=f.second;blood[f.first]=0;filled=true;}
+    }
+    for(size_t i=0;i<blood.size();++i)if(blood[i])pixels[2*i]=pixels[2*i+1]=0;
+    auto normals=spriteNormals(w,h,pixels.data());
+    return images.emplace(key,upload(w,h,pixels.data(),source.left,source.top,nullptr,normals.data())).first->second;
+}
+Image &frozenFlat(int lump,int grey,int glow) {return frozenCopy(lumpImage(lump,true),frozenFlatKey(lump,grey,glow),grey,glow,true);}
+Image &frozenWall(int texture,int grey,int glow) {return frozenCopy(wallImage(texture),frozenWallKey(texture,grey,glow),grey,glow,false);}
 Image &lumpImage(int lump,bool flat) {
     int key=-1-lump; auto found=images.find(key); if(found!=images.end()) return found->second;
     loadingTick();
@@ -424,12 +543,19 @@ const std::array<float,3> &averageColor(Image &image) {
 }
 // Particles are chunky: opaque blocks of whole Doom pixels in WAD palette
 // colors, taken from random texels of the art they come from.
+// The game's palette, copied once: looking PLAYPAL up by name for every
+// particle block (thousands a frame in a sandstorm) cost milliseconds.
+const byte *playpal() {
+    static byte palette[768];static bool copied=false;
+    if(!copied) {memcpy(palette,W_CacheLumpName((char*)"PLAYPAL",PU_CACHE),sizeof(palette));copied=true;}
+    return palette;
+}
 std::array<float,3> paletteColor(const std::array<float,3> &color) {
     static std::vector<int16_t> nearest;
     if(nearest.empty())nearest.assign(32*32*32,-1);
     int cell[3];for(int c=0;c<3;++c)cell[c]=std::clamp((int)std::lround(color[c]*31),0,31);
     int16_t &index=nearest[(cell[0]*32+cell[1])*32+cell[2]];
-    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    const byte *palette=playpal();
     if(index<0) {
         int best=1<<30;
         for(int i=0;i<256;++i) {

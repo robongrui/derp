@@ -32,6 +32,8 @@ int Game_MatteTexture(const char *name, int flat);
 int Game_HotFlat(const char *name);
 /* Sector specials that hurt whoever stands there (toxic mist). */
 int Game_DamagingFloor(int special);
+/* The flat whose colour a toxic rain takes (DOOM: nukage), or NULL. */
+const char *Game_RainLiquidFlat(void);
 
 /* What walls and floors are made of, for room acoustics, footsteps
    (audio/steps.c: liquids splash, flesh, soil and fabric fall soft) and, in

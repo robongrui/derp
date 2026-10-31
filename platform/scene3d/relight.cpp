@@ -1,6 +1,8 @@
 /* Background re-bake of lamp light and sun around moving sectors
    (doors, lifts, lowering walls) and shot-out lights. */
 #include "internal.h"
+#include <condition_variable>
+#include <mutex>
 
 namespace doom3d {
 // Moving sectors re-light (settings.movingRelight): bakeMap follows doors,
@@ -30,6 +32,57 @@ struct Relight {
     std::vector<BakeLight> gone,kept;
     std::vector<double> lost,left;
 } relight;
+// Re-bakes share a small pool of threads that stay up between them: a moving
+// door re-bakes every few frames, and starting half the cores' worth of
+// threads for each phase competed with drawing. The job's own thread and at
+// most 3 helpers finish a little later and leave the game its cores.
+class RelightPool {
+public:
+    RelightPool() {
+        unsigned helpers=std::min(3u,std::max(1u,std::thread::hardware_concurrency()/2)-1);
+        for(unsigned n=0;n<helpers;++n)threads.emplace_back([this]{help();});
+    }
+    ~RelightPool() {
+        {std::lock_guard<std::mutex> lock(mutex);stop=true;}
+        wake.notify_all();
+        for(auto &thread:threads)thread.join();
+    }
+    // work(0..count-1), on the calling thread and the helpers.
+    void run(int count,const std::function<void(int)> &work) {
+        {std::lock_guard<std::mutex> lock(mutex);task=&work;total=count;next=0;++generation;}
+        wake.notify_all();
+        for(int n;(n=next++)<count;)work(n);
+        std::unique_lock<std::mutex> lock(mutex);
+        idle.wait(lock,[this]{return busy==0;});
+    }
+private:
+    void help() {
+        unsigned seen=0;
+        std::unique_lock<std::mutex> lock(mutex);
+        for(;;) {
+            wake.wait(lock,[&]{return stop||generation!=seen;});
+            if(stop)return;
+            seen=generation;++busy;
+            const std::function<void(int)> *work=task;int count=total;
+            lock.unlock();
+            for(int n;(n=next++)<count;)(*work)(n);
+            lock.lock();
+            if(--busy==0)idle.notify_all();
+        }
+    }
+    std::vector<std::thread> threads;
+    std::mutex mutex;
+    std::condition_variable wake,idle;
+    const std::function<void(int)> *task=nullptr;
+    std::atomic<int> next{0};
+    int total=0,busy=0;
+    unsigned generation=0;
+    bool stop=false;
+};
+static void relightFor(int count,const std::function<void(int)> &work) {
+    static RelightPool pool;
+    pool.run(count,work);
+}
 static std::vector<int> relightPending;
 static std::vector<SurfaceLightKey> brokenPending;
 void relightBrokenLight(const SurfaceLightKey &cell) {brokenPending.push_back(cell);}
@@ -148,30 +201,29 @@ static void startRelight() {
     for(size_t i=0;i<job.gridCells.size();++i)if(job.gridCells[i])job.gridList.push_back(i);
     job.gridResults.assign(job.gridList.size(),{});
     job.done=false;job.running=true;
-    // Half the cores, so the game keeps its own.
+    // A small pool (relightFor), so the game keeps its cores.
     job.worker=std::thread([&] {
-        unsigned threads=std::max(1u,std::thread::hardware_concurrency()/2);
         int y0=std::min(job.lightBounds[1],job.sunBounds[1]),y1=std::max(job.lightBounds[3],job.sunBounds[3]);
         const int *sb=job.sunBounds;
-        parallelFor(y1-y0+1,[&](int row) {
+        relightFor(y1-y0+1,[&](int row) {
             int y=y0+row;
             for(int x=0;x<mapWidth;++x) {
                 size_t i=(size_t)y*mapWidth+x;uint8_t mark=job.cells[i];
                 if(mark&1)lightCell(job.map,i,job.only);
                 if(mark&2)job.sunCells[(size_t)(y-sb[1])*(sb[2]-sb[0]+1)+(x-sb[0])]=(int16_t)sunCell(job.map,i,job.sunDirection);
             }
-        },threads);
+        });
         std::vector<int> strips;
         for(int index:bakeOrder)if(job.strips[index])strips.push_back(index);
-        parallelFor((int)strips.size(),[&](int n) {
+        relightFor((int)strips.size(),[&](int n) {
             const BakeStrip &strip=bakeStrips[strips[n]];
             if(job.strips[strips[n]]&1)lightStrip(job.map,strip,job.only);
             if(job.strips[strips[n]]&2)sunStrip(job.map,strip,job.sunDirection);
-        },threads);
-        parallelFor((int)job.gridList.size(),[&](int n) {
+        });
+        relightFor((int)job.gridList.size(),[&](int n) {
             size_t i=job.gridList[n];
             job.gridResults[n]=staticCellAt(job.map,(int)(i%staticWidth),(int)(i/staticWidth));
-        },threads);
+        });
         if(job.lights&&!job.gone.empty())measureLoss(job);
         job.done=true;
     });
@@ -224,6 +276,7 @@ void relightMovingSectors() {
     }
     if(!relight.running&&(!relightPending.empty()||!brokenPending.empty()))startRelight();
 }
+bool relightRunning() {return relight.running;}
 // Waits for any re-bake in flight and drops what it would apply.
 void stopRelight() {finishRelight(false);relightPending.clear();brokenPending.clear();}
 } // namespace doom3d

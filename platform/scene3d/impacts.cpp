@@ -25,10 +25,10 @@ void dropOldLevelImpacts() {
 // With taken, a block whose Doom-pixel corner is already in it is skipped.
 // A resting block stands on the point instead of centering on it, so a floor
 // does not swallow half of it. Given its unlit color, the flashlight beam
-// lights it too.
-std::unordered_set<uint64_t> crestCells;
+// lights it too. Blocks wholly off screen are dropped before any of that.
+BlockCells crestCells;
 void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,float z,float size,float tall,const std::array<float,3> &color,bool resting,
-                const std::array<float,3> *albedo,bool palette,std::unordered_set<uint64_t> *taken,float alpha) {
+                const std::array<float,3> *albedo,bool palette,BlockCells *taken,float alpha) {
     float d[3]={x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]};
     float depth=d[0]*camera.forward[0]+d[1]*camera.forward[1]+d[2]*camera.forward[2];
     if(depth<4)return;
@@ -37,7 +37,8 @@ void pixelBlock(std::vector<Vertex> &out,const Uniforms &camera,float x,float y,
     float py=(d[0]*camera.up[0]+d[1]*camera.up[1]+d[2]*camera.up[2])/unit;
     float w=std::max(1.0f,std::round(size/unit)),h=std::max(1.0f,std::round(size*tall/unit));
     float left=std::round(px+across-w*0.5f)-across,bottom=std::round(py+100-(resting?0:h*0.5f))-100;
-    if(taken&&!taken->insert((uint64_t)(uint32_t)(int32_t)std::lround(left)<<32|(uint32_t)(int32_t)std::lround(bottom)).second)return;
+    if(left+w<-across-2||left>across+2||bottom+h<-102||bottom>102)return;
+    if(taken&&!taken->take((int)std::lround(left),(int)std::lround(bottom),across))return;
     std::array<float,3> shade=color;
     if(albedo&&flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0&&camera.effects[2]==0) {
         const Flash &beam=flashes.lights[0];
@@ -105,7 +106,11 @@ void barrelBlast(const mobj_t &thing,float x,float y,float z) {
     }
 }
 // A square decal on a sector's floor or ceiling, clipped to its leaves.
+// Out under the sky a mark sinks into the weather's whiteout like the
+// surface it lies on (MODE_DECAL_OUTSIDE, shadow.frag).
+static unsigned decalMode(const sector_t &sector) {return sector.ceilingpic==skyflatnum?MODE_DECAL_OUTSIDE:0u;}
 static void flatDecal(int sectorIndex,float x,float y,float h,float z,int lump,const Image &image,float fade,bool flip) {
+    unsigned mode=decalMode(sectors[sectorIndex]);
     std::vector<Point> square={{x-h,y-h},{x+h,y-h},{x+h,y+h},{x-h,y+h}};
     for(int leaf:sectorFloors[sectorIndex]) {
         const auto &b=floorBounds[leaf];
@@ -115,7 +120,7 @@ static void flatDecal(int sectorIndex,float x,float y,float h,float z,int lump,c
             Point a=square[n],c=square[(n+1)%square.size()];
             polygon=clip(polygon,a,{c.x-a.x,c.y-a.y},false);
         }
-        auto vertex=[&](Point p){float u=(p.x-x+h)/(2*h);return Vertex{p.x,p.y,z,(flip?1-u:u)*image.width,(y+h-p.y)/(2*h)*image.height,fade,0};};
+        auto vertex=[&](Point p){float u=(p.x-x+h)/(2*h);return Vertex{p.x,p.y,z,(flip?1-u:u)*image.width,(y+h-p.y)/(2*h)*image.height,fade,mode};};
         for(size_t n=1;n+1<polygon.size();++n)
             for(Point p:{polygon[0],polygon[n],polygon[n+1]})decalBatches[lump].push_back(vertex(p));
     }
@@ -128,7 +133,7 @@ static const spritedef_t &effectSprite(game_sprite_role role) {
 }
 void buildImpacts(const Uniforms &camera) {
     for(auto &batch:decalBatches)batch.second.clear();
-    particleVertices.clear();crestVertices.clear();crestCells.clear();
+    particleVertices.clear();glowVertices.clear();crestVertices.clear();crestCells.clear();
     dropOldLevelImpacts();
     float now=gameSeconds();
     scorches.erase(std::remove_if(scorches.begin(),scorches.end(),[&](const Scorch &d){return now-d.born>60||now<d.born;}),scorches.end());
@@ -165,7 +170,10 @@ void buildImpacts(const Uniforms &camera) {
             float tx=ex/len,ty=ey/len,nx=ty*0.5f,ny=-tx*0.5f;
             auto texU=[&](float u){float t=(u-(d.along-h))/(2*h);return (d.flip?1-t:t)*image.width;};
             auto texV=[&](float z){return ((zc+h)-z)/(2*h)*image.height;};
-            auto vertex=[&](float u,float z){return Vertex{span.a.x+tx*u+nx,span.a.y+ty*u+ny,z,texU(u),texV(z),fade,0};};
+            const line_t &line=lines[d.line];
+            const sector_t *facing=d.side?line.backsector:line.frontsector;
+            unsigned mode=facing?decalMode(*facing):0u;
+            auto vertex=[&](float u,float z){return Vertex{span.a.x+tx*u+nx,span.a.y+ty*u+ny,z,texU(u),texV(z),fade,mode};};
             quad(decalBatches[lump],vertex(u0,z1),vertex(u1,z1),vertex(u1,z0),vertex(u0,z0));
         }
     }
@@ -188,9 +196,12 @@ void buildImpacts(const Uniforms &camera) {
 // within length, climbing dz per unit: one-sided lines, and two-sided ones
 // where the ray passes above the far ceiling or below the far floor, at the
 // current heights. side faces the ray's origin; section is as in wallSpan.
-bool firstSolidWall(float x,float y,float z,float dx,float dy,float dz,float length,WallHit &hit) {
+// only: the lines to look at (all when null).
+bool firstSolidWall(float x,float y,float z,float dx,float dy,float dz,float length,WallHit &hit,const std::vector<int> *only) {
     std::vector<std::pair<float,int>> crossings;
-    for(int i=0;i<numlines;++i) {
+    int count=only?(int)only->size():numlines;
+    for(int k=0;k<count;++k) {
+        int i=only?(*only)[k]:k;
         const line_t &line=lines[i];
         float ax=units(line.v1->x),ay=units(line.v1->y),ex=units(line.v2->x)-ax,ey=units(line.v2->y)-ay;
         float det=dx*ey-dy*ex;if(std::abs(det)<1e-6f)continue;
@@ -219,6 +230,16 @@ float valueNoise(float x,float y,float cell,uint32_t seed) {
     float a=hashUnit(ix,iy,seed),b=hashUnit(ix+1,iy,seed),c=hashUnit(ix,iy+1,seed),d=hashUnit(ix+1,iy+1,seed);
     float top=a+(b-a)*fx,bottom=c+(d-c)*fx;
     return top+(bottom-top)*fy;
+}
+// Stepped with the game's wrap (carried.cpp), as the blood is.
+void impactsCarried(float dx,float dy,float dz) {
+    for(auto &d:wallDecals)d.line=lineCarried(d.line,dx,dy);
+    for(auto &d:flatDecals) {d.x+=dx;d.y+=dy;d.sector=sectorCarried(d.x,d.y);}
+    for(auto &d:scorches) {d.x+=dx;d.y+=dy;d.sector=sectorCarried(d.x,d.y);}
+    for(auto &p:debris) {p.x+=dx;p.y+=dy;p.z+=dz;}
+    wallDecals.erase(std::remove_if(wallDecals.begin(),wallDecals.end(),[](const WallDecal &d){return d.line<0;}),wallDecals.end());
+    flatDecals.erase(std::remove_if(flatDecals.begin(),flatDecals.end(),[](const FlatDecal &d){return d.sector<0;}),flatDecals.end());
+    scorches.erase(std::remove_if(scorches.begin(),scorches.end(),[](const Scorch &d){return d.sector<0;}),scorches.end());
 }
 void impactsShutdown() {wallDecals.clear();flatDecals.clear();debris.clear();scorches.clear();}
 } // namespace doom3d

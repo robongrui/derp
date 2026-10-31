@@ -36,10 +36,22 @@ void Game_SfxLoaded(int id, void *data) { (void)id; (void)data; }
 void Game_TraceShots(game_shot_traced traced) { (void)traced; }
 game_surface Game_FlatSurface(const char *name) { return name[0] == 'W' ? GAME_SURFACE_LIQUID : GAME_SURFACE_STONE; }
 game_liquid Game_LiquidFlat(const char *name) { (void)name; return GAME_LIQUID_WATER; }
+void Game_WorldShift(float *dx, float *dy, float *dz) { *dx = *dy = *dz = 0; }
 int M_CheckParm(char *argument) { (void)argument; return 0; }
 int I_GetSfxLumpNum(sfxinfo_t *sfx) { (void)sfx; return 0; }
 int W_LumpLength(int lump) { (void)lump; return 0; }
 void *W_CacheLumpNum(int lump, int tag) { (void)lump; (void)tag; return NULL; }
+int W_CheckNumForName(char *name) { (void)name; return -1; }
+float Game_LibraryRinging(void) { return 0; }
+int Game_LibraryKnocks(void) { return 0; }
+void HeadKnock_Mix(float *buffer, int count, int rate, int knocks) { (void)buffer; (void)count; (void)rate; (void)knocks; }
+void Ringing_Mix(float *buffer, int count, int rate, float level) { (void)buffer; (void)count; (void)rate; (void)level; }
+float Game_LibraryFallSpeed(void) { return 0; }
+void FallingAir_Mix(float *buffer, int count, int rate, float speed) { (void)buffer; (void)count; (void)rate; (void)speed; }
+int LibrarySteps_Floor(int kind) { return kind; }
+int LibrarySteps_Player(step_event_t *events, int count, int max, int kind, const struct mobj_s *mo, float force) { (void)events; (void)count; (void)max; (void)kind; (void)mo; (void)force; return -1; }
+int LibrarySteps_People(step_event_t *events, int count, int max) { (void)events; (void)max; return count; }
+void LibraryAcoustics_Shape(room_t *room, beyond_t *beyond) { (void)room; (void)beyond; }
 void MadeBank_Build(void) {}
 int MadeBank_Variants(int kind) { (void)kind; return MADE_STEP_VARIANTS; }
 const made_sample_t *MadeBank_Impact(int kind, int variant) { (void)variant; return &bank[kind]; }
@@ -58,13 +70,19 @@ void Ambience_Silence(float x, float y, float z, float radius) { (void)x; (void)
 void Ambience_Glaze(int line, int whole) { (void)line; (void)whole; }
 void Ambience_ShowGlass(int shown) { (void)shown; }
 void Ambience_Rain(float amount) { (void)amount; }
+void Ambience_Snow(float amount) { (void)amount; }
+void Ambience_Draft(float amount) { (void)amount; }
+void Ambience_Wind(float amount) { (void)amount; }
 int Hidden_Tic(hidden_event_t *event) { (void)event; return 0; }
 float Occlusion_Cutoff(fixed_t x, fixed_t y, fixed_t z, int walls, int distance)
 { (void)x; (void)y; (void)z; (void)walls; (void)distance; return OCCLUSION_OPEN_HZ; }
 void Room_Measure(room_t *room, room_outline_t *outline) { memset(room, 0, sizeof(*room)); memset(outline, 0, sizeof(*outline)); }
+void Room_Snow(float amount) { (void)amount; }
 void Beyond_Measure(const room_t *room, const room_outline_t *outline, float facing, beyond_t *space)
 { (void)room; (void)outline; (void)facing; space->coupling = 0.3f; }
 float Beyond_Share(const beyond_t *space, float x, float y) { (void)space; (void)x; (void)y; return 0.25f; }
+float Vacuum_Carry(fixed_t x, fixed_t y, int own, float *cutoff) { (void)x; (void)y; (void)own; *cutoff = OCCLUSION_OPEN_HZ; return 1; }
+void Vacuum_Follow(void) { }
 int Flyby_Near(const mobj_t *ear, const mobj_t *shooter, const mobj_t *hit,
                float x1, float y1, float z1, float x2, float y2, float z2, float *x, float *y, float *z, float *level)
 { (void)ear; (void)shooter; (void)hit; (void)x1; (void)y1; (void)z1; (void)x2; (void)y2; (void)z2; (void)x; (void)y; (void)z; (void)level; return 0; }
@@ -199,7 +217,7 @@ static void check_reuse_and_world(void)
     play_kind(IMPACT_GEAR_ARMOR, listener.x / (float)FRACUNIT, 0, 0, 0.03f, 1, 1);
     CHECK(near(channels[0].send, SFX_GAIN * 0.03f));
     /* The same slot also resets its policy when stolen under full load. */
-    for (int i = 1; i < MIX_CHANNELS; ++i) start_sample(samples[1], 15, 128, 128, OCCLUSION_OPEN_HZ, 0, 1);
+    for (int i = 1; i < MIX_CHANNELS; ++i) start_sample(samples[1], 15, 128, 128, OCCLUSION_OPEN_HZ, 0, 1, 1);
     CHECK(I_StartSound(1, 8, 128, 128, 0) == channels[0].handle);
     CHECK(near(channels[0].send_scale, 1));
     CHECK(near(channels[0].send, SFX_GAIN * sqrtf(8.0f / 15)));

@@ -38,11 +38,14 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
     // left a sprite over it black while its dynamic copy was selected.
     vec3 tint=pulse,shaped=vec3(0);
     float stipple=flashStipple(vWorld,vec3(0));
+    // Lamps pick their corner per sprite texel, as on walls (surfaceLight).
+    ivec2 q=ivec2(floor(vUV))&1;
+    float texelDither=(float(2*(q.x^q.y)+q.y)+0.5)/2.0-1.0;
     while(any(notEqual(mask,uvec2(0)))) {
         uint word=mask.x!=0u?0u:1u;
         uint i=word*32u+uint(findLSB(mask[word]));
         mask[word]&=mask[word]-1u;
-        float amount=flashAt(vWorld,vec3(0),i,stipple);
+        float amount=flashAt(vWorld,vec3(0),i,lights[i].direction.w<0.0?texelDither:stipple);
         if(amount<=0.0) continue;
         if(c.bake.x>0.0) {
             float luminance=amount*max(dot(lights[i].color.rgb,vec3(0.299,0.587,0.114)),0.001);

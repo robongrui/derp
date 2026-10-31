@@ -240,7 +240,12 @@ void collectFlatLights() {
     for(int i=0;i<numsectors;++i) for(int ceiling=0;ceiling<2;++ceiling) {
         const sector_t &sector=sectors[i];int flat=ceiling?sector.ceilingpic:sector.floorpic;
         if(flat==skyflatnum)continue;
-        int lump=firstflat+flattranslation[flat];const Image &image=lumpImage(lump,true);
+        int lump=firstflat+flattranslation[flat],grey=0,glow=8;
+        // Phobos: a pool icing over glows from its stilled frame, then its frozen one as the
+        // glow dies; the lights no longer dance with the liquid's frames.
+        bool frozen=!ceiling&&frozenLook(i,grey,glow),still=!ceiling&&!frozen&&poolIce(i).ice>0;
+        const Image &image=frozen?frozenFlat(firstflat+flat,grey,glow):still?stillFlat(firstflat+flat):lumpImage(lump,true);
+        if(frozen||still)lump=firstflat+flat;
         if(image.emissionWeight==0)continue;
         float z=sectorHeight(&sector,ceiling)+(ceiling?-8:8);
         for(const auto &sample:flatSamples(i,lump,image))
@@ -292,7 +297,9 @@ void collectSurfaceLights() {
 }
 void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float top,int tex,float anchor,int span) {
     if(!settings.emissive||tex<=0||top<=bottom)return;
-    const Image &image=wallImage(texturetranslation[tex]);
+    int grey=0;float glow=1;
+    bool frozen=wallImage(texturetranslation[tex]).emissionWeight>0&&frozenLookBeside(line,grey,glow);
+    const Image &image=frozen?frozenWall(texturetranslation[tex],grey,(int)std::lround(glow*8)):wallImage(texturetranslation[tex]);
     float u=units(sides[line.sidenum[side]].textureoffset),len=std::hypot(b.x-a.x,b.y-a.y);
     if(image.emissionWeight<=0||len<=0)return;
     float nx=(b.y-a.y)/len,ny=-(b.x-a.x)/len;

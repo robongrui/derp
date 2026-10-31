@@ -199,7 +199,8 @@ V_CopyRect
 
 //
 // DrawClippedPatch
-// The body of V_DrawPatch and V_DrawPatchFlipped. Patches wider than the
+// The body of V_DrawPatch, V_DrawPatchFlipped and V_DrawPatchTranslated
+// (each pixel through a palette remap, or none). Patches wider than the
 // screen, such as the 560-pixel title pages and 576-pixel status bar of
 // the 2019 and later IWADs, are centered; columns and rows off the screen
 // are clipped instead of the whole patch being dropped.
@@ -210,7 +211,8 @@ DrawClippedPatch
   int		y,
   int		scrn,
   patch_t*	patch,
-  boolean	flipped )
+  boolean	flipped,
+  const byte*	translation )
 {
     int		count;
     int		col;
@@ -258,7 +260,7 @@ DrawClippedPatch
 
 	    while (count-- > 0)
 	    {
-		*dest = *source++;
+		*dest = translation ? translation[*source++] : *source++;
                 if (v_overlayactive && !scrn) v_overlaymask[dest - screens[0]] = 255;
 		dest += SCREENWIDTH;
 	    }
@@ -279,7 +281,7 @@ V_DrawPatch
   int		scrn,
   patch_t*	patch ) 
 { 
-    DrawClippedPatch (x, y, scrn, patch, false);
+    DrawClippedPatch (x, y, scrn, patch, false, NULL);
 } 
  
 //
@@ -294,7 +296,23 @@ V_DrawPatchFlipped
   int		scrn,
   patch_t*	patch ) 
 { 
-    DrawClippedPatch (x, y, scrn, patch, true);
+    DrawClippedPatch (x, y, scrn, patch, true, NULL);
+} 
+
+//
+// V_DrawPatchTranslated
+// As V_DrawPatch, each pixel's colour through translation (256 palette
+// indices; the library's episode name in the menu, m_menu.c).
+//
+void
+V_DrawPatchTranslated
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  const byte*	translation )
+{
+    DrawClippedPatch (x, y, scrn, patch, false, translation);
 } 
  
 

@@ -21,6 +21,23 @@
 
 namespace doom3d {
 constexpr float dollGravity=0.45f;  // units per tic per tic: 1.5x earth's at a body's scale, so throws read snappy (at earth's 0.3 a hard throw flew flat at chest height for half a second); Doom's 1 drops a body in 8 tics
+// Physically accurate Phobos (p_phobos.h): the body rides its corpse, which the game slides on with
+// the blow's real momentum, Doom's shove over the real one (phobosShove) picking the fall as on Earth;
+// it falls at Phobos' pull only while the corpse is on the floor (aloft the two fall together), keeps
+// phobosSpin of a Hollywood launch's turn and none of its throw, flails on almost undamped (phobosFlail
+// a substep) and lies still only once it barely moves (phobosQuiet) - minutes later (phobosCap tics).
+constexpr float phobosShove=45.6f,phobosSpin=0.15f,phobosFlail=0.9995f,phobosQuiet=1e-6f;
+constexpr int phobosDeadline=600,phobosLate=1200,phobosCap=35*240;
+// A living monster adrift (startTumble): its muscles half braced, turning over as the draft took it.
+constexpr float tumbleTone=0.35f,tumbleSpin[2]={0.015f,0.045f};
+// Still in its boots in a draft: braced (leanTone), from leanStart units a tic a tic on the draft
+// takes the top of the body (each point by leanShare: head most, hips least), leanGain times the
+// pull, at most leanMost a tic; back on its feet leanLinger tics after the draft has gone.
+constexpr float leanTone=0.6f,leanStart=0.05f,leanGain=2.0f,leanMost=1.5f;constexpr int leanLinger=20;
+static const float leanShare[DOLL_POINTS]={1,0.9f,0.8f,0.8f,0.6f,0.3f,0.3f,0.1f,0.1f,0,0};
+// Phobos' bodies fly across whole rooms: the walls and floors they know reach phobosReach round
+// them (four times a blast's: a big floor grid, gathered again each phobosRegather units).
+constexpr float phobosReach=640,phobosRegather=160;
 constexpr int dollSubsteps=4,dollPasses=6;
 constexpr float kneeTwist=0.35f;    // of a shin's length, how far it may stray sideways from the knee's hinge plane
 constexpr int lyingGrace=3;         // tics the torso is down before the whole body is damped (Ragdoll::damp)
@@ -68,13 +85,24 @@ struct Wall { float ax,ay,bx,by,top; };
 // way, each holding its sector, whose floor is read live (a lift under a body carries it). Doom holds
 // a thing up at the highest floor anywhere under its box, so a corpse killed at a stair edge floated
 // over the lower step its body lay on, sank into a step behind it and lay in the air over a drop.
+// A body coming down flat and fast on a liquid skips off it once, as a stone does: below about
+// 18 degrees for a body about as dense as the liquid (the ricochet angle of Johnson and Reid, 18
+// over the root of the density ratio), going at least skipSpeed units a tic over the floor. It
+// splashes and hops on, slowed, before it comes down again and goes in.
+constexpr float skipSpeed=6,skipSlope=0.32f;   // tan 18 degrees
+constexpr int skipTics=4;                       // after a skip it doesn't count as down
 constexpr float floorCell=4,floorReach=160;   // the doll flies in the world: room for a throw
-constexpr float blastReach=224;                // and for a blast's (twice the cells to sample: why it's a switch)
+constexpr float blastReach=224;
+constexpr int regathersMost=4;                 // times a body's walls and floors are gathered again round it (regather)                // and for a blast's (twice the cells to sample: why it's a switch)
 constexpr float dropEdge=2;                    // how round a step's edge over a drop is (Ragdoll::ground)
 constexpr float wallSlide=0.5f;                // of a point's skid along a wall it touches, the share lost a substep (Ragdoll::rub)
 constexpr float faceDepth=6;                   // units under a floor cell's top past which a point is against its face (Ragdoll::ground)
 constexpr float floorStick=0.6f,floorSlide=0.5f;   // contact friction, static and sliding (Ragdoll::rub)
 struct FloorGrid { float x0=0,y0=0;int size=0;std::vector<const sector_t*> cells; };
+// -ragdollsmooth (the showcase's --smooth): the body posed every tic and blended between tics at the
+// frame rate, its camera turning in whole degrees, to show it is a simulation; the game steps both, on
+// purpose, so a ragdoll reads as one of Doom's own animations.
+static bool smoothDolls() {static int on=-1;if(on<0)on=M_CheckParm((char*)"-ragdollsmooth")!=0;return on!=0;}
 // A body's weight per point once it has touched a wall (Ragdoll::shareOf): head, neck, shoulders with
 // the arms, spine, hips, knees with the thighs, ankles with the shins and feet, shares of the whole.
 static const float weight[DOLL_POINTS]={0.07f,0.08f,0.10f,0.10f,0.15f,0.10f,0.10f,0.10f,0.10f,0.05f,0.05f};
@@ -172,8 +200,9 @@ struct Ragdoll {
     float ax[2]={1,0},ay[2]={0,1};     // the body's x and y in the world, fixed at the kill
     float ox=0,oy=0;                   // where it died: the doll falls in the world from there
     bool mirror=false,landed=false,resting=false,heavy=false;
-    DollPose p{},prev{},shown{};
-    int shownAt=0,lastPose=0,poseTics=5;   // a pose drawn at tic lastPose, held poseTics
+    DollPose p{},prev{};mutable DollPose shown{};
+    mutable int shownAt=0;int lastPose=0,poseTics=5;   // a pose drawn at tic lastPose, held poseTics
+    DollPose shownWas{},shownTic{};    // -ragdollsmooth: the last two tics' poses, the drawn one between them
     int lyingAt=-1;                        // the tic the torso came down
     V3 tipWay{0,1,0},toEye{0,-1,0};        // the hit's way over the floor and the eye's, in body space
     float centre[2]={},centreWas[2]={},centreShown[2]={};   // the body's middle over the floor: this tic, the last, the pose shown
@@ -183,13 +212,26 @@ struct Ragdoll {
     int slamAt=-1;float slamAge=-1;V3 slamWay{};   // a wall slam (Ragdoll::pin): its tic, age, the wall's way out
     float hitWall=0;V3 hitWay{};int hitPoint=-1;    // the hardest a torso point went into a wall this tic, and which
     bool splashed=false;float drop=0,smearing=0;    // the wall splash made; the spine's fall last tic; slid since a smear
+    float spineAt[2]={},glide[2]={};bool spineKnown=false;   // the spine in the world last tic, and its way over the floor then
+    int skipAt=-1;                                  // the tic it skipped off a liquid (skipSpeed)
     float hold[MUSCLES]={},over[MUSCLES]={},late=0;
     float spin=0;int way=0;
     V3 launchV{};float launchSpin=0;int launchAt=-1;   // a chest blast's launch (launch), at tic launchAt
+    V3 launchWay{};                    // which way it goes over when launchV has no way of its own (Phobos)
     float launchTwist=0;               // and its turn about the vertical (a pirouette), radians a tic
     bool swept=false;                  // legs swept by a heavy blast: the weight brings it down, no steering hold
     bool blasted=false;                // thrown by an explosion: flies, comes back off walls in the air, no slam
     float reach=floorReach;            // how far round the kill its walls and floors are known
+    bool rides=false;                  // Phobos: rides its corpse (follow), the walls kept in the world
+    float gravity=dollGravity;         // the pull this tic
+    float oxWas=0,oyWas=0,gz0=0,gzWas=0;   // Phobos: where the corpse was last tic; the feet's height at the kill
+    float gatherX=0,gatherY=0;         // Phobos: where its walls and floors were gathered round
+    int followedAt=-1;                 // Phobos: the tic it last followed its corpse
+    bool tumbling=false;               // Phobos: a living monster a draft tore off its feet (startTumble)
+    bool pinned=false;                 // and still in its boots: its ankles held where they stand,
+    V3 ankleAt[2]{};                   //   here, while the draft (draft, units a tic a tic, world) bends the
+    float draft[3]={};int calm=0;      //   top of it over; calm: tics the draft has been gone
+    int regathers=0;                   // times they were gathered again round where it flew (regather)
     float hipHold=0;                   // a swept body's hips held (spine to knee) while its knees are gone (tic)
     bool guided=false;Guide guide;     // a guided fall (above): its knobs, the ratchet's line,
     V3 yank{};float yaw=0,kicks[2]={},legLate=0;   // its turn, the knees' kicks and the late leg
@@ -205,9 +247,13 @@ struct Ragdoll {
     mutable int cardKey=0,cardBottom=0,cardLeft=0,cardRight=0,cardFirst=0;mutable uint64_t cardSignature=~0ull;   // the card's picture (ragdollCard)
     mutable float cardMiddle[2]={};                     // where the card stands, in the body's drawn space
     mutable int lastStep=-1;                            // the camera's 45-degree step last drawn
+#ifdef DOOM_DEVTOOLS
+    mutable float cardAzimuth=0;mutable int cardAngle=0,cardTilt=0;   // the eye's way and the camera's angle and tilt then (ragdollPeek)
+#endif
     // Once it lies still the body is baked into a plain corpse sprite: the last picture, the camera
     // angle and tilt it was seen from, shown the same from every angle (rotation 0), its 3D data freed.
     mutable bool baked=false;mutable int bakedAngle=0,bakedTilt=0;
+    mutable uint32_t cardWounds=0;                      // the holes the picture was drawn with (redrawn when they change)
 
     float rest(int a,int b) const {return length(body->rest[a]-body->rest[b]);}
     void push(int n,V3 v) {prev[n]=prev[n]-v*(1.0f/dollSubsteps);}   // add a velocity (units per tic)
@@ -233,18 +279,28 @@ struct Ragdoll {
         return cellFloor((int)std::floor(wx/floorCell),(int)std::floor(wy/floorCell));
     }
     float up(int n) const {return p[n].z-floorAt(p[n]);}   // how high a point stands over the floor under it
-    // Its walls and floors are known reach round where it died: near that edge it goes no
-    // further out (a throw that far would pass walls it doesn't know).
+    // Its walls and floors are known reach round a spot (where it died, then where it flew: see
+    // regather). Near that edge, gathered again round it regathersMost times: after that it goes no
+    // further out (a throw that far would pass walls it doesn't know). Stopped dead there in mid-air,
+    // a body thrown far by a blast dropped straight down (4 falls in 27).
+    V3 middleOf() const {V3 c{};for(int n=0;n<DOLL_POINTS;++n)c=c+p[n];return c*(1.0f/DOLL_POINTS);}
+    // How far its middle is from the middle of what it knows (units over the floor), and where that is (world).
+    float outFromKnown(float &wx,float &wy) const {
+        overGrid(middleOf(),wx,wy);
+        float out=std::hypot(wx-reach,wy-reach);
+        wx+=floors.x0;wy+=floors.y0;
+        return out;
+    }
     void keepNear() {
-        V3 c{};
-        for(int n=0;n<DOLL_POINTS;++n)c=c+p[n];
-        c=c*(1.0f/DOLL_POINTS);
-        float out=std::hypot(c.x,c.y);
+        float wx,wy,out=outFromKnown(wx,wy);
         if(out<reach-24)return;
-        V3 way{c.x/out,c.y/out,0},v{};
+        // The way out from the known middle, in body space (as wallsHere turns the walls).
+        float dx=wx-(floors.x0+reach),dy=wy-(floors.y0+reach),side=mirror?-1.0f:1.0f;
+        V3 way=unit(V3{side*(dx*ax[0]+dy*ax[1]),dx*ay[0]+dy*ay[1],0}),v{};
         for(int n=0;n<DOLL_POINTS;++n)v=v+(p[n]-prev[n]);
         float going=dot(v,way)/DOLL_POINTS;
         if(going>0)for(int n=0;n<DOLL_POINTS;++n)prev[n]=prev[n]+way*going;
+        if(going>0&&M_CheckParm((char*)"-ragdolllog"))fprintf(stderr,"ragdolledge %u tic %d out %.0f stopped %.2f up %.1f\n",(unsigned)((uintptr_t)this%100000),tics,out,going*dollSubsteps,middleOf().z);
     }
     // The sector of the floor cell under a body point (off the grid, the nearest edge cell's).
     const sector_t *sectorUnder(V3 q) const {
@@ -279,7 +335,18 @@ struct Ragdoll {
         for(int n=0;n<DOLL_POINTS;++n)c=c+p[n];
         c=c*(1.0f/DOLL_POINTS);
         V3 d=unit(V3{launchV.x,launchV.y,0});
+        if(length(d)<0.5f)d=launchWay;   // a throw the game carries (Phobos): only its way is left here
         for(int n=0;n<DOLL_POINTS;++n) {V3 r=p[n]-c;push(n,launchV+V3{d.x*r.z,d.y*r.z,-dot(r,d)}*launchSpin+V3{-r.y,r.x,0}*launchTwist);}
+    }
+    // Torn off its feet by a draft (draft: units a tic a tic, in the world): the pull on the top
+    // of it pitches it over head first the way the air goes, the harder the faster.
+    void pitchInto(const float draft[3]) {
+        float pull=std::hypot(std::hypot(draft[0],draft[1]),draft[2]),side=mirror?-1.0f:1.0f;
+        V3 way{side*(draft[0]*ax[0]+draft[1]*ax[1]),draft[0]*ay[0]+draft[1]*ay[1],0};
+        if(pull<=0||length(way)<1e-6f)return;
+        launchWay=unit(way);launchV={};
+        launchSpin=std::clamp(0.03f+0.25f*pull,0.03f,0.15f);
+        launchAt=tics;
     }
     V3 hips() const {return middle(p[P_HIP_L],p[P_HIP_R]);}
     V3 front() const {return unit(cross(p[P_SH_R]-p[P_SH_L],p[P_NECK]-hips()));}
@@ -515,7 +582,8 @@ struct Ragdoll {
             for(int n=0;n<DOLL_POINTS;++n)v[n]=v[n]*(p[n].z-floorAt(p[n])<radius[n]+1.5f?0.9f:0.985f);
             return;
         }
-        for(int n=0;n<DOLL_POINTS;++n) {V3 whole=vc+cross(spin,p[n]-c);v[n]=whole+(v[n]-whole)*0.985f;}
+        float flail=rides?phobosFlail:0.985f;
+        for(int n=0;n<DOLL_POINTS;++n) {V3 whole=vc+cross(spin,p[n]-c);v[n]=whole+(v[n]-whole)*flail;}
     }
     void tic(const float muscle[MUSCLES],const std::vector<Wall> &near,const DollPose *shape=nullptr,float k=0) {
         const float dt=1.0f/dollSubsteps;
@@ -526,7 +594,7 @@ struct Ragdoll {
             damp(v);
             if(slamAge>=0)pin(v);
             const DollPose begin=p;
-            for(int n=0;n<DOLL_POINTS;++n) {prev[n]=p[n];p[n]=p[n]+v[n]+V3{0,0,-dollGravity*dt*dt};}
+            for(int n=0;n<DOLL_POINTS;++n) {prev[n]=p[n];p[n]=p[n]+v[n]+V3{0,0,-gravity*dt*dt};}
             if(shape&&kSub>0)shapeMatch(*shape,kSub);
             std::fill(std::begin(pressed),std::end(pressed),0.0f);
             std::fill(std::begin(walled),std::end(walled),V3{});
@@ -613,7 +681,7 @@ struct Ragdoll {
         if(up(P_SPINE)<6||up(P_NECK)<5||up(P_HEAD)<radius[P_HEAD]+0.5f||(slamAt>=0&&seated()))landed=true;
         // Slammed into a wall: no more steering, ever (once the pin let go, the hold leaned the slumped
         // body back into the wall every tic until it sprang off it rolling, up to 4 units a tic).
-        if(landed||slamAt>=0)return;
+        if(landed||slamAt>=0||rides)return;   // on Phobos nothing steers a body: it goes as struck
         V3 mid=hips(),axis=unit(p[P_NECK]-mid);
         if(up(P_SPINE)>=7&&axis.z>0.5f&&!swept) {
             V3 lean=p[P_NECK]-mid,flat=unit(V3{lean.x,lean.y,0});
@@ -673,10 +741,27 @@ static std::unordered_map<const mobj_t*,Ragdoll> dolls;
 static void dropCard(const Ragdoll &doll);
 bool hasRagdoll(const mobj_t *thing) {return thing->health<=0&&dolls.count(thing);}
 bool ragdollSettled(const mobj_t *thing) {auto found=dolls.find(thing);return found==dolls.end()||found->second.resting;}
+int ragdollsMoving() {int n=0;for(const auto &doll:dolls)n+=!doll.second.resting;return n;}
 void forgetRagdoll(const mobj_t *thing) {
     auto found=dolls.find(thing);
     if(found==dolls.end())return;
+    // scp_7179_b is real
     dropCard(found->second);dolls.erase(found);
+}
+// Stepped with the game's wrap (carried.cpp): a doll's place in the world
+// moves with its corpse; its floors and walls are the ones built alike. Up
+// or down a storey, one still falling loses the floors it knows, and lies
+// as the game's own drawing.
+void ragdollsCarried(float dx,float dy,float dz) {
+    for(auto it=dolls.begin();it!=dolls.end();) {
+        Ragdoll &doll=it->second;
+        if(dz!=0&&!doll.resting) {dropCard(doll);it=dolls.erase(it);continue;}
+        doll.ox+=dx;doll.oy+=dy;doll.oxWas+=dx;doll.oyWas+=dy;doll.gatherX+=dx;doll.gatherY+=dy;
+        doll.floors.x0+=dx;doll.floors.y0+=dy;doll.spineAt[0]+=dx;doll.spineAt[1]+=dy;
+        doll.gz+=dz;doll.gzWas+=dz;doll.gz0+=dz;doll.restFloor+=dz;
+        for(Wall &w:doll.walls) {w.ax+=dx;w.ay+=dy;w.bx+=dx;w.by+=dy;w.top+=dz;}
+        ++it;
+    }
 }
 void ragdollsShutdown() {
     for(auto &entry:dolls)dropCard(entry.second);
@@ -708,9 +793,8 @@ void prepareRagdolls() {
 // Walls and steps within reach of the body: one-sided lines, and two-sided
 // ones whose far floor stands over 16 units above the body's (a step it
 // can't lie across) or whose opening is too low to lie through.
-static std::vector<Wall> wallsNear(const mobj_t &thing,float reach) {
+static std::vector<Wall> wallsNear(float x,float y,float floor,float reach) {
     std::vector<Wall> out;
-    float x=units(thing.x),y=units(thing.y),floor=units(thing.floorz);
     for(int i=0;i<numlines;++i) {
         const line_t &line=lines[i];
         if(units(line.bbox[BOXLEFT])>x+reach||units(line.bbox[BOXRIGHT])<x-reach||
@@ -737,12 +821,11 @@ static bool crosses(float ax,float ay,float bx,float by,const Wall &w) {
 // behind a solid wall (one-sided, or an opening too low to lie through) from the body samples whatever
 // room is on the far side, another floor: it takes the body's own sector instead, or a ledge or pit
 // up to a cell wide hugged the wall and snagged or swallowed limbs falling against it.
-static FloorGrid floorsNear(const mobj_t &thing,const std::vector<Wall> &walls,float reach) {
+static FloorGrid floorsNear(float tx,float ty,const std::vector<Wall> &walls,float reach) {
     FloorGrid g;
-    float tx=units(thing.x),ty=units(thing.y);
     g.size=(int)(2*reach/floorCell);g.x0=tx-reach;g.y0=ty-reach;
     g.cells.resize((size_t)g.size*g.size);
-    const sector_t *own=R_PointInSubsector(thing.x,thing.y)->sector;
+    const sector_t *own=R_PointInSubsector((fixed_t)(tx*FRACUNIT),(fixed_t)(ty*FRACUNIT))->sector;
     std::vector<const Wall*> solid;
     for(const Wall &w:walls)if(w.top>=1e9f)solid.push_back(&w);
     for(int j=0;j<g.size;++j)for(int i=0;i<g.size;++i) {
@@ -778,6 +861,17 @@ static std::vector<Wall> wallsHere(const Ragdoll &doll) {
     return out;
 }
 
+// Its walls and floors gathered again round (wx, wy), where it has flown, so it flies on. The walls' tops
+// stay measured from the floor it died on, as all its heights are.
+static void regather(Ragdoll &doll,float wx,float wy) {
+    doll.walls=wallsNear(wx,wy,doll.gz,doll.reach);
+    doll.floors=floorsNear(wx,wy,doll.walls,doll.reach);
+    doll.gx=doll.ox-doll.floors.x0;doll.gy=doll.oy-doll.floors.y0;
+    doll.nearWalls=wallsHere(doll);doll.walls.clear();doll.walls.shrink_to_fit();
+    ++doll.regathers;
+    if(M_CheckParm((char*)"-ragdolllog"))fprintf(stderr,"ragdollregather %u tic %d\n",(unsigned)((uintptr_t)&doll%100000),doll.tics);
+}
+
 // The fall the hit makes (tests/death_ragdoll.py FALLS): which points it strikes, the push
 // (units per tic: across the body, away from the shooter, up) and each muscle group's hold
 // and let-go (tics).
@@ -786,6 +880,8 @@ bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,f
     const bool punch=settings.deathBlast&&!blast;    // F4 Flying enemies: shots punch harder, blasts fly
     blast=blast&&settings.deathBlast;
     if(punch)speed*=hitPunch;
+    const bool rides=Game_Phobos()!=0;
+    if(rides)speed*=phobosShove;
     const mobjinfo_t &info=*thing.info;
     const Relief *body=reliefOfState(info.painstate);
     if(!body)return false;
@@ -810,6 +906,7 @@ bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,f
     float facing=(float)(thing.angle*(2*doomPi/4294967296.0)),fx=-std::cos(facing),fy=-std::sin(facing);
     doll.ax[0]=fy;doll.ax[1]=-fx;doll.ay[0]=fx;doll.ay[1]=fy;
     doll.ox=units(thing.x);doll.oy=units(thing.y);
+    doll.rides=rides;if(rides) {doll.gravity=Game_PhobosGravity();doll.reach=phobosReach;}
     // Two of a kind dropped in the same tic never lie alike: the later one mirrored the other way.
     doll.mirror=rnd()<0.5f;
     {
@@ -883,7 +980,7 @@ bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,f
         doll.launchV=V3{tx+2*sideways,ty,0}*std::min(hard,1.0f)+V3{0,0,2.0f*most};doll.launchSpin=0.05f*std::min(hard,1.0f);doll.launchAt=0;
     }
     doll.blasted=blast;
-    if(blast)doll.reach=blastReach;
+    if(blast&&!rides)doll.reach=blastReach;   // (Phobos keeps its own, wider)
     if(blast) {doll.launchV=V3{tx+2*sideways,ty,0}*blastThrow+V3{0,0,blastLift};doll.launchSpin=blastSpin;doll.launchAt=0;}
     doll.tipWay=unit(V3{tx,ty,0});
     if(kind==FALL_SWEEP) {
@@ -910,7 +1007,7 @@ bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,f
         float yaw=slant/sweepTurnTics;
         for(int n=0;n<DOLL_POINTS;++n) {V3 r=doll.p[n]-c;doll.push(n,V3{-r.y,r.x,0}*yaw);}
         doll.noDrift();
-    } else if(settings.deathGuided&&body->guided&&kind==FALL_CHEST&&ty>0.7f&&chance<0.67f&&!blast) {
+    } else if(settings.deathGuided&&!rides&&body->guided&&kind==FALL_CHEST&&ty>0.7f&&chance<0.67f&&!blast) {
         doll.guided=true;
         if(doll.guide.flinch&&doll.launchAt>=0)doll.launchAt=flinchTics;
         doll.yank=V3{tx+sideways,ty,0.15f}*(doll.guide.ratchet*std::clamp(speed/4,0.7f,1.8f));
@@ -932,9 +1029,19 @@ bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,f
         // fall instead, the turn came late and eased, a dive rather than a blow).
         doll.tip(kind==FALL_CHEST?0.15f*blow:0.3f*blow);
     }
+    // On Phobos the blow's throw is the game's (its real momentum on the corpse) and a launch keeps only
+    // some of its turn: what is left of the pushes turns and folds the body, carrying it nowhere.
+    if(rides) {
+        doll.launchWay=unit(V3{doll.launchV.x,doll.launchV.y,0});
+        doll.launchV={};doll.launchSpin*=phobosSpin;doll.launchTwist*=phobosSpin;
+        V3 mean{};
+        for(int n=0;n<DOLL_POINTS;++n)mean=mean+(doll.p[n]-doll.prev[n]);
+        mean=mean*(1.0f/DOLL_POINTS);
+        for(int n=0;n<DOLL_POINTS;++n)doll.prev[n]=doll.prev[n]+mean;
+    }
     // The corpse's own slide at the kill is the doll's: it flies on in the world from where it died.
     // Carried by the thing it was braked by the floor's friction in mid-air and slid on after it landed.
-    {
+    if(!rides) {
         float mx=units(thing.momx),my=units(thing.momy),ms=std::hypot(mx,my);
         if(punch) {mx*=hitPunch;my*=hitPunch;ms*=hitPunch;}
         float most=blast?blastCarry:punch?punchCarry:carryMost;
@@ -946,11 +1053,13 @@ bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,f
         V3 carried=bodyWay(mx,my);
         for(int n=0;n<DOLL_POINTS;++n)doll.push(n,carried);
     }
-    doll.shown=doll.p;
-    doll.walls=wallsNear(thing,doll.reach);
-    doll.floors=floorsNear(thing,doll.walls,doll.reach);
+    doll.shown=doll.shownWas=doll.shownTic=doll.p;
+    doll.walls=wallsNear(units(thing.x),units(thing.y),units(thing.floorz),doll.reach);
+    doll.floors=floorsNear(units(thing.x),units(thing.y),doll.walls,doll.reach);
     doll.gx=doll.ox-doll.floors.x0;doll.gy=doll.oy-doll.floors.y0;doll.gz=units(thing.z);
-    doll.nearWalls=wallsHere(doll);doll.walls.clear();doll.walls.shrink_to_fit();
+    doll.nearWalls=wallsHere(doll);
+    doll.oxWas=doll.ox;doll.oyWas=doll.oy;doll.gz0=doll.gzWas=doll.gz;doll.gatherX=doll.ox;doll.gatherY=doll.oy;
+    if(!rides) {doll.walls.clear();doll.walls.shrink_to_fit();}
     for(int n=0;n<DOLL_POINTS;++n)doll.centre[0]+=doll.p[n].x/DOLL_POINTS,doll.centre[1]+=doll.p[n].y/DOLL_POINTS;
     std::copy(doll.centre,doll.centre+2,doll.centreWas);std::copy(doll.centre,doll.centre+2,doll.centreShown);
     forgetRagdoll(&thing);
@@ -958,13 +1067,99 @@ bool startRagdoll(const mobj_t &thing,float dx,float dy,float speed,float side,f
     return true;
 }
 
+// Phobos: the body goes where its corpse slides, rises and falls (the game's momentum carries it; its
+// own drift is taken out each tic), its walls and floors gathered again once it has slid off them.
+// Aloft, corpse and body fall together and the body feels no weight; on the floor, Phobos' pull.
+static void followCorpse(Ragdoll &doll,const mobj_t &thing) {
+    if(doll.followedAt==leveltime)return;
+    doll.followedAt=leveltime;
+    float x=units(thing.x),y=units(thing.y);
+    doll.oxWas=doll.ox;doll.oyWas=doll.oy;doll.gzWas=doll.gz;
+    doll.ox=x;doll.oy=y;doll.gz=units(thing.z);
+    doll.gravity=thing.z<=thing.floorz?Game_PhobosGravity():0;
+    if(doll.resting)return;
+    if(std::hypot(x-doll.gatherX,y-doll.gatherY)>phobosRegather) {
+        doll.walls=wallsNear(x,y,units(thing.floorz),doll.reach);doll.floors=floorsNear(x,y,doll.walls,doll.reach);
+        doll.gatherX=x;doll.gatherY=y;
+    }
+    doll.gx=x-doll.floors.x0;doll.gy=y-doll.floors.y0;
+    if(x!=doll.oxWas||y!=doll.oyWas)doll.nearWalls=wallsHere(doll);
+    if(doll.pinned)return;   // its feet hold it: the lean is all its own
+    doll.noDrift();
+    // Nor does it rise on its own: the corpse carries any lift. At Phobos' pull the
+    // solver's small nudges up off the floor never came back down, and bodies left
+    // lying drifted up to the ceiling.
+    V3 mean{};
+    for(int n=0;n<DOLL_POINTS;++n)mean=mean+(doll.p[n]-doll.prev[n]);
+    if(mean.z>0)for(int n=0;n<DOLL_POINTS;++n)doll.prev[n].z+=mean.z/DOLL_POINTS;
+}
+// Phobos: a living monster a draft tore off its feet goes limp and tumbles instead of flying
+// upright in its walking frames: a doll riding the thing (followCorpse) from its pain drawing,
+// turning over the way it was taken. Once its boots find a floor again the game stands it up
+// (its pain frame) and the doll is dropped (tumbleView).
+static bool startTumble(const mobj_t &thing,bool pinned,const float draft[3]) {
+    const mobjinfo_t &info=*thing.info;
+    const Relief *body=reliefOfState(info.painstate);
+    if(!body)return false;
+    Ragdoll doll;
+    doll.body=body;doll.state=info.painstate;doll.start=leveltime;doll.tumbling=true;
+    doll.rides=true;doll.gravity=0;doll.poseTics=3;doll.reach=phobosReach;
+    uint32_t seed=hash32((uint32_t)(uintptr_t)&thing*2654435761u^(uint32_t)leveltime*40503u);
+    auto rnd=[&] {seed=hash32(seed+0x9e3779b9u);return (float)(seed>>8)/16777216.0f;};
+    float facing=(float)(thing.angle*(2*doomPi/4294967296.0)),fx=-std::cos(facing),fy=-std::sin(facing);
+    doll.ax[0]=fy;doll.ax[1]=-fx;doll.ay[0]=fx;doll.ay[1]=fy;
+    doll.ox=units(thing.x);doll.oy=units(thing.y);
+    doll.mirror=rnd()<0.5f;
+    doll.p=doll.prev=body->rest;
+    // Still in its boots: its feet stay where they stand and the draft bends it (ragdollView).
+    // Torn off them at once: over the way the draft takes it, a somersault and a little turn.
+    doll.pinned=pinned;doll.ankleAt[0]=doll.p[P_ANK_L];doll.ankleAt[1]=doll.p[P_ANK_R];
+    if(!pinned) {
+        doll.launchSpin=(tumbleSpin[0]+(tumbleSpin[1]-tumbleSpin[0])*rnd())*(rnd()<0.5f?-1.0f:1.0f);
+        doll.launchTwist=(rnd()-0.5f)*0.04f;doll.launchAt=0;
+        doll.launchWay={0,1,0};
+        doll.pitchInto(draft);
+    }
+    doll.shown=doll.p;
+    doll.walls=wallsNear(units(thing.x),units(thing.y),units(thing.floorz),doll.reach);
+    doll.floors=floorsNear(units(thing.x),units(thing.y),doll.walls,doll.reach);
+    doll.gx=doll.ox-doll.floors.x0;doll.gy=doll.oy-doll.floors.y0;doll.gz=units(thing.z);
+    doll.nearWalls=wallsHere(doll);
+    doll.oxWas=doll.ox;doll.oyWas=doll.oy;doll.gz0=doll.gzWas=doll.gz;doll.gatherX=doll.ox;doll.gatherY=doll.oy;
+    for(int n=0;n<DOLL_POINTS;++n)doll.centre[0]+=doll.p[n].x/DOLL_POINTS,doll.centre[1]+=doll.p[n].y/DOLL_POINTS;
+    std::copy(doll.centre,doll.centre+2,doll.centreWas);std::copy(doll.centre,doll.centre+2,doll.centreShown);
+    forgetRagdoll(&thing);
+    dolls[&thing]=std::move(doll);
+    return true;
+}
+bool tumbleView(const mobj_t &thing,DeathView &view) {
+    auto found=dolls.find(&thing);
+    bool have=found!=dolls.end()&&found->second.tumbling;
+    float way[3]={},pull=thing.health>0?Game_Draft(&thing,way):0;
+    bool adrift=thing.health>0&&Game_Adrift(&thing),leaning=pull>=leanStart;
+    if(!adrift&&!leaning) {
+        // The draft gone with its boots still holding: it stands up again, a moment later.
+        if(have&&(!found->second.pinned||++found->second.calm>leanLinger||thing.health<=0)) {forgetRagdoll(&thing);return false;}
+        if(!have)return false;
+    }
+    float draft[3]={way[0]*pull,way[1]*pull,way[2]*pull};
+    if(!have) {
+        if(!startTumble(thing,!adrift,draft))return false;
+        found=dolls.find(&thing);
+    }
+    Ragdoll &doll=found->second;
+    if(adrift&&doll.pinned) {doll.pinned=false;doll.pitchInto(draft);}   // the boots gave: over it goes, head first
+    if(adrift||leaning)doll.calm=0;
+    std::copy(draft,draft+3,doll.draft);
+    return ragdollView(thing,view);
+}
 static float fade(float t,float hold,float over) {return t>hold?std::clamp(1-(t-hold)/over,0.0f,1.0f):1.0f;}
 bool ragdollView(const mobj_t &thing,DeathView &view) {
     auto found=dolls.find(&thing);
     if(found==dolls.end())return false;
     Ragdoll &doll=found->second;
     // Crushed to gibs, raised, or otherwise moved on: the game's own frames again.
-    if(thing.health>0||std::find(doll.steps.begin(),doll.steps.end(),(int)(thing.state-states))==doll.steps.end())return false;
+    if(!doll.tumbling&&(thing.health>0||std::find(doll.steps.begin(),doll.steps.end(),(int)(thing.state-states))==doll.steps.end()))return false;
     // The fall runs in game tics, in the world from where it died. A pose is drawn every earlyPose
     // tics through the hit (at the death frames' pace the recoil fell between the first two poses),
     // then as often as the monster's own death frames change (the zombieman's every 5 tics, the
@@ -984,6 +1179,16 @@ bool ragdollView(const mobj_t &thing,DeathView &view) {
             muscle[M_LEGS]=0;muscle[M_NECK]=0;
             muscle[M_TRUNK]=doll.hipHold=doll.lowAt<0?1.0f:std::clamp(1-(t-doll.lowAt)/3,0.0f,1.0f);
         }
+        else if(doll.tumbling) {
+            for(float &m:muscle)m=doll.pinned?leanTone:tumbleTone;
+            // The draft on the top of it, in body space, the feet holding.
+            float dx=doll.draft[0],dy=doll.draft[1],dz=doll.draft[2],pull=std::hypot(std::hypot(dx,dy),dz);
+            if(doll.pinned&&pull>0) {
+                float side=doll.mirror?-1.0f:1.0f,a=std::min(pull*leanGain,leanMost)/pull;
+                V3 way{side*(dx*doll.ax[0]+dy*doll.ax[1])*a,(dx*doll.ay[0]+dy*doll.ay[1])*a,dz*a};
+                for(int n=0;n<DOLL_POINTS;++n)if(leanShare[n]>0)doll.push(n,way*leanShare[n]);
+            }
+        }
         else for(int g=0;g<MUSCLES;++g)muscle[g]=fade(t,doll.hold[g]+(g==M_LEGS?doll.late:0),doll.over[g]);
         // Held until its hips reach the floor (let go by the clock, half slumped, the legs folded under
         // the pinned torso sprang it off the wall at 6 units a tic), slamTics at most.
@@ -992,11 +1197,15 @@ bool ragdollView(const mobj_t &thing,DeathView &view) {
             muscle[M_LEGS]=0;muscle[M_TRUNK]=std::min(muscle[M_TRUNK],0.5f);
             k=0;
         }
+        if(doll.rides)followCorpse(doll,thing);
         doll.heavy=doll.lyingAt>=0&&doll.tics-doll.lyingAt>=lyingGrace;
         doll.hitWall=0;doll.hitPoint=-1;doll.wallTouches=0;
         float was=0,spineWas=doll.p[P_SPINE].z;
         for(int n=0;n<DOLL_POINTS;++n)was+=doll.p[n].z;
         doll.tic(muscle,doll.nearWalls,doll.guided||k>0?&shape:nullptr,k);
+        if(doll.pinned)for(int s2=0;s2<2;++s2) {int n=s2?P_ANK_R:P_ANK_L;doll.p[n]=doll.prev[n]=doll.ankleAt[s2];}
+        // (A doll riding its corpse on Phobos gathers them again as the corpse goes, followCorpse.)
+        {float wx,wy;if(!doll.rides&&doll.regathers<regathersMost&&doll.outFromKnown(wx,wy)>=doll.reach-48)regather(doll,wx,wy);}
         doll.keepNear();
         bool before=doll.landed;
         if(doll.tics>=2)doll.steer();
@@ -1012,7 +1221,7 @@ bool ragdollView(const mobj_t &thing,DeathView &view) {
         doll.rise=rise;
         std::copy(doll.centre,doll.centre+2,doll.centreWas);
         doll.centre[0]=cx/DOLL_POINTS;doll.centre[1]=cy/DOLL_POINTS;
-        doll.still=doll.landed&&energy<0.002f?doll.still+1:0;
+        doll.still=doll.landed&&energy<(doll.rides?phobosQuiet:0.002f)?doll.still+1:0;
         bool landing=doll.landed&&!before,torso=false,slam=false;
         // A slam when the body hits a wall with its torso, hard, still up: not when it slumps into one.
         if(doll.slamAt<0&&!doll.landed&&!doll.blasted&&doll.hitWall*dollSubsteps>slamSpeed&&doll.up(P_SPINE)>14&&
@@ -1028,44 +1237,69 @@ bool ragdollView(const mobj_t &thing,DeathView &view) {
         auto worldWay=[&](V3 v,float &wx,float &wy){wx=doll.ax[0]*sideSign*v.x+doll.ay[0]*v.y;wy=doll.ax[1]*sideSign*v.x+doll.ay[1]*v.y;};
         float drop=std::max(0.0f,spineWas-doll.p[P_SPINE].z);
         float slid=std::hypot(doll.centre[0]-doll.centreWas[0],doll.centre[1]-doll.centreWas[1]);
-        if(doll.lyingAt<0&&doll.down()) {
-            doll.lyingAt=doll.tics;torso=true;
+        // The spine's way over the floor in the world, the faster of this tic's and the last (before
+        // the floor took any of it): which way a splash leans.
+        float glideX,glideY;
+        {
+            float sx,sy;world(doll.p[P_SPINE],sx,sy);
+            float vx=doll.spineKnown?sx-doll.spineAt[0]:0,vy=doll.spineKnown?sy-doll.spineAt[1]:0;
+            bool last=std::hypot(doll.glide[0],doll.glide[1])>std::hypot(vx,vy);
+            glideX=last?doll.glide[0]:vx;glideY=last?doll.glide[1]:vy;
+            doll.spineAt[0]=sx;doll.spineAt[1]=sy;doll.glide[0]=vx;doll.glide[1]=vy;doll.spineKnown=true;
+        }
+        if(doll.lyingAt<0&&doll.down()&&(doll.skipAt<0||doll.tics-doll.skipAt>=skipTics)) {
             // The torso coming down splashes the floor under it (the head's touch is not the landing),
             // as hard as it came down: its fall (this tic's or the last whole one) and some of its slide.
-            // In a liquid it plunges in instead, by its weight too (liquids.cpp); sprayLanding leaves liquids be.
-            float wx,wy,hit=std::hypot(std::max(drop,doll.drop),0.5f*slid);world(doll.p[P_SPINE],wx,wy);
-            bodySplash(wx,wy,hit,(float)thing.info->mass,units(thing.radius));
-            if(!(thing.flags&MF_NOBLOOD))sprayLanding(wx,wy,doll.gz+doll.floorAt(doll.p[P_SPINE]),hit);
+            // In a liquid it plunges in instead, by its weight too, leaning the way it went (liquids.cpp);
+            // sprayLanding leaves liquids be.
+            float wx,wy,fall=std::max(drop,doll.drop),hit=std::hypot(fall,0.5f*slid),glide=std::hypot(glideX,glideY);
+            world(doll.p[P_SPINE],wx,wy);
+            if(doll.skipAt<0&&glide>=skipSpeed&&fall<glide*skipSlope&&overLiquid(wx,wy)) {
+                doll.skipAt=doll.tics;
+                bodySplash(wx,wy,hit*0.7f,(float)thing.info->mass,units(thing.radius),glideX,glideY);
+                float hop=std::clamp(0.3f*glide,1.5f,3.5f);
+                for(int n=0;n<DOLL_POINTS;++n) {
+                    V3 v=doll.p[n]-doll.prev[n];
+                    v.x*=0.7f;v.y*=0.7f;v.z=std::max(v.z,0.0f)+hop/dollSubsteps;
+                    doll.prev[n]=doll.p[n]-v;
+                }
+            } else {
+                doll.lyingAt=doll.tics;torso=true;
+                bodySplash(wx,wy,hit,(float)thing.info->mass,units(thing.radius),glideX,glideY);
+                if(bleedsBlood(thing))sprayLanding(wx,wy,doll.gz+doll.floorAt(doll.p[P_SPINE]),hit,bloodTint(&thing));
+            }
         }
         doll.drop=drop;
         // A torso slamming into a wall splashes it where it hit, once (the corpse's own slam watch in
         // spray.cpp followed the thing, not the body).
-        if(!doll.splashed&&doll.hitPoint>=0&&doll.hitWall*dollSubsteps>slamSpeed&&!(thing.flags&MF_NOBLOOD)) {
+        if(!doll.splashed&&doll.hitPoint>=0&&doll.hitWall*dollSubsteps>slamSpeed&&bleedsBlood(thing)) {
             doll.splashed=true;
             float wx,wy,dx,dy;world(doll.p[doll.hitPoint],wx,wy);worldWay(doll.hitWay*-1,dx,dy);
-            sprayWallHit(wx,wy,doll.gz+doll.p[doll.hitPoint].z,dx,dy,doll.hitWall*dollSubsteps);
+            sprayWallHit(wx,wy,doll.gz+doll.p[doll.hitPoint].z,dx,dy,doll.hitWall*dollSubsteps,bloodTint(&thing));
         }
         // Down and sliding: a smear every so far behind its middle, thick end forward.
-        if(doll.lyingAt>=0&&slid>1.2f&&!(thing.flags&MF_NOBLOOD)) {
+        if(doll.lyingAt>=0&&slid>1.2f&&bleedsBlood(thing)) {
             float size=std::clamp(units(thing.radius)*0.6f,9.0f,15.0f);
             if((doll.smearing+=slid)>=size*1.4f) {
                 doll.smearing=0;
                 float wx,wy,dx,dy;world(doll.p[P_SPINE],wx,wy);
                 worldWay(V3{doll.centre[0]-doll.centreWas[0],doll.centre[1]-doll.centreWas[1],0}*(1/slid),dx,dy);
-                spraySmear(wx-dx*size*0.6f,wy-dy*size*0.6f,std::atan2(dy,dx)+doomPi,size);
+                spraySmear(wx-dx*size*0.6f,wy-dy*size*0.6f,std::atan2(dy,dx)+doomPi,size,bloodTint(&thing));
             }
         } else doll.smearing=0;
         // Still for 8 tics, or 40 after the torso came down if it no longer slides, 60 at the latest:
         // from then on a corpse sprite. (At 40 flat, 5 bodies in a review's 48 froze still sliding,
         // up to half a unit a tic.)
         int down=doll.lyingAt>=0?doll.tics-doll.lyingAt:-1;
-        const char *stop=doll.still>=8?"quiet":down>=40&&slid<0.2f?"deadline":down>=60?"late":doll.tics>=175?"cap":nullptr;
+        const char *stop=doll.tumbling?nullptr:doll.rides?(doll.still>=8?"quiet":down>=phobosDeadline&&slid<0.01f?"deadline":down>=phobosLate?"late":doll.tics>=phobosCap?"cap":nullptr)
+            :doll.still>=8?"quiet":down>=40&&slid<0.2f?"deadline":down>=60?"late":doll.tics>=175?"cap":nullptr;
         if(stop) {
             if(M_CheckParm((char*)"-ragdolllog"))fprintf(stderr,"ragdollrest %u tic %d down %d slide %.2f %s\n",(unsigned)((uintptr_t)&thing%100000),doll.tics,down,slid,stop);
             doll.resting=true;
             if((doll.restSector=doll.sectorUnder(doll.p[P_SPINE])))doll.restFloor=units(doll.restSector->floorheight);
             std::copy(doll.centre,doll.centre+2,doll.centreWas);
             doll.nearWalls.clear();doll.nearWalls.shrink_to_fit();doll.floors.cells.clear();doll.floors.cells.shrink_to_fit();
+            doll.walls.clear();doll.walls.shrink_to_fit();
         }
         if(M_CheckParm((char*)"-ragdolllog")) {
             // Test runs (ragdoll_test.cpp): the turn per tic about the vertical (yaw), along the body
@@ -1091,12 +1325,14 @@ bool ragdollView(const mobj_t &thing,DeathView &view) {
         }
         // In the air at most the zombieman's pace: at the imp's 8 tics a throw was one held pose sliding
         // through the air, a statue, then lying.
-        int every=doll.tics<=earlyTics?earlyPose:doll.landed?doll.poseTics:std::min(doll.poseTics,airPose);
+        int every=smoothDolls()?1:doll.tics<=earlyTics?earlyPose:doll.landed?doll.poseTics:std::min(doll.poseTics,airPose);
+        if(smoothDolls()) {doll.shownWas=doll.shownTic;doll.shownTic=doll.p;}
         if(doll.tics==1||doll.tics-doll.lastPose>=every||top||landing||torso||slam||doll.resting) {
             doll.shown=doll.p;++doll.shownAt;doll.lastPose=doll.tics;
             std::copy(doll.centre,doll.centre+2,doll.centreShown);
         }
     }
+    if(doll.rides&&doll.resting)followCorpse(doll,thing);
     view.sprite=states[doll.state].sprite;view.frame=states[doll.state].frame;view.mirror=doll.mirror;
     view.facing=thing.angle;view.bend=0;view.settle=0;view.fall=FallPose{};view.fall.active=true;
     view.ragdoll=&doll;
@@ -1147,6 +1383,13 @@ static void dollPlace(const Ragdoll &doll,float fraction,float &x,float &y,float
     float side=doll.mirror?-1.0f:1.0f;
     float mx=doll.centreWas[0]+(doll.centre[0]-doll.centreWas[0])*fraction-doll.centreShown[0];
     float my=doll.centreWas[1]+(doll.centre[1]-doll.centreWas[1])*fraction-doll.centreShown[1];
+    if(smoothDolls()&&!doll.resting)mx=my=0;   // the pose drawn is blended to the same moment: it has moved with it
+    if(doll.rides) {         // with its corpse, between the last two tics
+        x=doll.oxWas+(doll.ox-doll.oxWas)*fraction+doll.ax[0]*side*mx+doll.ay[0]*my;
+        y=doll.oyWas+(doll.oy-doll.oyWas)*fraction+doll.ax[1]*side*mx+doll.ay[1]*my;
+        feet=doll.gzWas+(doll.gz-doll.gzWas)*fraction;
+        return;
+    }
     x=doll.ox+doll.ax[0]*side*mx+doll.ay[0]*my;y=doll.oy+doll.ax[1]*side*mx+doll.ay[1]*my;
     feet=doll.gz+(doll.restSector?units(doll.restSector->floorheight)-doll.restFloor:0);
 }
@@ -1155,12 +1398,16 @@ bool ragdollWhere(const Ragdoll &doll,float fraction,float &x,float &y,float &z)
     x+=doll.ax[0]*doll.cardMiddle[0]+doll.ay[0]*doll.cardMiddle[1];y+=doll.ax[1]*doll.cardMiddle[0]+doll.ay[1]*doll.cardMiddle[1];
     return doll.landed;
 }
-bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,const std::vector<byte> *holes,RagdollCard &card) {
+bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,const std::vector<byte> *holes,RagdollCard &card,int tint) {
     const Relief &body=*doll.body;
     if(body.cardSize<=0)return false;
     int size=body.cardSize;
     // Drawn space: the body's own, mirrored when it is drawn mirrored (the world is x + ax*m.x + ay*m.y).
     float side=doll.mirror?-1.0f:1.0f;
+    if(smoothDolls()&&!doll.baked&&!doll.resting) {   // between the last two tics' poses, a new picture each frame
+        for(int n=0;n<DOLL_POINTS;++n)doll.shown[n]=doll.shownWas[n]+(doll.shownTic[n]-doll.shownWas[n])*fraction;
+        ++doll.shownAt;
+    }
     float x,y,feet;dollPlace(doll,fraction,x,y,feet);feet-=sink;
     V3 upright=unit(doll.shown[P_NECK]-middle(doll.shown[P_HIP_L],doll.shown[P_HIP_R]));
     float lying=std::clamp(1-upright.z,0.0f,1.0f);
@@ -1178,7 +1425,11 @@ bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,
         card.top=feet+lowest+doll.cardBottom+1-cardSink*lying;
         return true;
     };
-    if(doll.baked&&doll.cardKey&&found!=images.end())return place();   // a corpse sprite now: the same from every angle
+    uint32_t wounds=0;
+    if(holes)for(size_t i=0;i<holes->size();++i)wounds=wounds*31+(*holes)[i];
+    // A corpse sprite now: the same from every angle, drawn again only when its holes change
+    // (shot, or eaten away by nukage rain, craters.cpp).
+    if(doll.baked&&doll.cardKey&&found!=images.end()&&wounds==doll.cardWounds)return place();
     const std::vector<V3> &posed=posedCorners(doll);
     if(posed.empty())return false;
     // The camera aims at the body's middle, in height too: aimed at its feet, the top of a body
@@ -1198,7 +1449,7 @@ bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,
     // line between them looked like the body turning.
     if(doll.lastStep>=0&&std::abs(std::remainder(azimuth-doll.lastStep*doomPi/4,2*doomPi))<doomPi/8+doomPi/18)step=doll.lastStep;
     doll.lastStep=step;
-    int angle=doll.baked?doll.bakedAngle:step*45;   // whole degrees
+    int angle=doll.baked?doll.bakedAngle:smoothDolls()?(int)std::lround(azimuth*180/doomPi):step*45;   // whole degrees
     float a=angle*doomPi/180;
     V3 along=doll.shown[P_HEAD]-middle(doll.shown[P_ANK_L],doll.shown[P_ANK_R]);
     float lx=side*along.x,ly=along.y;
@@ -1209,11 +1460,13 @@ bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,
     // the floor.
     float cx=x+doll.ax[0]*o.x+doll.ay[0]*o.y,cy=y+doll.ax[1]*o.x+doll.ay[1]*o.y;
     float looks=std::atan2(eye[2]-feet,std::max(std::hypot(eye[0]-cx,eye[1]-cy),1.0f))*180/doomPi;
-    int tilt=doll.baked?doll.bakedTilt:(int)std::lround(std::clamp(looks,0.0f,tiltMost)*lying/5);   // pitch in 5-degree steps
-    float pitch=tilt*5*doomPi/180;
+    int tiltStep=smoothDolls()?1:5;
+    int tilt=doll.baked?doll.bakedTilt:(int)std::lround(std::clamp(looks,0.0f,tiltMost)*lying/tiltStep);   // pitch in 5-degree steps
+    float pitch=tilt*tiltStep*doomPi/180;
+#ifdef DOOM_DEVTOOLS
+    doll.cardAzimuth=azimuth;doll.cardAngle=angle;doll.cardTilt=tilt*tiltStep;
+#endif
     V3 fh{std::sin(a),std::cos(a),0},f{fh.x*std::cos(pitch),fh.y*std::cos(pitch),-std::sin(pitch)},r{fh.y,-fh.x,0},u=cross(r,f);
-    uint32_t wounds=0;
-    if(holes)for(size_t i=0;i<holes->size();++i)wounds=wounds*31+(*holes)[i];
     uint64_t signature=((uint64_t)(uint32_t)doll.shownAt<<32)^((uint64_t)angle<<20)^((uint64_t)tilt<<14)^((uint64_t)doll.mirror<<8)^((uint64_t)wounds*0x9e3779b97f4a7c15ull);
     if((!doll.cardKey||found==images.end()||signature!=doll.cardSignature)&&M_CheckParm((char*)"-ragdolllog")) {
         // Test runs: each new picture's camera angle and the body's own heading in it (degrees).
@@ -1243,7 +1496,7 @@ bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,
             // three monsters, five shots, front and back), at the chest and hips most.
             bool away=dot(cross(q[3]-q[1],q[2]-q[0])*side,f)>=0;
             byte colour=face.kind==FACE_BACK?body.backColour[texel]:body.colour[texel];
-            if(wound>=2&&face.kind==FACE_FRONT)colour=rims[std::min(3,wound-2)];
+            if(wound>=2&&face.kind==FACE_FRONT)colour=bloodRemap(rims[std::min(3,wound-2)],tint);
             int level=std::clamp((int)std::lround((1-face.dim)*24)+(away?6:0),0,31);
             colour=colormap[level*256+colour];
             float px[4],py[4],pd[4];
@@ -1281,7 +1534,9 @@ bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,
             gpuUpdateTexture(found->second.texture,GpuFormat::RGBA8,{{0,0,size,size}},packed.data(),size*4);
             found->second.pixels=std::move(pixels);
         }
-        doll.cardSignature=signature;
+        doll.cardSignature=signature;doll.cardWounds=wounds;
+        // A baked corpse drawn again for its holes: its posed body freed again.
+        if(doll.baked) {doll.posed.clear();doll.posed.shrink_to_fit();doll.posedAt=-1;}
     }
     doll.cardMiddle[0]=o.x;doll.cardMiddle[1]=o.y;
     if(doll.resting&&!doll.baked&&doll.cardSignature==signature) {
@@ -1291,4 +1546,35 @@ bool ragdollCard(const Ragdoll &doll,float fraction,float sink,const float *eye,
     }
     return place();
 }
+
+#ifdef DOOM_DEVTOOLS
+std::vector<DollBody> ragdollBodies() {
+    std::vector<DollBody> out;
+    for(const auto &entry:dolls)out.push_back({entry.first,entry.second.start});
+    std::sort(out.begin(),out.end(),[](const DollBody &a,const DollBody &b){return a.start!=b.start?a.start<b.start:a.thing<b.thing;});
+    return out;
+}
+bool ragdollPeek(const mobj_t *thing,float fraction,DollPeek &out) {
+    auto found=dolls.find(thing);
+    if(found==dolls.end()||!found->second.body)return false;
+    const Ragdoll &doll=found->second;
+    out.body=doll.body;out.posed=&posedCorners(doll);
+    out.live=doll.p;out.shown=doll.shown;
+    out.shift={doll.centreWas[0]+(doll.centre[0]-doll.centreWas[0])*fraction-doll.centreShown[0],
+               doll.centreWas[1]+(doll.centre[1]-doll.centreWas[1])*fraction-doll.centreShown[1],0};
+    if(smoothDolls()&&!doll.resting)out.shift={};   // as dollPlace
+    out.mirror=doll.mirror;out.landed=doll.landed;out.resting=doll.resting;out.baked=doll.baked;out.smooth=smoothDolls();
+    out.tics=doll.tics;out.shownAt=doll.shownAt;out.lastPose=doll.lastPose;
+    out.every=smoothDolls()?1:doll.tics<=earlyTics?earlyPose:doll.landed?doll.poseTics:std::min(doll.poseTics,airPose);
+    out.cardKey=doll.cardKey;out.azimuth=doll.cardAzimuth;out.angle=doll.cardAngle;out.tilt=doll.cardTilt;
+    out.walls.clear();
+    for(const Wall &w:doll.nearWalls)out.walls.push_back({w.ax,w.ay,w.bx,w.by,w.top});
+    V3 mid=doll.middleOf();
+    int half=DollPeek::floorSide/2;
+    out.floorX=(std::floor(mid.x/out.floorStep)-half)*out.floorStep;out.floorY=(std::floor(mid.y/out.floorStep)-half)*out.floorStep;
+    for(int j=0;j<DollPeek::floorSide;++j)for(int i=0;i<DollPeek::floorSide;++i)
+        out.floor[j][i]=doll.floorAt(V3{out.floorX+i*out.floorStep,out.floorY+j*out.floorStep,0});
+    return true;
+}
+#endif
 }

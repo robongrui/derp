@@ -63,12 +63,17 @@ layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // over its whole animation; cycleMean.a is the contrast it keeps far away,
 // 0 for everything that is not a liquid (surfaceBinding in scene3d/scene.cpp).
 // frameMean.a is 1 on ice floors (iceFlat): deep grooves, glassy shine;
-// worn plates add 16 to it (wornPlate in scene3d/scene.cpp).
+// worn plates add 16 to it (wornPlate in scene3d/scene.cpp), metal 32
+// (metalSurface).
 layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 frameMean; vec4 cycleMean; };
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
 #include "indexed.glsl"
 #include "lighting.glsl"
+#include "wind.glsl"
+#include "whiteout.glsl"
+#include "beam_air.glsl"
+#include "fog_bank.glsl"
 
 // The parts of the shading main() runs, by topic.
 #include "world/tiles.glsl"
@@ -79,8 +84,11 @@ layout(location=0) out vec4 outColor;
 #include "world/caustics.glsl"
 #include "world/shore.glsl"
 #include "world/wear.glsl"
+#include "world/water_ice.glsl"
+#include "world/settled.glsl"
 #include "world/weapon.glsl"
 #include "world/mirror.glsl"
+#include "world/fog_march.glsl"
 // The classic flashlight's light, gathered apart from pulse (classicBeam).
 vec3 beamLight=vec3(0);
 // What dynamic lights add to walls and flats on top of the static light, for
@@ -91,6 +99,10 @@ vec3 addedLight=vec3(0);
 vec3 lampLight=vec3(0);
 // A worn plate's grime at this texel (plateGrime), -1 on everything else.
 float plateWear=-1.0;
+// How much snow lies on this texel (world/wear.glsl): it smooths the bump and takes the gloss.
+float snowWear=0.0;
+// Water frozen in the cold here (world/water_ice.glsl's band, -1 none).
+float coldIce=-1.0;
 #include "world/sprite_light.glsl"
 #include "world/surface_light.glsl"
 void main() {
@@ -148,7 +160,7 @@ void main() {
         screenNormal=normalize(normal+lean.x*tangent+lean.y*bitangent);
         glassy=true;
     }
-    // FEATURE_LIVE_READOUTS: LED readouts change their cells (readoutCell);
+    // FEATURE_LIVE_READOUTS: LED readouts switch their lamps (readoutCell);
     // a shot-out panel's stay dark and still.
     if(!sprite&&!blood&&!glassy&&!dead&&(bakeFlags&FEATURE_LIVE_READOUTS)!=0u&&c.effects.z==0.0)
         uv=readoutCell(uv,vStatic);
@@ -169,6 +181,23 @@ void main() {
         color.rgb=max(cycleMean.rgb+(color.rgb-frameMean.rgb)*detail,vec3(0))*poolTone(vWorld.xy);
     }
     if(color.a<0.45) discard;
+    // Phobos (scene3d/decompression.cpp poolIce): a pool's ice sheet, vTint how far it has
+    // formed, the slime's glow left and how grey it has gone. It freezes in patches, whole
+    // texels, the liquid showing through the gaps until it closes.
+    bool iceSheet=!sprite&&!blood&&vTint.r>0.0&&normal.z>0.5;
+    // Water frozen in the cold (scene3d/water_ice.cpp, vTint.r 2): the same sheet laid over
+    // it, cut texel by texel into floes, thin ice and the white sheet (world/water_ice.glsl).
+    if(iceSheet&&vTint.r>1.5) {
+        coldIce=waterIceBand(floor(vWorld.xy)+0.5);
+        if(coldIce<0.0) discard;
+    }
+    else if(iceSheet&&vTint.r<1.0) {
+        vec2 t=floor(vWorld.xy)+0.5;
+        // Noise piles up round its middle; stretched out, the sheet closes evenly over its time
+        // instead of mostly at once.
+        float when=smoothstep(0.22,0.78,0.7*wearNoise(t,14.0,0x7a3c91d5u)+0.3*wearHash(ivec2(t),0x1d2e3f47u));
+        if(when>vTint.r) discard;
+    }
     // Blood the rain washes away goes texel by texel.
     float bloodStep=blood?floor(vTint.b*0.5+0.001):0.0,bloodPale=bloodStep*0.25,bloodWash=blood?max(vTint.b-bloodStep*2.0,0.0):0.0;
     if(bloodWash>0.0&&float(tileHash(ivec2(floor(vUV)),0x2f6b9d1eu)&255u)/255.0<bloodWash) discard;
@@ -184,9 +213,40 @@ void main() {
         vec3 paint=texelFetch(palette,ivec2(int(index),0),0).rgb;
         color.rgb=(vMode&MODE_WOUND_STAIN)!=0u?mix(color.rgb,paint,0.7):paint;
     }
+    // Phobos (MODE_FROST_SHIFT): rime on a monster left in vacuum, the moisture on it boiled
+    // off and frozen back on. Whole texels: the silhouette's edges first (normals facing
+    // aside), then mottled over the rest; thin, so the paint still shows through it.
+    // Under nukage rain (c.weatherTint) the same bits are its soak instead: a translucent
+    // darker green running down from the top in mottled texels.
+    uint frostBits=sprite&&(vMode&(MODE_SCREEN|MODE_SOFT|MODE_BLOOD))==0u?(vMode>>MODE_FROST_SHIFT)&255u:0u;
+    if(frostBits>0u&&c.weatherTint.w>0.0) {
+        float soak=float(frostBits)/255.0;
+        ivec2 texel=ivec2(floor(uv));
+        float speck=float(tileHash(texel,0x2c1b3c6du)&255u)/255.0;
+        float down=saturate(uv.y/max(float(textureSize(image,0).y),1.0));
+        vec3 wet=c.weatherTint.rgb*0.45*max(dot(color.rgb,vec3(0.3,0.59,0.11))*1.8,0.25);
+        float coat=down*0.65+speck*0.35<soak*1.2?0.5:0.0;
+        color.rgb=mix(color.rgb,wet,max(coat,0.18*soak));
+    }
+    else if(frostBits>0u) {
+        float frost=float(frostBits)/255.0;
+        ivec2 texel=ivec2(floor(uv));
+        float speck=float(tileHash(texel,0x6c8e9cf5u)&255u)/255.0;
+        float rim=0.5;
+        if((vMode&MODE_RELIT)!=0u) rim=saturate(length(texelFetch(image,clamp(texel,ivec2(0),textureSize(image,0)-1),0).ba*2.0-1.0));
+        vec3 rime=vec3(0.80,0.86,0.93)*(0.8+0.2*speck)*max(dot(color.rgb,vec3(0.3,0.59,0.11))*1.6,0.45);
+        float coat=speck*0.6+(1.0-rim)*0.4<frost?0.75:0.0;
+        color.rgb=mix(color.rgb,rime,max(coat,0.15*frost));
+    }
     // Rained on, blood pales: its red fades toward a dull grey of its own
     // brightness, never lighter (lighter reds would read pink).
     if(blood) color.rgb=mix(color.rgb,vec3(dot(color.rgb,vec3(0.299,0.587,0.114)))*vec3(1.0,0.92,0.86),bloodPale*0.6)*vTint.g;
+    // The sheet turning plain white ice as the glow dies.
+    // The cold's ice: thin ice dark and clear over the still water, slush darker, floes and the
+    // sheet a flat pale grey keeping only a trace of the water's pattern (by its texels'
+    // brightness the sheet still read as rippling water, only paler).
+    if(iceSheet&&coldIce>=0.0) color.rgb=mix(color.rgb*0.75,vec3(0.80,0.86,0.92)*(0.72+0.25*(dot(color.rgb,vec3(0.299,0.587,0.114))-0.3)),coldIce*0.9);
+    else if(iceSheet) color.rgb=mix(color.rgb,vec3(0.80,0.86,0.92)*(0.55+0.6*dot(color.rgb,vec3(0.299,0.587,0.114))),vTint.b*0.8);
     // The thick rim of the glass shades the picture's edges, in light steps.
     if(glassy) color.rgb*=round((1.0-0.5*smoothstep(0.7,1.0,max(abs(screen.x),abs(screen.y))))*16.0)/16.0;
     // A dead screen shows nothing but the dark tube behind the glass, and its
@@ -198,11 +258,11 @@ void main() {
     uint sector=mapped?(vMode>>MODE_SECTOR_SHIFT)-1u:0u;
     SectorLit lit=sectorLighting(normal,mapped,sector,bakeFlags);
     float light=lit.light;
-    // Weather and wear (world/wear.glsl): streaks and wet ground.
-    Wear wear=Wear(0.0,0.0,false,0.0,0.0);
-    if(mapped&&!blood&&!glassy&&cycleMean.a==0.0) wear=surfaceWear(vWorld,normal,sector,bakeFlags);
-    // Worn plates (frameMean.a 16 and up, wornPlate in scene3d/scene.cpp).
-    if(mapped&&!blood&&!glassy&&frameMean.a>=15.5) {wear.grime=plateGrime(vUV,vWorld,normal,sector,vStatic);plateWear=wear.grime;}
+    // Weather and wear (world/wear.glsl): streaks, wet ground and snow.
+    Wear wear=Wear(0.0,0.0,false,0.0,0.0,0.0,0.0,0.0,false,0.0,vec2(0.0));
+    if(mapped&&!blood&&!glassy&&cycleMean.a==0.0) {wear=surfaceWear(vWorld-vec3(0.0,0.0,vLift),normal,vUV.x,sector,bakeFlags);snowWear=wear.snow;}
+    // Worn plates (frameMean.a +16, wornPlate in scene3d/scene.cpp).
+    if(mapped&&!blood&&!glassy&&(uint(round(frameMean.a))&16u)!=0u) {wear.grime=plateGrime(vUV,vWorld-vec3(0.0,0.0,vLift),normal,sector,vStatic);plateWear=wear.grime;}
     // Grounding: things resting on the floor darken over their lowest 24
     // units in colormap-like 1/16 steps; vSun holds strength and height.
     float grounding=1.0;
@@ -226,6 +286,7 @@ void main() {
     if(mapped&&c.bake.x>0.0&&c.effects.z==0.0) {
         vec3 colored=lit.baked.rgb+lit.bounce*c.bake.y*c.bake.w;float peak=max(colored.r,max(colored.g,colored.b));
         if(peak>0.0) lampTint=mix(vec3(1),colored/peak,peak/(peak+lit.shown));
+        lampTint=settledLight(lampTint,snowWear);   // on snow its brightness only (world/wear.glsl)
     }
     vec3 illumination=vec3(light)*lampTint*mix(vec3(1),c.sun.rgb,lit.sunShare)*mix(vec3(1),c.fx.yzw,lit.skyShare),specular=vec3(0);
     if(c.effects.z==0.0) {
@@ -246,12 +307,14 @@ void main() {
             float edge=pow(1.0-saturate(dot(screenNormal,normalize(c.eye.xyz-vWorld))),3.0);
             specular+=vec3(round(edge*saturate(dot(illumination,vec3(0.299,0.587,0.114)))*0.45*16.0)/16.0);
         }
+        // Lying snow and sand glitter in the flashlight's beam (beam_air.glsl).
+        if(mapped&&snowWear>0.5&&c.beam.w>0.0&&(c.weather.w==WEATHER_SNOW||c.weather.w==WEATHER_SAND)) specular+=beamGlitter(vWorld,normal);
     }
     // FEATURE_GLOW_EDGES: walls at a glowing liquid's edge take its painted
     // strip (edgeStrip in world/shore.glsl), glowing where the strip does.
     float edgeGlow=0.0;
     if(mapped&&(bakeFlags&FEATURE_GLOW_EDGES)!=0u&&abs(normal.z)<=0.5) {
-        vec3 paint;float amount=edgeStrip(vWorld,normal,paint,edgeGlow);
+        vec3 paint;float amount=edgeStrip(vWorld-vec3(0.0,0.0,vLift),normal,vUV.x,paint,edgeGlow);
         color.rgb=mix(color.rgb,paint,amount);
     }
     float emission=0.0;
@@ -276,15 +339,23 @@ void main() {
         }
         // A glowing or fire-flickering sector's lamps fade with it (vLampTint alpha, lampGlow).
         emission*=unpackUnorm4x8(vLampTint).a;
+        if(iceSheet) emission*=vTint.g;   // a frozen pool's glow dying (Phobos)
         emission=max(emission,edgeGlow);
         illumination=max(illumination,vec3(emission));
     }
     // FEATURE_DAMP_SHORES: damp walls and banks above liquids (shoreWet), darker and
-    // a little stained by the liquid; glowing texels stay dry.
+    // a little stained by the liquid; glowing texels stay dry. Round a pool freezing
+    // over (Phobos) the same rim is frost instead: white, taking the texels as their
+    // glow dies.
     if(mapped&&(bakeFlags&FEATURE_DAMP_SHORES)!=0u&&normal.z>-0.5) {
-        vec3 stain;
-        float damp=shoreWet(vWorld,normal,sector,dot(color.rgb,vec3(0.299,0.587,0.114)),stain)*(1.0-emission);
-        if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
+        vec3 stain;vec2 rimIce;
+        // The texel's own color, not the filtered or mipped one, so the line keeps to whole texels.
+        float texelLuma=dot(surfaceLevel(image,floor(uv)+0.5,texelPixel,0).rgb,vec3(0.299,0.587,0.114));
+        vec3 uDir,vDir;textureFrame(normal,dp1,dp2,duv1,duv2,uDir,vDir);
+        float damp=shoreWet(vWorld-vec3(0.0,0.0,vLift),normal,vUV.x,normalize(uDir.xy+vec2(1e-6,0)),sector,texelLuma,stain,rimIce)*(1.0-emission);
+        if(damp>0.0&&rimIce.x>0.0)
+            color.rgb=mix(color.rgb,vec3(0.86,0.91,0.96)*max(dot(color.rgb,vec3(0.299,0.587,0.114))*1.4,0.6),damp*0.85);
+        else if(damp>0.0) color.rgb*=mix(vec3(1),vec3(0.55)*mix(vec3(1),stain,0.25),damp);
     }
     color.rgb=applyWear(color.rgb,wear,emission);
     vec3 albedo=color.rgb;
@@ -327,19 +398,90 @@ void main() {
     if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&(MODE_SCREEN|MODE_SOFT))==0u&&c.effects.z==0.0)
         color.rgb+=albedo*(1.0-emission)*caustics(vWorld,normal,0u,true)*2.5;
     if((vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
-    // Outdoor haze (c.haze, Game_Sun): surfaces under open sky fade toward
-    // the sky's horizon color with distance, so far walls meet the sky.
-    if(mapped&&c.haze.w>0.0&&(vMode&MODE_SCREEN)==0u&&sectorInfo[sector].w>0.0) {
-        float open=1.0-outdoorShape(sector).x;
-        color.rgb=mix(color.rgb,c.haze.rgb*c.fx.x,open*c.haze.w*0.6*(1.0-exp(-max(vDistance-256.0,0.0)/1400.0)));
+    // What hangs in the open air (a blizzard's whiteout, the outdoor haze, the
+    // pall sand and ash raise) fades a point by how far the view to it runs
+    // through the open air, not by where the point lies: eight points along
+    // the way look at the map's cells, and those out under the sky count. A
+    // window or doorway across a yard belongs to the room behind it and stood
+    // sharp in the storm seen from indoors, and sprites carry no sector at all.
+    // The same points gather the flashlight's beam in that air (beam_air.glsl),
+    // indoors as much as there is of the open air round the eye (c.climate.w).
+    float airOutside=0.0;   // the view's share through the open air, for the weather's ground fog (weatherAir)
+    if((vMode&MODE_SCREEN)==0u&&(c.climate.z>0.0||c.haze.w>0.0||c.beamLight.w>0.0)) {
+        // The open air: under the sky, or under a porch's roof (wear.glsl's sectorOpenAir).
+        float way=length(vWorld-c.eye.xyz);float outside=mapped&&(sectorInfo[sector].w>0.0||sectorOpenAir(sector))?1.0:0.0,lit=0.0;
+        uint yard=mapped&&sectorInfo[sector].w>0.0?sector:0xFFFFu;   // the sky the way ends in, for its enclosure
+        if(c.map.z>0.0) {
+            ivec2 size=textureSize(seams,0);
+            float open=0.0;
+            for(int i=0;i<8;++i) {
+                float t=(float(i)+0.5)/8.0;
+                vec2 at=mix(c.eye.xy,vWorld.xy,t);
+                uint own=uint(round(texelFetch(seams,clamp(ivec2(floor((at-c.map.xy)*c.map.z)),ivec2(0),size-1),0).x*65535.0));
+                bool air=own!=0xFFFFu&&(sectorInfo[own].w>0.0||sectorOpenAir(own));
+                if(air) {open+=1.0;if(yard==0xFFFFu&&sectorInfo[own].w>0.0)yard=own;}
+                if(c.beamLight.w>0.0) lit+=beamAir(mix(c.eye.xyz,vWorld,t))*(air?1.0:c.climate.w);
+            }
+            outside=open/8.0;
+        }
+        airOutside=outside;
+        // The whiteout (whiteout.glsl): indoors as much as there is round the eye (c.climate.w).
+        color.rgb=mix(color.rgb,c.haze.rgb*c.fx.x,whiteoutOver(way*(outside+(1.0-outside)*c.climate.w)));
+        // Outdoor haze (c.haze, Game_Sun): far walls meet the sky's horizon colour,
+        // less in an enclosed yard.
+        if(c.haze.w>0.0&&yard!=0xFFFFu) {
+            float open=1.0-outdoorShape(yard).x;
+            color.rgb=mix(color.rgb,c.haze.rgb*c.fx.x,open*c.haze.w*0.6*(1.0-exp(-max(vDistance*outside-256.0,0.0)/1400.0)));
+        }
+        color.rgb+=beamGlow(way,lit/8.0);   // the beam lighting the air in front (beam_air.glsl)
     }
     if((vMode&MODE_SCREEN)==0u) {
         vec4 fog=fogAlong(vWorld);
         color.rgb=color.rgb*fog.a+fog.rgb;
+        color.rgb+=(c.haze.rgb*c.fx.x-fogHaze(c.fx.yzw))*(1.0-fog.a)*weatherAir()*airOutside;   // the weather's air (lighting.glsl)
+        // The fog bank (fog_bank.glsl): the point's sector by the map's
+        // cells, so sprites and particles find theirs too, taken a cell and a
+        // half toward the eye so a wall finds the sector in front of it, not
+        // the one behind (a window's frame, a door). A sector whose floor lies
+        // above the point can't hold it (the wall under a sill): then the
+        // eye's own bank. What glows cuts through.
+        if(c.bank.w>0.0) {
+            vec2 toward=c.eye.xy-vWorld.xy,at=vWorld.xy+toward/max(length(toward),1.0)*1.5/max(c.map.z,1e-4);
+            ivec2 cell=clamp(ivec2(floor((at-c.map.xy)*c.map.z)),ivec2(0),textureSize(seams,0)-1);
+            uint own=uint(round(texelFetch(seams,cell,0).x*65535.0));
+            vec3 there=c.bank.xyz;
+            if(own!=0xFFFFu&&c.map.z>0.0&&vWorld.z-vLift>=sectorInfo[own].y-1.0) {
+                vec4 entry=sectorInfo[uint(c.bankColor.w)+own];
+                float stretches=floor(entry.y/2.0);
+                there=vec3(entry.x,entry.y-2.0*stretches,entry.z);
+                there=bankFilm(there,cell,sectorInfo[own].y);   // world/fog_march.glsl
+                if(sectorInfo[own].w>0.0) there.x+=bankWave(vWorld.xy,sectorOpen(own));   // out under the sky: the wind's swells (fog_bank.glsl)
+                // A draft's stream (dry ice) lying across the floor here: each
+                // stretch a ribbon, its edge ragged in noise drifting along it a
+                // step per tic, raising the bank's top where it is deeper.
+                float stream=0.0;
+                for(uint i=0u;i<uint(stretches);++i) {
+                    vec4 ab=sectorInfo[uint(c.bankColor.w)+uint(entry.w)+2u*i],wd=sectorInfo[uint(c.bankColor.w)+uint(entry.w)+2u*i+1u];
+                    vec2 d=ab.zw-ab.xy;float t=clamp(dot(vWorld.xy-ab.xy,d)/max(dot(d,d),1e-4),0.0,1.0);
+                    vec2 way=d/max(length(d),1e-3);
+                    float ragged=0.7+0.6*wearNoise(vWorld.xy-way*floor(c.fog.w*35.0)*0.4,20.0,0x7f4a7c15u);
+                    float off=length(vWorld.xy-ab.xy-d*t)/max(mix(wd.x,wd.y,t)*ragged,1.0);
+                    stream=max(stream,mix(wd.z,wd.w,t)*(1.0-smoothstep(0.5,1.0,off)));
+                }
+                // A stream is thicker than a layer: three times the bank there.
+                if(stream>0.0) {there.x=max(there.x,sectorInfo[own].y+stream);there.y=max(there.y,3.0*saturate(stream/3.0));}            }
+            vec4 bank=bankMarch(vWorld,there,emission);   // world/fog_march.glsl
+            color.rgb=color.rgb*bank.a+bank.rgb;
+        }
     }
     // Eye adaptation: a stepped exposure while the view settles to new light.
     if(c.effects.z==0.0) color.rgb*=c.fx.x;
     if(c.effects.z==32.0) color.rgb=1.0-color.rgb;
+    // A distance fog as in Turok (DERPINFO farfog): everything fades to one
+    // colour, which is also all there is behind it; past its far end nothing
+    // is drawn. After the exposure, so the fully fogged matches the clear.
+    if(c.farFog.w>0.0&&(vMode&MODE_SCREEN)==0u)
+        color.rgb=mix(color.rgb,c.farFog.rgb,saturate((length(vWorld-c.eye.xyz)-c.farFogRange.x)/max(c.farFogRange.y-c.farFogRange.x,1.0)));
     if((vMode&MODE_FUZZ)!=0u) {color.rgb*=0.3;color.a=0.65;}
     if(c.effects.y>0.0) {
         color.rgb*=0.88+0.12*sin(gl_FragCoord.y*3.14159265);
@@ -358,7 +500,9 @@ void main() {
         float n=c.projection.z,f=c.projection.w,z=max(n,vDistance-vSun.x);
         depth=f/(f-n)-n*f/((f-n)*z);
     }
-#if !defined(CUTOUT)&&!defined(COVERAGE)
+    // OVERLAY draws the weapon in the pass without a depth target, where Metal
+    // on Intel GPUs rejects a shader that writes depth.
+#if !defined(CUTOUT)&&!defined(COVERAGE)&&!defined(OVERLAY)
     gl_FragDepth=depth;
 #endif
 #else

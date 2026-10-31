@@ -14,7 +14,7 @@ namespace doom3d {
 struct SplashWatch { float z;bool missile,seen;int ripple;bool down;float x,y; };
 struct Ring { float x,y,born,speed,life,strength;int sector; };
 struct Spout { float x,y,born;int sector;uint32_t seed; };
-struct Plunge { float x,y,born,heft,radius;int sector;uint32_t seed; };
+struct Plunge { float x,y,born,heft,radius;int sector;uint32_t seed;std::vector<GlobFlight> globs; };
 static std::unordered_map<const mobj_t*,SplashWatch> splashWatch;
 static std::vector<Ring> rings;
 static std::vector<Spout> spouts;
@@ -25,14 +25,16 @@ static unsigned splashLevelSerial;
 constexpr float frameTics=4;
 // Water rings race out; thick liquids' rings spread slowly and not far.
 static void ripple(float x,float y,int sector,float size,bool shot=false) {
-    float now=leveltime/(float)TICRATE;
+    if(waterIceHolds(x,y))return;   // frozen water holds (water_ice.cpp)
+    float now=levelSeconds();
     bool thick=sectorMist[sector].thick;
     if(rings.size()>=24)rings.erase(rings.begin());
     rings.push_back({x,y,now,thick?10+size*0.2f:30+size*0.6f,thick?1.3f+size*0.015f:0.8f+size*0.01f,shot?1.0f:std::min(1.0f,size/40),sector});
 }
 // One spout per blast: pellets landing close together in the same tic share it.
 static void spout(float x,float y,int sector) {
-    float now=leveltime/(float)TICRATE;
+    if(waterIceHolds(x,y))return;
+    float now=levelSeconds();
     for(const Spout &s:spouts)if(s.born==now&&std::hypot(s.x-x,s.y-y)<32)return;
     if(spouts.size()>=16)spouts.erase(spouts.begin());
     spouts.push_back({x,y,now,sector,(uint32_t)leveltime*2654435761u^(uint32_t)(randomRange(0,1)*16777216)});
@@ -43,20 +45,61 @@ static void spout(float x,float y,int sector) {
 // zombieman falling hard about 1.5, a baron dropping in up to 3.5. Any body
 // going in throws some; a whole one is heavy, not a pebble (at a tenth of the
 // fall alone a ragdoll's torso threw a cute little splash).
-static void plunge(float x,float y,float z,int sector,float fall,float mass,float radius,bool ring=true) {
+//
+// The crown of globs is flung up and out from its edge; from nearer its middle
+// a few fatter ones shoot up twice as high and hardly out, a column of the
+// stuff. A harder fall and a heavier body throw more, higher and wider: a
+// baron's goes up most of a man's height. Thick liquids throw fewer, fatter
+// globs that hang longer. Going in at a slant ((vx,vy) units a tic), the
+// splash leans the way the body went, as a real one does (the curtain thrown
+// up off the far side of the hole is the taller, faster, wetter one): the
+// globs on that side fly out up to two and a half times as far and a little
+// higher, those behind it fall short, the shallower and faster the more, and
+// the hole is dragged along, so the crown's middle shifts that way. The
+// column is the jet off the collapsing hole and goes up whatever the slant.
+// Where each glob comes down is worked out once, here (landGlobs): back in the
+// liquid, on a floor round it or against a wall in the way.
+static void plunge(float x,float y,float z,int sector,float fall,float mass,float radius,float vx,float vy,bool ring=true) {
+    if(waterIceHolds(x,y))return;
     float heft=std::min(3.5f,std::clamp(0.5f+fall/8,0.5f,2.5f)*std::clamp(std::sqrt(mass/100),0.8f,2.2f));
     if(ring)ripple(x,y,sector,std::clamp(radius*2+heft*24,32.0f,110.0f));
-    float now=leveltime/(float)TICRATE;
+    float now=levelSeconds();
+    float speed=std::hypot(vx,vy),lean=speed>0.01f?speed/std::hypot(speed,fall)*std::clamp(speed/6,0.0f,1.0f):0;
+    float hx=speed>0.01f?vx/speed:0,hy=speed>0.01f?vy/speed:0;
+    Plunge p={x+hx*lean*radius*0.5f,y+hy*lean*radius*0.5f,now,heft,radius,sector,
+              (uint32_t)leveltime*2654435761u^(uint32_t)(randomRange(0,1)*16777216),{}};
+    bool thick=sectorMist[sector].thick;
+    float lift=std::sqrt(heft),gravity=thick?700:1225;
+    int crown=(int)std::round((thick?14:24)+(thick?10:20)*std::min(heft,3.0f));
+    int globs=crown+(int)std::round(6+4*std::min(heft,3.0f));
+    for(int i=0;i<globs;++i) {
+        auto random=[&](int k){return hashUnit(i,k,p.seed);};
+        bool column=i>=crown;
+        float angle=(i+random(0)*0.8f)*2*doomPi/(column?globs-crown:crown),dx=std::cos(angle),dy=std::sin(angle);
+        float start=column?radius*0.3f*random(1):radius*(0.5f+0.5f*random(1));
+        float high=(thick?30:44)*lift*(0.5f+0.5f*random(2))*(column?1.7f:1),out=(thick?26:40)*lift*(0.5f+0.5f*random(3))*(column?0.25f:1);
+        if(!column) {
+            float ahead=dx*hx+dy*hy;
+            out*=std::max(0.2f,1+1.5f*lean*ahead);high*=std::max(0.3f,1+0.4f*lean*ahead-0.3f*lean);
+        }
+        float delay=column?0.05f+random(4)*0.1f:random(4)*0.08f,up=std::sqrt(2*gravity*high);
+        float size=(thick?3+(random(5)<0.4f?1:0):(random(5)<0.3f?2:1))+(heft>1.5f?1:0)+(column?1:0);
+        p.globs.push_back({p.x+dx*start,p.y+dy*start,z,dx,dy,out,up,gravity,2*up/gravity,delay,size,std::min(2,(int)(random(6)*3)),column});
+    }
+    landGlobs(p.globs,p.x,p.y,sector,now);
     if(plunges.size()>=8)plunges.erase(plunges.begin());
-    plunges.push_back({x,y,now,heft,radius,sector,(uint32_t)leveltime*2654435761u^(uint32_t)(randomRange(0,1)*16777216)});
+    plunges.push_back(std::move(p));
     I_MadeSound(sectorMist[sector].thick?IMPACT_SPLASH_THICK:IMPACT_SPLASH_WATER,x,y,z);
 }
-bool bodySplash(float x,float y,float fall,float mass,float radius) {
-    if(!settings.splashes||levelSerial!=r_levelserial||splashLevelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return false;
+bool overLiquid(float x,float y) {
+    if(!settings.splashes||levelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return false;
     const sector_t *sector=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
-    int index=int(sector-sectors);
-    if(!sectorMist[index].liquid||sector->floorpic==skyflatnum)return false;
-    plunge(x,y,floorZ(sector),index,fall,mass,radius);
+    return sectorMist[sector-sectors].liquid&&sector->floorpic!=skyflatnum;
+}
+bool bodySplash(float x,float y,float fall,float mass,float radius,float vx,float vy) {
+    if(splashLevelSerial!=r_levelserial||!overLiquid(x,y))return false;
+    const sector_t *sector=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
+    plunge(x,y,floorZ(sector),int(sector-sectors),fall,mass,radius,vx,vy);
     return true;
 }
 // Free-aimed hitscan shots stopping on a floor or ceiling (R_PlaneImpact):
@@ -66,9 +109,20 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
     if(gamestate!=GS_LEVEL||levelSerial!=r_levelserial||sectorMist.size()!=(size_t)numsectors)return false;
     dropOldLevelImpacts();
     int index=int(sector-sectors);float x=units(fx),y=units(fy),z=units(fz),now=gameSeconds();
+    // Phobos: a pool iced over cracks where the shot lands and throws white chips; no splash.
+    if(!ceiling&&crackIce(index,x,y)) {
+        if(debris.size()>512)debris.erase(debris.begin(),debris.begin()+(debris.size()-512));
+        for(int i=0;i<6;++i) {
+            float angle=randomRange(0,2*doomPi),out=randomRange(20,70);
+            debris.push_back({x,y,z+1,std::cos(angle)*out,std::sin(angle)*out,randomRange(40,120),now,
+                randomRange(0.45f,0.8f),randomRange(1.0f,1.8f),{0.82f,0.88f,0.94f},lighting(sector)});
+        }
+        I_MadeSound(IMPACT_GLASS_TINKLE,x,y,z);
+        return true;
+    }
     if(!ceiling&&sectorMist[index].liquid) {
         if(!settings.splashes)return false;
-        float tic=leveltime/(float)TICRATE; // As splash() stamps its rings.
+        float tic=levelSeconds(); // As splash() stamps its rings.
         bool shared=std::any_of(rings.begin(),rings.end(),[&](const Ring &r){return r.born==tic&&std::hypot(r.x-x,r.y-y)<32;});
         if(!shared)ripple(x,y,index,16,true);
         spout(x,y,index);
@@ -86,6 +140,7 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
             randomRange(0.45f,0.8f),randomRange(1.2f,2.0f),texelColor(image),light});
     }
     shotFlat(index,ceiling,x,y,z);
+    if(!ceiling)disturbanceShot(x,y,z);   // a small kick in what lies there (disturbance_sources.cpp)
     return false;
 }
 void watchSplashes() {
@@ -93,7 +148,8 @@ void watchSplashes() {
     if(splashLevelSerial!=r_levelserial) {splashWatch.clear();rings.clear();spouts.clear();plunges.clear();splashLevelSerial=r_levelserial;}
     for(auto &entry:splashWatch)entry.second.seen=false;
     for(int i=0;i<numsectors;++i) {
-        if(!sectorMist[i].liquid||sectors[i].floorpic==skyflatnum)continue;
+        // (Icing over on Phobos: nothing rings it any more.)
+        if(!sectorMist[i].liquid||sectors[i].floorpic==skyflatnum||poolIce(i).ice>0)continue;
         float floor=units(sectors[i].floorheight);
         for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
             bool missile=thing->flags&MF_MISSILE;
@@ -116,7 +172,7 @@ void watchSplashes() {
                 // A monster or corpse dropping in hard plunges; a ragdoll's body
                 // is elsewhere and plunges where its torso comes down (ragdoll.cpp).
                 if(!thing->player&&!missile&&watch.z-z>5&&(thing->flags&(MF_COUNTKILL|MF_CORPSE))&&!hasRagdoll(thing))
-                    plunge(x,y,floor,i,watch.z-z,(float)thing->info->mass,size*0.5f,false);
+                    plunge(x,y,floor,i,watch.z-z,(float)thing->info->mass,size*0.5f,x-watch.x,y-watch.y,false);
                 watch.ripple=leveltime;
             } else if(surface&&!down&&std::hypot(x-watch.x,y-watch.y)>1&&leveltime-watch.ripple>=12) {
                 // Monsters step without momentum, so movement is the change
@@ -174,7 +230,8 @@ static void buildSpouts(const Uniforms &camera) {
     float now=gameSeconds();
     spouts.erase(std::remove_if(spouts.begin(),spouts.end(),[&](const Spout &s){
         return now<s.born-0.1f||(now-s.born)*TICRATE>(sectorMist[s.sector].thick?36:22);}),spouts.end());
-    float rx=camera.right[0],ry=camera.right[1],rl=std::hypot(rx,ry);
+    float rx,ry;cardAcross(camera,rx,ry);
+    float rl=std::hypot(rx,ry);
     if(rl<1e-3f){rx=1;ry=0;}else{rx/=rl;ry/=rl;}
     auto ease=[](float u){u=std::clamp(u,0.0f,1.0f);return 1-(1-u)*(1-u);};
     for(const Spout &s:spouts) {
@@ -239,16 +296,12 @@ static void buildSpouts(const Uniforms &camera) {
         }
     }
 }
-// Plunges: a body come down in a liquid throws it up round itself. The
-// surface heaves where it went in, and a crown of chunky globs is flung up
-// and out from its edge, arcs and drops back, each leaving a crest where it
-// falls in; from nearer its middle a few fatter ones shoot up twice as high
-// and hardly out, a column of the stuff. A harder fall and a heavier body
-// throw more, higher and wider: a baron's goes up most of a man's height.
-// Thick liquids throw fewer, fatter globs that hang longer; water throws a
-// spray of foam. Drawn like the spouts: rebuilt each frame
-// from the plunge's seed, stepped every two tics, colored from the liquid's
-// own to its brightest texel.
+// Plunges: a body come down in a liquid throws it up round itself (plunge).
+// The surface heaves where it went in, and its globs arc out (on its first
+// frames, while it is over, the cast-up ones crest bright as they fall back
+// in); those landing out of the liquid leave its splats there (puddles.cpp).
+// Water throws a spray of foam. Drawn like the spouts: rebuilt each frame,
+// stepped every two tics, colored from the liquid's own to its brightest texel.
 static void buildPlunges(const Uniforms &camera) {
     float now=gameSeconds();
     plunges.erase(std::remove_if(plunges.begin(),plunges.end(),[&](const Plunge &p){return now<p.born-0.1f||now-p.born>2.2f;}),plunges.end());
@@ -268,29 +321,37 @@ static void buildPlunges(const Uniforms &camera) {
             for(float gy=-r;gy<=r;gy+=3)for(float gx=-r;gx<=r;gx+=3)
                 if(gx*gx+gy*gy<=r*r)pixelBlock(crestVertices,camera,p.x+gx,p.y+gy,floor,3,1,tint,true,nullptr,false,&crestCells);
         }
-        float lift=std::sqrt(p.heft),gravity=thick?700:1225;
-        int crown=(int)std::round((thick?14:24)+(thick?10:20)*std::min(p.heft,3.0f));
-        int globs=crown+(int)std::round(6+4*std::min(p.heft,3.0f));
-        for(int i=0;i<globs;++i) {
-            auto random=[&](int k){return hashUnit(i,k,p.seed);};
-            bool column=i>=crown;
-            float angle=(i+random(0)*0.8f)*2*doomPi/(column?globs-crown:crown);
-            float start=column?p.radius*0.3f*random(1):p.radius*(0.5f+0.5f*random(1));
-            float high=(thick?30:44)*lift*(0.5f+0.5f*random(2))*(column?1.7f:1),out=(thick?26:40)*lift*(0.5f+0.5f*random(3))*(column?0.25f:1);
-            float s=t-(column?0.05f+random(4)*0.1f:random(4)*0.08f),up=std::sqrt(2*gravity*high),air=2*up/gravity;
-            float size=(thick?3+(random(5)<0.4f?1:0):(random(5)<0.3f?2:1))+(p.heft>1.5f?1:0)+(column?1:0);
-            int shade=std::min(2,(int)(random(6)*3));
-            float r=start+out*std::min(1.0f,std::max(0.0f,s)/air),x=p.x+std::cos(angle)*r,y=p.y+std::sin(angle)*r;
+        for(const GlobFlight &g:p.globs) {
+            float s=t-g.delay;
             if(s<0)continue;
-            if(s<air) {
-                float z=std::min(up*s-0.5f*gravity*s*s,ceiling-floor-size);
-                std::array<float,3> shown=thick?albedo[shade]:foam(albedo[shade],0.3f+0.3f*std::clamp(z/high,0.0f,1.0f),light),lit;
+            float speed=g.out/std::max(g.air,0.01f),x=g.x+g.dx*speed*std::min(s,g.landT),y=g.y+g.dy*speed*std::min(s,g.landT);
+            if(s<g.landT) {
+                float high=g.up*g.up/(2*g.gravity),z=std::min(g.up*s-0.5f*g.gravity*s*s,ceiling-floor-g.size);
+                std::array<float,3> shown=thick?albedo[g.shade]:foam(albedo[g.shade],0.3f+0.3f*std::clamp(z/high,0.0f,1.0f),light),lit;
                 for(int c=0;c<3;++c)lit[c]=std::min(1.0f,shown[c]*light);
-                pixelBlock(particleVertices,camera,x,y,floor+z,size,1,lit,true,&shown);
-            } else if(s<air+0.2f)
-                pixelBlock(crestVertices,camera,x,y,floor,size+2,1,crestOf(p.sector,0.75f),true,nullptr,false,&crestCells);
+                pixelBlock(particleVertices,camera,x,y,floor+z,g.size,1,lit,true,&shown);
+            } else if(g.land==GLOB_LIQUID&&s<g.landT+0.2f)
+                pixelBlock(crestVertices,camera,x,y,g.landZ+0.2f,g.size+2,1,crestOf(g.landSector,0.75f),true,nullptr,false,&crestCells);
         }
     }
+}
+// The stretch [lo,hi] of a line from (x,y,z) along (tx,ty) that can show:
+// at least nearest in front of the eye and within the sides of the view,
+// widened by margin map units plus two Doom pixels. Both are linear along
+// the line, so each bound clips it once. False when none of it shows.
+static bool clipToView(const Uniforms &camera,float x,float y,float z,float tx,float ty,float nearest,float margin,float &lo,float &hi) {
+    float d[3]={x-camera.eye[0],y-camera.eye[1],z-camera.eye[2]};
+    float f0=d[0]*camera.forward[0]+d[1]*camera.forward[1]+d[2]*camera.forward[2],fd=tx*camera.forward[0]+ty*camera.forward[1];
+    float g0=d[0]*camera.right[0]+d[1]*camera.right[1]+d[2]*camera.right[2],gd=tx*camera.right[0]+ty*camera.right[1];
+    float wide=1/camera.projection[0]+2/(100*camera.projection[1]);
+    // Each bound as c+a*m >= 0: depth past nearest, then the right and left sides.
+    float bounds[3][2]={{f0-nearest,fd},{f0*wide+margin-g0,fd*wide-gd},{f0*wide+margin+g0,fd*wide+gd}};
+    for(const auto &b:bounds) {
+        if(std::abs(b[1])<1e-6f) {if(b[0]<0)return false;continue;}
+        float a=-b[0]/b[1];
+        if(b[1]>0)lo=std::max(lo,a);else hi=std::min(hi,a);
+    }
+    return lo<=hi;
 }
 // Shore ripples (settings.shoreRipples): liquid held by a wall ripples
 // against it, drawn like the splash rings: unbroken lines of Doom-pixel
@@ -307,18 +368,22 @@ static void buildPlunges(const Uniforms &camera) {
 static void buildShoreRipples(const Uniforms &camera) {
     if(!settings.shoreRipples||shoreEdges.empty()||camera.effects[2]!=0)return;
     float now=std::floor(gameSeconds()*TICRATE/frameTics)*frameTics/TICRATE;
-    auto depthOf=[&](float x,float y){return (x-camera.eye[0])*camera.forward[0]+(y-camera.eye[1])*camera.forward[1];};
+    float perPixel=1/(100*camera.projection[1]);   // map units per Doom pixel at depth 1
     for(const ShoreEdge &edge:shoreEdges) {
-        // Near enough to show, and not wholly behind the eye.
+        // Near enough to show, and some of it within reach of the view: its
+        // crests and their rounded ends lie up to 23 units off it, any way.
         float ex=edge.bx-edge.ax,ey=edge.by-edge.ay,length=std::hypot(ex,ey),tx=ex/length,ty=ey/length;
         float t=std::clamp(((camera.eye[0]-edge.ax)*tx+(camera.eye[1]-edge.ay)*ty)/length,0.0f,1.0f);
         float nearX=edge.ax+ex*t,nearY=edge.ay+ey*t;
         if(std::hypot(nearX-camera.eye[0],nearY-camera.eye[1])>1536)continue;
-        if(depthOf(edge.ax,edge.ay)<-32&&depthOf(edge.bx,edge.by)<-32)continue;
         const sector_t &sector=sectors[edge.sector];
-        int look=liquidLook(sector.floorpic);if(look==LIQUID_LOOK_NONE)continue;
+        float water=floorZ(&sector);
+        float lo=-32,hi=length+32;
+        if(!clipToView(camera,edge.ax,edge.ay,water,tx,ty,-32,64,lo,hi))continue;
+        int look=liquidLook(sector.floorpic);if(look==LIQUID_LOOK_NONE||poolIce(edge.sector).ice>0)continue;   // icing over (Phobos): still
+        if(waterIceAt(nearX+edge.nx*12,nearY+edge.ny*12)>=0.35f)continue;   // ice along the shore here, or floes (water_ice.cpp)
         Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
-        float z=floorZ(&sector)+decalLift(nearX,nearY,camera)+0.1f;
+        float z=water+decalLift(nearX,nearY,camera)+0.1f;
         float light=liquidLight(edge.sector,flat,nearX,nearY,z,camera);
         const auto &base=sectorMist[edge.sector].color;
         // wavelength, period (s), reach, block width and height, strength
@@ -328,7 +393,6 @@ static void buildShoreRipples(const Uniforms &camera) {
         if(look==LIQUID_LOOK_THICK) {wavelength=7;period=2.4f;reach=23;width=1.8f;tall=0.6f;strength=0.6f;}
         else if(look==LIQUID_LOOK_HOT) {wavelength=8;period=3.2f;reach=23;width=2.0f;tall=0.6f;strength=0.85f;}
         float phase=0.35f*(std::sin(edge.ax*0.011f+edge.ay*0.004f)+std::cos(edge.ay*0.013f-edge.ax*0.006f));
-        float minDepth=std::max(4.0f,std::min(depthOf(edge.ax,edge.ay),depthOf(edge.bx,edge.by)));
         float u=now/period+phase,lead=u-std::floor(u);
         for(int j=0;;++j) {
             float r,step;std::array<float,3> albedo;
@@ -348,7 +412,12 @@ static void buildShoreRipples(const Uniforms &camera) {
             bool blood=look==LIQUID_LOOK_BLOOD;
             std::array<float,3> tint=albedo;
             if(blood)for(int c=0;c<3;++c)tint[c]=std::min(1.0f,albedo[c]*light);
-            float spacing=std::max(std::max(4.0f,minDepth)/(100*camera.projection[1])*0.9f,w*0.7f);
+            // Points close enough to touch at their own depth, so the crest
+            // reads as one unbroken line without crowding its far stretch.
+            auto spacingAt=[&](float x,float y) {
+                float depth=(x-camera.eye[0])*camera.forward[0]+(y-camera.eye[1])*camera.forward[1]+(z-camera.eye[2])*camera.forward[2];
+                return std::max(std::max(4.0f,depth)*perPixel*0.9f,std::max(w*0.7f,0.05f));
+            };
             // Only where this edge is the nearest shore: the crest stops
             // where another wall's crest at the same distance takes over.
             auto put=[&](float x,float y,bool arc) {
@@ -357,18 +426,23 @@ static void buildShoreRipples(const Uniforms &camera) {
                 if(blood)pixelBlock(particleVertices,camera,x,y,z,w,tall,tint,true,&albedo,false);
                 else pixelBlock(crestVertices,camera,x,y,z,w,tall,tint,true,nullptr,false,&crestCells);
             };
-            int points=std::clamp((int)(length/std::max(spacing,0.05f)),1,1024);
-            for(int k=0;k<=points;++k) {
-                float a=length*k/points;
-                put(edge.ax+tx*a+edge.nx*r,edge.ay+ty*a+edge.ny*r,false);
-            }
+            // Along the edge, only the stretch the view can show.
+            float x0=edge.ax+edge.nx*r,y0=edge.ay+edge.ny*r,from=0,to=length;
+            if(clipToView(camera,x0,y0,z,tx,ty,4,w,from,to))
+                for(float a=from;;) {
+                    put(x0+tx*a,y0+ty*a,false);
+                    if(a>=to)break;
+                    a=std::min(to,a+spacingAt(x0+tx*a,y0+ty*a));
+                }
             // Round each end: kept only where that corner is the nearest
             // shore, which is round outside corners and pillars.
-            int around=std::clamp((int)(r*doomPi*0.5f/std::max(spacing,0.05f)),1,64);
-            for(int k=1;k<=around;++k) {
-                float angle=k*doomPi*0.5f/around,cs=std::cos(angle)*r,sn=std::sin(angle)*r;
-                put(edge.ax+edge.nx*cs-tx*sn,edge.ay+edge.ny*cs-ty*sn,true);
-                put(edge.bx+edge.nx*cs+tx*sn,edge.by+edge.ny*cs+ty*sn,true);
+            for(int end=0;end<2;++end) {
+                float cx=end?edge.bx:edge.ax,cy=end?edge.by:edge.ay,side=end?1.0f:-1.0f;
+                int around=std::clamp((int)(r*doomPi*0.5f/spacingAt(cx,cy)),1,64);
+                for(int k=1;k<=around;++k) {
+                    float angle=k*doomPi*0.5f/around,cs=std::cos(angle)*r,sn=std::sin(angle)*r;
+                    put(cx+edge.nx*cs+side*tx*sn,cy+edge.ny*cs+side*ty*sn,true);
+                }
             }
         }
     }
@@ -385,6 +459,7 @@ void buildRings(Uniforms &camera) {
     for(const Ring &ring:rings) {
         float age=std::max(0.0f,std::floor((now-ring.born)*TICRATE/frameTics)*frameTics/TICRATE),fade=(1-age/ring.life)*std::max(ring.strength,0.5f);
         const sector_t &sector=sectors[ring.sector];
+        if(poolIce(ring.sector).ice>0)continue;   // icing over (Phobos): its rings stop where they are
         float z=floorZ(&sector)+decalLift(ring.x,ring.y,camera)+0.1f;
         // Points along each circle close enough to touch at the nearest
         // depth it can have on screen, so it reads as one unbroken line.
@@ -400,8 +475,9 @@ void buildRings(Uniforms &camera) {
             // Light steps from a crest down to the liquid's own look.
             std::array<float,3> tint=crestOf(ring.sector,step);
             for(int k=0;k<points;++k) {
-                float angle=k*2*doomPi/points;
-                pixelBlock(crestVertices,camera,ring.x+std::cos(angle)*r,ring.y+std::sin(angle)*r,z,width,thick?0.6f:1.0f,tint,true,nullptr,false,&crestCells);
+                float angle=k*2*doomPi/points,px=ring.x+std::cos(angle)*r,py=ring.y+std::sin(angle)*r;
+                if(waterIceAt(px,py)>=0.35f)continue;   // stops at the ice (water_ice.cpp)
+                pixelBlock(crestVertices,camera,px,py,z,width,thick?0.6f:1.0f,tint,true,nullptr,false,&crestCells);
             }
         }
     }

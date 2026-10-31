@@ -24,6 +24,7 @@ void layoutBake() {
         if(front>=0)bakeMap.sectors[front].lines.push_back(i);
         if(back>=0&&back!=front)bakeMap.sectors[back].lines.push_back(i);
     }
+    buildBakeTrees(bakeMap);
     // Strip heights cover what doors, lifts and floors can reach: each
     // sector's own and its neighbors' floors and ceilings.
     std::vector<float> reachLow(numsectors),reachHigh(numsectors);
@@ -106,6 +107,7 @@ void uploadWallBake() {
     if(!wallBakeTexture)I_Error((char*)"Could not allocate surface maps");
 }
 void uploadFlatLight() {
+    writeWaterIce(); // The water's ice rides in the ceiling light's alpha (water_ice.cpp)
     bakeWetness(); // The ground's wetness under the rain rides in the floor light's alpha.
     flatLightTexture=gpuCreateTexture(GpuFormat::RGBA8,mapWidth,mapHeight*4,flatLightCells.data(),mapWidth*4);
     if(!flatLightTexture)I_Error((char*)"Could not allocate surface maps");

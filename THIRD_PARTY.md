@@ -14,6 +14,9 @@ comes from elsewhere, and its license.
 | [TinySoundFont](https://github.com/schellingb/TinySoundFont), Bernhard Schelling | downloaded by `CMakeLists.txt`, linked into the program | MIT |
 | [GeneralUser GS](https://schristiancollins.com/generaluser.php) 2.0.3, S. Christian Collins | SoundFont downloaded by `CMakeLists.txt`, shipped in `soundfonts/` | its own license, allowing use in software ([`soundfonts/GeneralUser-GS-LICENSE.txt`](https://github.com/mrbumpy409/GeneralUser-GS/blob/main/documentation/LICENSE.txt)) |
 | [Freedoom](https://freedoom.github.io/) 0.13.0 | game data in the downloads only, not in this repository | BSD 3-Clause |
+| [12dicts](http://wordlist.aspell.net/12dicts/) 6.0.2, Alan Beale | the word list `2of12`, cut to plain lowercase words, in `scp_7179_b/words/` and the episode's WAD | public domain, acknowledgment requested ([`scp_7179_b/words/README.md`](scp_7179_b/words/README.md)) |
+| ["SCP-7179"](https://scpwiki.com/scp-7179), Calibold, from the [SCP Wiki](https://scpwiki.com/) | the idea behind episode 0.5, SCP_7179_B (`scp_7179_b/`) | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/); the SCP Wiki's licensing guide allows games under GPL 3 |
+| Microsoft Sam (SAPI 4), rendered with [OpenSAPI4](https://github.com/phyce/OpenSAPI4) | one spoken word in episode 0.5's WAD | Microsoft's voice, credited here |
 
 **DOOM source.** id Software released the Linux DOOM source under the GPL on
 3 October 1999, "either version 2 of the License, or (at your option) any

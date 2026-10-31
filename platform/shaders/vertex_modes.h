@@ -6,6 +6,7 @@
 #define MODE_SCREEN          1u    // already in clip space: HUD, weapon, crosshair
 #define MODE_SPRITE          2u    // a sprite: clamped texels, drawn after the opaque world
 #define MODE_SUNBEAM         2u    // mist pass only: a sunbeam ribbon, not a mist layer
+#define MODE_MIST_OUTSIDE    4u    // mist pass only: a mist layer out under the sky (a blizzard whites it out from anywhere)
 #define MODE_FUZZ            4u    // spectre (MF_SHADOW): darkened and translucent
 #define MODE_GLASS_SHARD     4u    // glass pass only: a tumbling polygon with a full 3D face normal
 #define MODE_GLASS_CRACK     2u    // glass pass only: a fracture edge reached by the spreading crack
@@ -22,6 +23,7 @@
 #define MODE_HARD_SILHOUETTE 512u  // shadow pass: keep the sprite's pixel outline
 #define MODE_SOFT            1024u // effect sprite: dithers out at floors, drawn in front of walls
 #define MODE_STIPPLED        1024u // decal pass only: a hard silhouette's edge breaks into a stipple
+#define MODE_DECAL_OUTSIDE   2048u // decal pass only: the mark lies out under the sky (in the weather's whiteout)
 #define MODE_WET_SPRITE      2048u // airborne blood glints like floor blood (needs MODE_RELIT)
 #define MODE_GLOWING_EYES    4096u // a living monster: its eyes glow (eyeGlow in indexed.glsl)
 #define MODE_DEAD_GLOW       8192u // map surfaces only: a shot-out lamp's glowing texels go dark (shot_lights.cpp)
@@ -31,5 +33,7 @@
 #define MODE_SECTOR_SHIFT    14
 #define MODE_WOUND_PALETTE_SHIFT 14
 #define MODE_WOUND_STAIN     (1u<<22) // blend blood into the source paint instead of replacing it
+// Monster sprites only (not soft ones): Phobos' rime on a body left in vacuum, 0-255 (decompression.cpp).
+#define MODE_FROST_SHIFT     24
 
 #endif

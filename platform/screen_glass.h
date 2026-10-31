@@ -115,8 +115,10 @@ static inline int doom_screen_glass(int w, int h, const unsigned char *pixels,
     return screens;
 }
 /* A readout's frame bytes: width and height carry its cell size in their top
-   bit (set: cells two texels wide or tall), so readouts stay under 128. */
+   bit (set: cells two texels wide or tall), so readouts stay under 128; the
+   x byte's top bit is DOOM_READOUT_LIT on texels of a cell painted lit. */
 #define DOOM_READOUT_PAIR 0x80
+#define DOOM_READOUT_LIT 0x80
 /* The hue a readout texel lights in (the panel rule of emissive.h at any
    brightness): 1 green, 2 blue, 3 red, 0 none. */
 static inline int doom_readout_hue(const unsigned char *c)
@@ -128,12 +130,21 @@ static inline int doom_readout_hue(const unsigned char *c)
     if (r>g*2 && r>b*2) return 3;
     return 0;
 }
+/* A readout texel's brightness: its strongest channel. */
+static inline int doom_readout_bright(const unsigned char *c)
+{
+    int hi=c[0]>c[1]?c[0]:c[1];
+    return hi>c[2]?hi:c[2];
+}
 /* Readouts: blocks of LED cells outside the screens, one hue over several of
    its palette steps (COMPUTE2's green grids). A readout is a 4-connected
    group of same-hue texels at least 6x2 that fills its box, is a fifth
    glowing, framed by housing and not one color over most of it. frame receives, for each texel, the four
    bytes a screen gets, width and height with DOOM_READOUT_PAIR where most
-   texel pairs from the box's corner match, so the shader moves whole cells.
+   texel pairs from the box's corner are both lit or both dark (a lamp's
+   highlight texel keeps it one lamp), so the shader switches whole lamps;
+   a cell is lit when its brightest texel reaches halfway between its row's
+   darkest and brightest, as rows may be shaded apart (DOOM_READOUT_LIT).
    glass: doom_screen_glass's heights; its screens stay as they are. Returns
    the number of readouts. */
 static inline int doom_screen_readouts(int w, int h, const unsigned char *pixels,
@@ -176,18 +187,34 @@ static inline int doom_screen_readouts(int w, int h, const unsigned char *pixels
             if (u>most) most=u;
         }
         if (most*5>area*4) continue;
+        int mid[128];
+#define DOOM_READOUT_BRIGHT(x,y) doom_readout_bright(palette+pixels[2*((size_t)(y)*w+(x))]*3)
+#define DOOM_READOUT_ON(x,y) (DOOM_READOUT_BRIGHT(x,y)>=mid[(y)-y0])
+        for (int y=y0;y<=y1;++y) {
+            int lo=255,hi=0;
+            for (int x=x0;x<=x1;++x) {
+                int b=DOOM_READOUT_BRIGHT(x,y);
+                if (b<lo) lo=b; if (b>hi) hi=b;
+            }
+            mid[y-y0]=(lo+hi+1)/2;
+        }
         size_t pairsX=0,sameX=0,pairsY=0,sameY=0;
         for (int y=y0;y<=y1;++y) for (int x=x0;x<=x1;++x) {
-            unsigned char v=pixels[2*((size_t)y*w+x)];
-            if (!((x-x0)&1) && x<x1) {++pairsX;sameX+=v==pixels[2*((size_t)y*w+x+1)];}
-            if (!((y-y0)&1) && y<y1) {++pairsY;sameY+=v==pixels[2*((size_t)(y+1)*w+x)];}
+            int v=DOOM_READOUT_ON(x,y);
+            if (!((x-x0)&1) && x<x1) {++pairsX;sameX+=v==DOOM_READOUT_ON(x+1,y);}
+            if (!((y-y0)&1) && y<y1) {++pairsY;sameY+=v==DOOM_READOUT_ON(x,y+1);}
         }
         int pairX=pairsX && sameX*4>=pairsX*3,pairY=pairsY && sameY*4>=pairsY*3;
         for (int y=y0;y<=y1;++y) for (int x=x0;x<=x1;++x) {
             unsigned char *f=&frame[((size_t)y*w+x)*4];
-            f[0]=(unsigned char)(x-x0);f[1]=(unsigned char)(y-y0);
+            int cx=x0+((x-x0)&~pairX),cy=y0+((y-y0)&~pairY),lit=0;
+            for (int ly=cy;ly<=cy+pairY && ly<=y1;++ly) for (int lx=cx;lx<=cx+pairX && lx<=x1;++lx)
+                lit|=DOOM_READOUT_ON(lx,ly);
+            f[0]=(unsigned char)((x-x0)|(lit?DOOM_READOUT_LIT:0));f[1]=(unsigned char)(y-y0);
             f[2]=(unsigned char)(bw|(pairX?DOOM_READOUT_PAIR:0));f[3]=(unsigned char)(bh|(pairY?DOOM_READOUT_PAIR:0));
         }
+#undef DOOM_READOUT_ON
+#undef DOOM_READOUT_BRIGHT
         ++readouts;
     }
     free(hue);free(seen);free(stack);

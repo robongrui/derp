@@ -51,6 +51,9 @@ game_thing_role Game_ThingRole(int type)
     }
 }
 
+/* Heretic's blood is its own: one colour for all. */
+game_blood_tint Game_BloodTint(int type) { (void)type; return GAME_BLOOD_RED; }
+
 /* A pod bursts in four frames and explodes on the third (A_Explode in
    S_POD_DIE3), so its frames take the barrel's places 1 to 4. */
 int Game_BlastFrame(const struct mobj_s *thing)
@@ -121,10 +124,13 @@ int Game_HasEffect(game_effect effect)
     {
     case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT:
     case GAME_EFFECT_WIND: case GAME_EFFECT_NATURAL_FALLOFF: case GAME_EFFECT_FREE_AIM:
-    case GAME_EFFECT_AUTHORED_EPISODES: return 0;
+    case GAME_EFFECT_AUTHORED_EPISODES: case GAME_EFFECT_PHOBOS: case GAME_EFFECT_TUNED_MOVEMENT: case GAME_EFFECT_MONSTER_BLOOD: return 0;
     }
     return 1;
 }
+
+extern boolean MenuActive, askforquit;
+int Game_TakesText(void) { return MenuActive || askforquit || chatmodeon; }
 
 /* The Torch (P_PlayerThink) sets colormaps 1 (brightest) to 7, wandering
    between them; running out it blinks to 0, which puts the flame out. */
@@ -143,10 +149,52 @@ int Game_Torch(float *flame)
    the sky's colour (grey, hell red, night blue), and distance fades into it. */
 void Game_Sun(game_sun *sun) { *sun = (game_sun){ 1, 0.4f, 0.3f, 0.6f, 1 }; }
 
+void Game_SetPhobos(int on) { (void)on; }
+void Game_SetWeather(int choice) { (void)choice; }
+int Game_NukageRain(void) { return 0; }
+void Game_SetPhobosRules(int player, int enemies, int air, int recoil) { (void)player; (void)enemies; (void)air; (void)recoil; }
+int Game_Phobos(void) { return 0; }
+float Game_PhobosGravity(void) { return 1.49e-4f; }
+void Game_WorldShift(float *dx, float *dy, float *dz) { *dx = *dy = *dz = 0; }
+int Game_Carried(const struct mobj_s *thing) { (void)thing; return 0; }
+int Game_WorldWraps(void) { return 0; }
+int Game_WorldRenewed(void) { return 0; }
+int Game_FloorsAbove(void) { return 0; }
+int Game_FloorsBelow(void) { return 0; }
+int Game_Storey(int sector, float *storey, float *bottom) { (void)sector; (void)storey; (void)bottom; return 0; }
+int Game_LibraryEyes(float *lids, float *black) { *lids = *black = 0; return 0; }
+int Game_LibraryYawns(void) { return 0; }
+const char *Game_LibraryNote(void) { return ""; }
+int Game_LibraryAim(float corners[4][3], int *read) { (void)corners; *read = 0; return 0; }
+int Game_LibraryPage(char *lines, char *marks) { (void)lines; (void)marks; return 0; }
+const char *Game_LibrarySays(const struct mobj_s *thing, double seconds, float *shown) { (void)thing; (void)seconds; *shown = 0; return 0; }
+float Game_LibraryRinging(void) { return 0; }
+int Game_LibraryKnocks(void) { return 0; }
+float Game_LibraryFallSpeed(void) { return 0; }
+int Game_InLibrary(void) { return 0; }
+float Game_LibraryChasm(float *side) { *side = 0; return 0; }
+float Game_LibraryTired(void) { return 0; }
+int Game_LibraryFall(float speed[3]) { (void)speed; return 0; }
+int Game_LibraryFigures(game_figure *out, int most, double seconds) { (void)out; (void)most; (void)seconds; return 0; }
+int Game_ThingAsleep(const struct mobj_s *thing) { (void)thing; return 0; }
+float Game_Air(int sector) { (void)sector; return 1; }
+void Game_Glass(int line, int whole) { (void)line; (void)whole; }
+int Game_Vents(game_vent *vents, int most) { (void)vents; (void)most; return 0; }
+int Game_Adrift(const struct mobj_s *thing) { (void)thing; return 0; }
+float Game_Draft(const struct mobj_s *thing, float way[3]) { (void)thing; (void)way; return 0; }
+int Game_Tumble(const struct mobj_s *thing, float fraction, float up[3]) { (void)thing; (void)fraction; (void)up; return 0; }
+float Game_LookKick(void) { return 0; }
+int Game_ViewFlipped(void) { return 0; }
+void Game_FlipView(void) {}
+int Game_BootsUpside(void) { return 0; }
+void Game_BootsRolled(int over) { (void)over; }
+int Game_ModeChanged(void) { return 0; }
+
 /* Heretic's maps keep the light they were made with. */
 /* No authored episodes: Heretic keeps its derived look. */
 void Game_Mood(int episode, int map, game_mood *mood) { (void)episode; (void)map; (void)mood; }
 int Game_BrokenWindows(int episode, int map, game_spot *spots, int max) { (void)episode; (void)map; (void)spots; (void)max; return 0; }
+int Game_Courtyards(int episode, int map, int *sectors, int max) { (void)episode; (void)map; (void)sectors; (void)max; return 0; }
 
 /* Heretic's pools are clear and still: a fantasy mirror, not sewage. */
 float Game_WaterClarity(void) { return 1; }

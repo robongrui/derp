@@ -107,9 +107,24 @@ static void updateWeaponProbe(const Uniforms &camera,sector_t *sector) {
         weaponProbe[(i/3)*4+i%3]=weaponProbeTarget[i];
     }
 }
+// The weapon's place on the screen at the last tic (beforeTic), so its bob,
+// raise and lower blend between tics like the world. The flash follows the
+// weapon, so every layer moves by the weapon's blend.
+static fixed_t oldWeaponX,oldWeaponY;
+static bool oldWeaponSaved;
+void saveWeaponPlace() {
+    const pspdef_t &weapon=players[displayplayer].psprites[0];
+    oldWeaponX=weapon.sx;oldWeaponY=weapon.sy;oldWeaponSaved=weapon.state!=nullptr;
+}
 std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
     std::vector<SpriteDraw> draws;
     player_t *player=&players[displayplayer];
+    float shiftX=0,shiftY=0;
+    if(ticSaved&&oldWeaponSaved&&player->psprites[0].state) {
+        float dx=units(oldWeaponX)-units(player->psprites[0].sx),dy=units(oldWeaponY)-units(player->psprites[0].sy);
+        // A jump (a new weapon's own place) is taken whole.
+        if(std::abs(dx)<64&&std::abs(dy)<64) {shiftX=dx*(1-renderFraction);shiftY=dy*(1-renderFraction);}
+    }
     if(settings.weaponLighting&&camera.effects[2]==0&&player->mo)updateWeaponProbe(camera,player->mo->subsector->sector);
     for(int i=0;i<NUMPSPRITES;++i) {
         auto psp=player->psprites[i];if(!psp.state)continue;
@@ -120,7 +135,7 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
         bool relit=settings.weaponLighting&&!bright;
         int lump=firstspritelump+sf.lump[0];
         Image &image=relit?weaponImage(lump):lumpImage(lump,false);
-        float x=units(psp.sx)-image.left,y=viewwindowy+viewheight/2.0f-100+units(psp.sy)-image.top;
+        float x=units(psp.sx)+shiftX-image.left,y=viewwindowy+viewheight/2.0f-100+units(psp.sy)+shiftY-image.top;
         std::vector<Vertex> weapon;
         float u0=sf.flip[0]?image.width:0,u1=sf.flip[0]?0:image.width;
         float light=bright?1.0f:sunLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,

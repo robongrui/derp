@@ -86,6 +86,10 @@ byte* I_AllocLow (int length);
 
 void I_Tactile (int on, int off, int total);
 
+// A file shipped beside the program (in the Mac app, its Resources), or
+// NULL: none there, or a build without one (headless).
+const char* I_ProgramFile (const char* name);
+
 
 _Noreturn void I_Error (char *error, ...);
 

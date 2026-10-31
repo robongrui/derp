@@ -20,7 +20,12 @@
 #include "audio/steps.h"
 #include "audio/resample.h"
 #include "audio/treble.h"
+#include "audio/vacuum.h"
 #include "audio/reverb.h"
+#include "audio/ringing.h"
+#include "audio/head_knock.h"
+#include "audio/falling_air.h"
+#include "audio/library_acoustics.h"
 #include "game_profile.h"
 #include "audio/sf2_synth.h"
 #include "audio/sound_options.h"
@@ -42,6 +47,8 @@
    the way into that space opens and closes as the listener moves. */
 #define BEYOND_GLIDE_SECONDS 0.15f
 #define COUPLING_GLIDE_SECONDS 0.5f
+/* How fast a sound fades as the air carrying it thins (vacuum.h). */
+#define AIR_GLIDE_SECONDS 0.25f
 /* Ambience ducks under loud effects at once and comes back over this long. */
 #define DUCK_RELEASE_SECONDS 1.2f
 typedef struct { const byte *data; int length, rate; } sample_t;
@@ -55,6 +62,8 @@ typedef struct {
     /* How much of it is in the space beyond (beyond.h) rather than the
        listener's room, gliding to its target. */
     float beyond, beyond_target;
+    /* How much of it the air carries (vacuum.h), gliding to its target. */
+    float air, air_target;
     treble_t treble;
     int handle, measured;
     /* Where a placed sound is, for the natural falloff, how far it carries
@@ -70,8 +79,8 @@ static int acoustics = 1, muffle_walls = 1, muffle_distance = 1;
 static int resampling = RESAMPLE_ORIGINAL;
 static float treble_amount = 1;
 static float next_cutoff = OCCLUSION_OPEN_HZ;
-static float next_x, next_y;
-static int next_placed, natural_falloff = 1;
+static float next_x, next_y, next_air = 1, next_air_hz = OCCLUSION_OPEN_HZ;
+static int next_placed, next_own, natural_falloff = 1;
 static float reverb_amount = 1;
 /* The listener's room, and the bigger space beyond it (measured on the game
    thread; the mixer only has its coupling). */
@@ -156,6 +165,8 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
                the space beyond, a little of that space's into their room. */
             channel->beyond += (channel->beyond_target - channel->beyond) * (1 - expf(-count / (BEYOND_GLIDE_SECONDS * OUTPUT_RATE)));
             float there = channel->beyond;
+            channel->air += (channel->air_target - channel->air) * (1 - expf(-count / (AIR_GLIDE_SECONDS * OUTPUT_RATE)));
+            float air = channel->air;
             float send_here = channel->send * (1 - there + coupling * there);
             float send_there = channel->send * (there + coupling * sqrtf(coupling) * (1 - there));
             /* Held samples bring their own sizzle up there instead. */
@@ -168,7 +179,7 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
                 if (treble) value = Treble_Process(&channel->treble, value, treble_amount);
                 channel->low[0] = value + (channel->low[0] - value) * keep;
                 channel->low[1] = channel->low[0] + (channel->low[1] - channel->low[0]) * keep;
-                value = channel->low[1];
+                value = channel->low[1] * air;
                 buffer[2*i] += value * channel->left;
                 buffer[2*i+1] += value * channel->right;
                 send[i] += value * send_here;
@@ -188,6 +199,9 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
             /* The space beyond is only heard through its opening. */
             Reverb_Process(beyond_reverb, send_beyond, buffer, count, reverb_amount * sqrtf(coupling));
         }
+        FallingAir_Mix(buffer, count, OUTPUT_RATE, Game_LibraryFallSpeed());
+        Ringing_Mix(buffer, count, OUTPUT_RATE, Game_LibraryRinging());
+        HeadKnock_Mix(buffer, count, OUTPUT_RATE, Game_LibraryKnocks());
         MixerMusic_Render(buffer, count);
         /* A peak limiter: drops at once to keep the mix under LIMIT, recovers
            slowly, so a burst of shots ducks the mix instead of crackling. */
@@ -264,6 +278,7 @@ void I_UpdateSound(void)
     if (gametic != ambient)
     {
         ambient = gametic;
+        Vacuum_Follow();
         ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS];
         ambience_voice_t computer_body;
         ambience_strike_t strike;
@@ -291,6 +306,7 @@ void I_UpdateSound(void)
     Room_Measure(&room, &outline);
     const mobj_t *listener = players[consoleplayer].mo;
     Beyond_Measure(&room, &outline, listener ? listener->angle * (2 * SDL_PI_F / 4294967296.0f) : 0, &beyond);
+    LibraryAcoustics_Shape(&room, &beyond);
     SDL_LockAudioStream(stream);
     if (room_reverb) Reverb_SetRoom(room_reverb, &room);
     if (beyond_reverb) Reverb_SetRoom(beyond_reverb, &beyond.room);
@@ -330,6 +346,7 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
     {
         next_cutoff = Occlusion_Cutoff(x, y, z, muffle_walls, muffle_distance);
         next_x = x / (float)FRACUNIT; next_y = y / (float)FRACUNIT; next_placed = 1;
+        next_air = Vacuum_Carry(x, y, 0, &next_air_hz);
         next_beyond = Beyond_Share(&beyond, next_x, next_y);
         return;
     }
@@ -346,16 +363,19 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
     if (due) channel->measured = gametic;
     SDL_UnlockAudioStream(stream);
     if (!due) return;
-    float cutoff = Occlusion_Cutoff(x, y, z, muffle_walls, muffle_distance), share = Beyond_Share(&beyond, fx, fy);
+    float cutoff = Occlusion_Cutoff(x, y, z, muffle_walls, muffle_distance), share = Beyond_Share(&beyond, fx, fy), air_hz;
+    float air = Vacuum_Carry(x, y, 0, &air_hz);
     SDL_LockAudioStream(stream);
-    if ((channel = find(handle))) { channel->target = cutoff; channel->beyond_target = share; }
+    if ((channel = find(handle))) { channel->target = SDL_min(cutoff, air_hz); channel->beyond_target = share; channel->air_target = air; }
     SDL_UnlockAudioStream(stream);
 }
+/* The next I_StartSound is the listener's own: on Phobos heard through the suit. */
+void I_SoundOwn(void) { next_own = 1; }
 void I_SubmitSound(void) { }
 void I_SetChannels(void) { }
 /* Takes the free channel, or the quietest (the oldest of equals), so a
    faint far-off sound gives way to a near one. */
-static int start_sample(sample_t sample, float volume, int separation, int pitch, float cutoff, float there, float send_scale)
+static int start_sample(sample_t sample, float volume, int separation, int pitch, float cutoff, float there, float send_scale, float air)
 {
     SDL_LockAudioStream(stream);
     int slot = 0;
@@ -370,6 +390,7 @@ static int start_sample(sample_t sample, float volume, int separation, int pitch
     channel->position = 0;
     channel->cutoff = channel->target = cutoff;
     channel->beyond = channel->beyond_target = there;
+    channel->air = channel->air_target = air;
     channel->low[0] = channel->low[1] = 0;
     Treble_Reset(&channel->treble);
     channel->measured = gametic;
@@ -387,17 +408,36 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
 {
     (void)priority;
     float cutoff = next_cutoff, x = next_x, y = next_y, level = (float)volume, there = next_beyond;
-    int placed = next_placed;
-    next_cutoff = OCCLUSION_OPEN_HZ; next_placed = 0; next_beyond = 0;
+    float air = next_air, air_hz = next_air_hz;
+    int placed = next_placed, own = next_own;
+    next_cutoff = OCCLUSION_OPEN_HZ; next_placed = 0; next_beyond = 0; next_air = 1; next_air_hz = OCCLUSION_OPEN_HZ; next_own = 0;
+    const mobj_t *listener = players[consoleplayer].mo;
+    if (own && listener) air = Vacuum_Carry(listener->x, listener->y, 1, &air_hz);
+    cutoff = SDL_min(cutoff, air_hz);
     if (!stream || id < 1 || id >= NUMSFX || !samples[id].data) return 0;
     float reach = reach_of(id);
     if (placed && falls_off()) level = snd_SfxVolume * distance_gain(listener_distance(x, y) / reach);
-    int handle = start_sample(samples[id], level, separation, pitch, cutoff, placed ? there : 0, 1);
+    int handle = start_sample(samples[id], level, separation, pitch, cutoff, placed ? there : 0, 1, air);
     SDL_LockAudioStream(stream);
     mix_channel_t *channel = find(handle);
     if (channel) { channel->placed = placed; channel->x = x; channel->y = y; channel->reach = reach; }
     SDL_UnlockAudioStream(stream);
     return handle;
+}
+
+/* A DMX sound lump by name, whole and dry, from no place (the library's
+   ending, f_library.c): nothing if the WADs lack it. */
+int I_SoundLump(const char *name)
+{
+    int lump = W_CheckNumForName((char *)name);
+    if (!stream || lump < 0) return 0;
+    int length = W_LumpLength(lump);
+    byte *data = W_CacheLumpNum(lump, PU_STATIC);
+    if (length < 8 || little16(data) != 3) return 0;
+    uint32_t size = little32(data + 4);
+    if (!size || size > (uint32_t)(length - 8)) return 0;
+    sample_t sample = { data + 8, (int)size, (int)little16(data + 2) };
+    return start_sample(sample, 127, 128, 128, OCCLUSION_OPEN_HZ, 0, 0, 1);
 }
 
 /* A made-up sound at a map point, loud and panned as DOOM does it for a
@@ -422,10 +462,12 @@ static void play_through(const made_sample_t *sample, float x, float y, float z,
        turning toward where it is over the first 64 units. */
     float angle = atan2f(dy, dx) - listener->angle * (2 * SDL_PI_F / 4294967296.0f);
     int separation = 128 - (int)(96 * sinf(angle) * SDL_min(distance / 64, 1.0f));
-    float cutoff = SDL_min(most, Occlusion_Cutoff((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), (fixed_t)(z * FRACUNIT),
+    float air_hz, air = Vacuum_Carry((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), personal, &air_hz);
+    if (air <= 0) return;
+    float cutoff = SDL_min(SDL_min(most, air_hz), Occlusion_Cutoff((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), (fixed_t)(z * FRACUNIT),
                                                   muffle_walls, muffle_distance));
     start_sample((sample_t){ sample->data, sample->length, sample->rate }, volume, separation, 128, cutoff,
-                 Beyond_Share(&beyond, x, y), send_scale);
+                 Beyond_Share(&beyond, x, y), send_scale, air);
 }
 
 static void play_at(const made_sample_t *sample, float x, float y, float z, float level, float reach)
@@ -464,6 +506,9 @@ void I_AmbienceSilence(float x, float y, float z, float radius) { Ambience_Silen
 void I_AmbienceGlaze(int line, int whole) { Ambience_Glaze(line, whole); }
 void I_AmbienceShowGlass(int shown) { Ambience_ShowGlass(shown); }
 void I_AmbienceRain(float amount) { Ambience_Rain(amount); }
+void I_AmbienceSnow(float amount) { Ambience_Snow(amount); Room_Snow(amount); }
+void I_AmbienceDraft(float amount) { Ambience_Draft(amount); }
+void I_AmbienceWind(float amount) { Ambience_Wind(amount); }
 void I_SetMadeSounds(int impacts, int glass, int ambient, float amount, int steps)
 {
     if (stream) SDL_LockAudioStream(stream);
@@ -488,6 +533,16 @@ void I_StopSound(int handle)
     for (int i = 0; i < MIX_CHANNELS; ++i)
         if (channels[i].handle == handle) channels[i].handle = 0;
     SDL_UnlockAudioStream(stream);
+}
+int I_SoundVoices(void)
+{
+    if (!stream) return 0;
+    int voices = 0;
+    SDL_LockAudioStream(stream);
+    for (int i = 0; i < MIX_CHANNELS; ++i)
+        if (channels[i].handle) ++voices;
+    SDL_UnlockAudioStream(stream);
+    return voices;
 }
 int I_SoundIsPlaying(int handle)
 {

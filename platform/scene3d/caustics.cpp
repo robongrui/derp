@@ -31,9 +31,11 @@ void buildCaustics() {
     std::vector<int> source(count,-1);
     using Entry=std::pair<float,size_t>;
     std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> queue;
+    ensureWaterIce();
     for(size_t i=0;i<count;++i) {
         int s=seamCells[i].own;
         if(s==noSector||!sectorMist[s].liquid||sectors[s].floorpic==skyflatnum)continue;
+        if(waterIceCell(i)>=0.55f)continue;   // frozen over in the cold (water_ice.cpp): no light moves under it
         distance[i]=0;height[i]=units(sectors[s].floorheight);source[i]=s;queue.push({0.0f,i});
     }
     if(queue.empty())return;
@@ -205,7 +207,7 @@ void buildShore() {
             const sector_t *wet=side?line.backsector:line.frontsector,*dry=side?line.frontsector:line.backsector;
             if(!wet||wet==dry)continue;
             int s=(int)(wet-sectors);const auto &mist=sectorMist[s];
-            if(!mist.liquid||wet->floorpic==skyflatnum||s>=16384)continue;
+            if((!mist.liquid&&!poolFrozen(s))||wet->floorpic==skyflatnum||s>=16384)continue;   // frozen: its strip ices over (shore.glsl)
             float water=units(wet->floorheight);
             if(dry) {
                 float floor=units(dry->floorheight),ceiling=units(dry->ceilingheight);

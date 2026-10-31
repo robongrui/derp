@@ -56,9 +56,12 @@ void (*R_BeforeTic)(void);
 void (*R_MuzzleFlash)(mobj_t *source, int weapon, int projectile);
 void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z);
 void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, fixed_t slope, int damage);
+void (*R_BloodSpilled)(mobj_t *blood, mobj_t *bleeder);
 void (*R_DamageHit)(mobj_t *target, mobj_t *inflictor, mobj_t *source, int damage);
 boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fixed_t y, fixed_t z);
 void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+void (*R_GlassStruck)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+int (*R_RainedIn)(mobj_t *mo);
 boolean r_uncapped;
 unsigned r_levelserial;
 

@@ -12,6 +12,7 @@
 extern "C" {
 #include "doomtype.h"
 }
+#include "climate_rules.h"
 #include "flash_lighting.h"
 #include "i_render3d.h"
 
@@ -31,6 +32,13 @@ void gpuUpdateTexture(const GpuTextureRef &texture,GpuFormat format,const std::v
 bool platformReadMask(const char *path,int width,int height,std::vector<float> &values);
 // The most MSAA samples the GPU offers for the world targets (1: none).
 int gpuMaxSamples();
+// For the FPS readout: the GPU's name and its driver's version (empty where
+// unknown), the API it is driven through, and how frames reach the display
+// now (the present mode in use, which may be a fallback for the chosen one).
+const char *gpuDeviceName();
+const char *gpuDriverVersion();
+const char *gpuApiName();
+const char *gpuPresentationName();
 
 namespace doom3d {
 constexpr float doomPi=3.14159265358979323846f;
@@ -42,15 +50,21 @@ struct Point { float x,y; };
 // on walls, a seed per wall section so their uneven tiles differ (tiles.glsl).
 // lampTint: the sector light's color from the lamps around a sprite (lampTint
 // in baked_lighting.h), unorm bytes; white for surfaces, which compute their own.
-struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0; unsigned lightMask[2]={}; float sunU=-1,sunV=0; unsigned statics=0; unsigned lampTint=0xFFFFFFFFu; };
+struct Vertex { float x,y,z,u,v,light; unsigned mode; float red=0,green=0,blue=0; unsigned lightMask[2]={}; float sunU=-1,sunV=0; unsigned statics=0; unsigned lampTint=0xFFFFFFFFu; float lift=0; };
 // right.w: where the wear records start in the sector buffer (0: none);
 // forward.w, up.w: how wet the windows and the ground under the sky are.
 // mood: x how bright the sky is drawn (the episode's mood, Game_Mood).
 // fx: exposure, sky light tint; fx2: render-target pixels per Doom pixel,
 // sky light level (0: off); texFilter: sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
-struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],mood[4],weather[4],flicker[4][4]; };
-static_assert(sizeof(Vertex)==64&&sizeof(Uniforms)==384,"Shader buffer layout");
+// bank, bankColor: the fog bank (scene3d/fog.cpp, shaders/fog_bank.glsl).
+// climate: the heat of the day and the cold on clear windows (scene3d/climate.cpp).
+// beam, beamAim, beamLight: the flashlight's beam in the weather (scene3d/beam_air.cpp).
+// farFog, farFogRange: a distance fog as in Turok (DERPINFO farfog): colour (rgb), on (w); clear to range.x, solid from range.y.
+// rush: the fall's smear (rush.cpp, rush.glsl): the point it falls toward in screen uv, homogeneous (xyz), how hard (w).
+// eyes: the player's (eyes.cpp): lids closed (x, 0-1), dark (y, 0-1).
+struct Uniforms { float eye[4],right[4],forward[4],up[4],projection[4],effects[4],materials[4],flashlightTint[4],fog[4],map[4],water[4],sun[4],bake[4],fx[4],fx2[4],texFilter[4],outdoor[4],haze[4],mood[4],weather[4],phobos[4],weatherTint[4],fallColor[4],settleColor[4],bank[4],bankColor[4],climate[4],beam[4],beamAim[4],beamLight[4],farFog[4],farFogRange[4],flicker[4][4],clearing[8][4],rush[4],eyes[4]; };
+static_assert(sizeof(Vertex)==68&&sizeof(Uniforms)==736,"Shader buffer layout");
 using Flash=doom_flash_t;
 // 63 lights keep the FlashSet uniform block under 4 KB and fit the 64-bit light masks.
 constexpr unsigned maxLights=63;
@@ -60,9 +74,18 @@ static_assert(sizeof(Flash)==64&&sizeof(FlashSet)==4048&&sizeof(LightBlocker)==3
 struct FogLights { unsigned count=0,indices[4]={},padding[3]={}; };
 static_assert(sizeof(FogLights)==32,"Fog shader layout");
 struct Settings {
-    int accelerated=1, widescreen=1, crosshair=1, look=1, retro=0, fps=1, scale=100;
+    int accelerated=1, widescreen=1, crosshair=1, look=1, retro=0, fps=1;
+    // How frames reach the display (gpu3d/presentation.cpp): 0 VSync, 1 VSync
+    // with 3 frames in flight, 2 Fast (mailbox), 3 Adaptive, 4 Off (uncapped);
+    // the limit for the uncapped ones: 0 none, 1 the display's rate, 2 30,
+    // 3 60, 4 120, 5 144, 6 240 a second.
+    int presentation=2, frameLimit=0;
+    int windowSize=0; // The window's exact size (scene3d/window_size.cpp): 0 free, else its height in pixels at 16:9 (720, 1080, 1440, 2160).
+    int scale=100; // Render size: up to 100 a percentage of the window, above that a fixed height in pixels (never above the window's).
+    int upscale=0; // The render stretched to the window: 0 smooth (bilinear), 1 crisp (nearest), 2 sharp bilinear.
     int invertLook=0; // Mouse look: moving the mouse forward tilts the view down.
     int classicAim=0; // With mouse look: bullets autoaim at a monster in front as in DOOM, following the view only with none.
+    int movement=0; // 0 DERP's tighter tuning, 1 DOOM's own (acceleration, friction, faster diagonals), 2 tuned plus held running diagonals easing into DOOM's strafe-running.
     int quickConfirm=1; // Quicksave and quickload ask before overwriting or loading.
     float msaa=0; // Geometry edge anti-aliasing: 0 off, then 2x, 4x and 8x MSAA (capped by gpuMaxSamples).
     // Walls and floors: 0 crisp pixels, 1 smooth (bilinear), 2 sharp bilinear
@@ -73,6 +96,7 @@ struct Settings {
     float fov=90;
     float flashlightTintGain=1;
     int emissive=1, fog=1, palette=0;
+    int bloom=1; // With emissive: glowing texels, eyes and pickups bleed a soft halo.
     int detail=1; // Derived normal maps and palette gloss.
     int variedHighlights=1; // Gloss highlights tighten on smooth artwork and spread on busy artwork, per palette ramp.
     int unevenTiles=1; // Tiles painted into floors each lie a little crooked, with a lit or shadowed lip where they meet.
@@ -94,12 +118,14 @@ struct Settings {
     // F4's combined choices; fitGame sets the switches below them from these.
     int deaths=2; // Deaths: 0 the game's frames, 1 varied, 2 procedural falls, 3 ragdolls, 4 ragdolls Hollywood (flying, punch, spins).
     int hitReactions=1; // Hit reactions: death reactions and hit flinches.
+    int mode=1; // Gameplay (F4 Game, Mode): 0 normal (the derived look), 1 authored episodes, 2 physically accurate Phobos; sets authored and phobos.
     int bloodLevel=2; // Blood: 0 off, 1 splats and pools, 2 full (spray, shine).
     int blood=1; // Splats on floors and walls from hitscan hits; pools under corpses.
     int bloodSpray=1; // With blood: hits and kills throw drops that land as splats; wounds drip, sliding bodies smear, bodies thrown into walls splash them.
     int bloodShine=1; // Fresh blood glints under dynamic lights, then dries matte.
     int deathMotion=1; // Deaths jolt with the killing blow's push and height before the game's corpse frame.
     int wounds=1; // Hitscan hits shoot holes through monsters' sprites, rimmed with blood; drawing only.
+    int monsterBlood=1; // Enemy-appropriate blood: Cacodemons bleed blue, Barons and Hell Knights green, Lost Souls nothing (Game_BloodTint).
     int deathFalls=1; // Rigged monsters (hand rigs, else joints found in the art) fall procedurally: 0 off, 1 by the hit, 2 always legs swept, 3 always chest blast, 4 always head shot.
     int deathRagdoll=0; // Rigged monsters fall as ragdolls instead: the pain drawing raised into a relief on a small skeleton the hit knocks over.
     int deathGuided=1; // With deathRagdoll: chest blasts from the front sometimes play the shot death on strings (hand rigs that fit it: the zombieman).
@@ -111,15 +137,26 @@ struct Settings {
     int flashlightShadows=1; // Things in the flashlight beam cast their silhouette on the wall behind.
     int classicFlashlight=1; // A shorter, warmer beam that raises light in steps to a little past full brightness, never further.
     int stippledShadows=1; // The flashlight's shadow edges, from walls and things, break into an ordered-dither stipple instead of a clean line.
+    int softShotShadows=1; // Shots, projectiles and barrels light from a small body: shadow edges step per texel and soften into a dither.
     int softSprites=1; // Explosions and puffs stop slicing into walls; dithered toward floors.
     int heatHaze=0; // Stepped raster shimmer above lava, hot floors and flames.
     int eyeAdaptation=1; // Brief stepped over/underexposure when the light changes.
     int splashes=1; // Ripple rings where things land or walk in liquids, spouts where shots hit them; bubbles and sinking in thick ones.
     int dust=1; // Specks glinting in sunbeams and the flashlight beam.
     int embers=1; // A few sparks rising from flames, blown along by the game's wind.
-    int authored=1; // Authored episodes (Game_Mood): hand-picked looks for the game's own maps (DOOM's E1 night in the rain); off: the derived look everywhere.
-    int weather=1; // Rain under the sky: 0 never, 1 where an authored episode has it, 2 always.
+    int phobos=0; // (From mode.) Physically accurate Phobos (p_phobos.h): DOOM's first episode with Phobos' gravity, friction and real knockback.
+    int phobosSpin=0; // Phobos: the guns' kicks turn the player's view (Game_LookKick).
+    int phobosPlayer=1,phobosEnemies=1,phobosAir=2,phobosRecoil=1; // Phobos: how much help (Game_SetPhobosRules).
+    int authored=1; // (From mode.) Authored episodes (Game_Mood): hand-picked looks for the game's own maps (DOOM's E1 night in the rain); off: the derived look everywhere.
+    int weather=1; // What falls under the sky: 0 nothing (clear), 1 where the map's DERPINFO or an authored episode has it, else always: 2 rain, 3 snow, 4 nukage rain, 5 sand, 6 ash, 7 fog, 8 dry ice.
+    // The rest of the climate (climate_rules.h), each the map's own or one choice everywhere:
+    int fallAmount=0; // How hard it falls (or how thick it lies): 0 the map's own, 1 light, 2 moderate, 3 heavy, 4 extreme.
+    int timeOfDay=TIME_OWN; // The hour: the sun's height, colour and strength, the sky's tint; night as the authored E1's.
+    int temperature=climateOwn; // Degrees C outside, -30 to 50 in tens: heat shimmer and glare from 30, frosted windows below 0.
+    int wind=WIND_OWN; // How hard the wind blows: still, a breeze, strong, a gale.
+    int windFrom=0; // Where it blows from: 0 the map's own, 1 north, on round the compass to 8 north-west.
     int wornPlates=1; // Plain metal plates (Game_WornPlate) show years of use: grime in the seams, dull blotches, scuffs near the floor.
+    int metalShading=1; // Bare metal (Game_WallSurface/Game_FlatSurface METAL) takes highlights in its own colour (world/surface.glsl metalness).
     int windowStreaks=1; // Dark rain runs down the outside walls below windows, rusty on metal; inside too once rain blows through a broken one.
     int playerShadow=1; // The player's own sprite shadow from the sun or a strong light.
     int doorLight=1; // Light from a bright room spills through a door as it opens.
@@ -143,7 +180,7 @@ struct Settings {
     int sunShafts=1; // Soft sunbeams slanting down through ceiling holes and windows, with the dust motes in them.
     int sunScatter=1; // Sunbeams glow brighter seen toward the sun and fainter from behind it.
     int glossyScreens=1; // Monitor glass found in computer textures bulges, refracts the screen behind it and catches light.
-    int liveReadouts=1; // The LED readouts painted into computer textures change their cells now and then (doom_screen_readouts).
+    int liveReadouts=1; // The LED readouts painted into computer textures blink their lamps on a simple console loop (doom_screen_readouts).
     int glowingEyes=1; // The eyes painted into monster artwork glow in the dark, with bloom (sprite_eyes.h).
     int windowGlass=1; // Windows found in the map get glass that reflects and shatters when shot through.
     int shootableLights=1; // Experiment: tech walls spark when shot; shots into a lamp or screen break its fixture and re-bake its light.
@@ -170,11 +207,15 @@ struct Settings {
     int gridSpriteLight=0; // Things take static light and their shadow light from a grid baked at level load.
     int unoccludedSurfaceLights=0; // Glowing textures' dynamic light skips wall tests; its gloss can show through walls.
     int fewerSurfaceLights=0; // Only the 8 nearest glowing-texture lights stay dynamic, not 24.
+    int skipHiddenGeometry=0; // Walls and flats the BSP walk finds hidden from the eye are left out each frame.
 };
 // glassFrame: on textures with monitor screens, where each glass pixel sits
 // on its screen (see screen_glass.h); null otherwise. relief: on walls and
 // flats, the bump slope and grain the shader shades them with (withRelief).
-struct Image { bool opaque=true; std::vector<byte> pixels; GpuTextureRef texture,glassFrame,relief; int width=0,height=0,left=0,top=0; std::array<float,3> glow={1,1,1}; float glowWeight=0,glowHeight=0.85f; std::array<float,3> emissionColor={}; float emissionWeight=0,emissionCoverage=0,emissionU=0,emissionV=0; std::vector<byte> emission,screens; std::array<float,3> average={},brightest={}; bool averaged=false,brightened=false; bool leaded=false; };
+// brushedDown: the artwork's streaks run along v, so bare metal is brushed
+// that way (withRelief); otherwise along u. blank: the share of smooth
+// texels; only mostly blank metal is brushed.
+struct Image { bool opaque=true; std::vector<byte> pixels; GpuTextureRef texture,glassFrame,relief; int width=0,height=0,left=0,top=0; std::array<float,3> glow={1,1,1}; float glowWeight=0,glowHeight=0.85f; std::array<float,3> emissionColor={}; float emissionWeight=0,emissionCoverage=0,emissionU=0,emissionV=0; std::vector<byte> emission,screens; std::array<float,3> average={},brightest={}; bool averaged=false,brightened=false; bool leaded=false; bool brushedDown=false; float blank=0; };
 
 // Frame profiling for the performance smoke test (I_Render3DProfile).
 struct Profile { bool enabled=false; unsigned skip=0; const char *screenshotPath=nullptr; I_Render3DFrameProfile frame={}; };
@@ -198,6 +239,9 @@ extern std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches;
 // player's own included (addThing in scene3d/geometry.cpp).
 extern std::map<int,std::vector<Vertex>> mirrorBatches;
 extern std::vector<Vertex> mistVertices,particleVertices,heatVertices;
+// Glowing particles (ash's embers): drawn as particles, and into the bloom
+// pass as well, so they glow like a monster's eyes without lighting anything.
+extern std::vector<Vertex> glowVertices;
 // Liquid crests (splash rings, shore ripples): brighten what is under them by
 // one plus their color (crestPipeline).
 extern std::vector<Vertex> crestVertices;
@@ -205,12 +249,19 @@ extern std::vector<Vertex> crestVertices;
 extern std::vector<Vertex> shaftVertices;
 // Sky ceilings and sky walls, drawn into depth with the sky shader.
 extern std::vector<Vertex> skyVertices;
+// Whether the level has any sky (a sky flat). Without one (the library),
+// nothing is drawn behind the world: past all it draws is darkness.
+extern bool levelSky;
+// Whether a far fog (DERPINFO farfog) is on: the sky's backdrop is drawn in
+// its colour then, sky or not (sky.frag).
+extern bool farFogActive;
 // Window panes (scene3d/windows.cpp), blended over the finished world by glass.frag.
 extern std::vector<Vertex> glassVertices;
 // With glass reflections: whether the world is mirrored in a window this
 // frame, that pane's plane (unit normal toward the eye, offset), and how far
 // it has faded in from its probe since it became the mirror (0-1).
 extern bool glassMirrorActive;
+extern bool glassMirrorSilvered;   // the chosen mirror is a wall mirror (wall_mirrors.cpp), not a window
 extern float glassMirrorPlane[4],glassMirrorFade;
 // Glass reflection probes: cube maps captured from in front of each window
 // on each side, for panes without the live mirror. at: where; low/high: the
@@ -254,9 +305,16 @@ void applySettings();
 void settingsChanged();
 void buildCloudTexture();
 Image &wallImage(int index);
+// The sky to draw: on Phobos its copy with the painted air cleared (space.cpp).
+const GpuTextureRef &skyImage();
 Image &lumpImage(int lump,bool flat);
 // Builds the camera, layout and (when the world is visible) all geometry and lights.
 FrameView prepareFrame(int width,int height);
+// Frame pacing (pacing.cpp): the backend times the two calls that may wait for
+// the display, taking the swapchain image and submitting the frame, from paceStart.
+double paceStart();
+void paceAcquired(double start);
+void paceSubmitted(double start);
 // Level loading (loading.cpp): when loadPending, the backend calls
 // runLoading before drawing the frame. It does the frame's level building
 // and bakes while show draws the loading screen (level or other title, the
@@ -275,5 +333,20 @@ std::vector<unsigned> paletteLUTColors(const unsigned *palette);
 bool renderCheckDue();
 void saveScreenshot(const void *bgra,int width,int height,int stride);
 void updateTitle(int width,int height,const char *renderer);
+// F4's "Show FPS" readout (scene3d/frame_stats.cpp, stats_overlay.cpp): the
+// backend marks each frame's moments (SDL_GetTicksNS): when it started waiting
+// for the display, got its image, had the scene built (prepareFrame) and
+// submitted it. statsOverlay: the readout for the top left corner,
+// straight-alpha RGBA, null while it is off; render and display: the sizes the
+// frame is drawn at and shown at.
+void statsFrame(uint64_t waitStart,uint64_t acquired,uint64_t prepared,uint64_t submitted);
+GpuTextureRef statsOverlay(int &width,int &height,int renderWidth,int renderHeight,int displayWidth,int displayHeight);
+#ifdef DOOM_DEVTOOLS
+// Local dev tools (devtools/): an overlay image for the top right corner, straight-alpha RGBA,
+// drawn after prepareFrame; null when none.
+GpuTextureRef devOverlay(int &width,int &height);
+// And a signal glitch for the present pass (present.frag's upscale.w): 0 off.
+float devGlitch();
+#endif
 } // namespace doom3d
 #endif

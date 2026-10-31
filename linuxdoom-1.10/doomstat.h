@@ -57,6 +57,7 @@ extern  boolean	debugnotarget;
 extern  boolean	respawnparm;	// checkparm of -respawn
 extern  boolean	fastparm;	// checkparm of -fast
 extern  boolean classicmovement;
+extern  boolean strafeboost;
 
 extern  boolean	devparm;	// DEBUG: launched with -devparm
 

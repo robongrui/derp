@@ -73,6 +73,9 @@ I_StartSound
 // Stops a sound channel.
 void I_StopSound(int handle);
 
+// A DMX sound lump by name, whole and dry, from no place; 0 if there is none.
+int I_SoundLump(const char* name);
+
 // Called by S_*() functions
 //  to see if a channel is still playing.
 // Returns 0 if no longer playing, 1 if playing.
@@ -90,6 +93,9 @@ I_UpdateSoundParams
 // Where a positioned sound is in the map, for muffling and distance.
 // Handle 0 places the sound the next I_StartSound starts.
 void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z);
+// The next I_StartSound is the listener's own (a mixer may hear it through
+// a suit when there is no air around them).
+void I_SoundOwn(void);
 // How far an effect carries, FRACUNIT as DOOM hears it (gone past 1200
 // units): a mixer with a natural falloff lets loud ones (gunfire, blasts)
 // reach farther, fainter and muffled.

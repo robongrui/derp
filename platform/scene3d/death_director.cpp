@@ -186,7 +186,7 @@ bool deathView(const mobj_t &thing,float fraction,DeathView &view) {
     auto at=std::find(art.steps.begin(),art.steps.end(),(int)(thing.state-states));
     if(at==art.steps.end())return false;
     int gameStep=(int)(at-art.steps.begin());
-    float t=std::max(0.0f,leveltime+fraction-1-d.start);
+    float t=std::max(0.0f,(float)(leveltime-1-d.start)+fraction);
     auto show=[&](int state){view.sprite=states[state].sprite;view.frame=states[state].frame;};
     view.bend=1;view.settle=0;
     if(d.stagger!=STAGGER_NONE&&t<d.staggerTics) {

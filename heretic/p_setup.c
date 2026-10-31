@@ -8,6 +8,7 @@
 #include "doomdef.h"
 #include "p_local.h"
 #include "soundst.h"
+#include "../platform/derp_info.h"
 
 void	P_SpawnMapThing (mapthing_t *mthing);
 
@@ -556,6 +557,7 @@ void P_SetupLevel (int episode, int map, int playermask, skill_t skill)
 	leveltime = 0;
 	
 	lumpnum = W_GetNumForName (lumpname);
+	DerpInfo_Level (lumpname);	// DERP: what the map's author asks of it (platform/derp_info.h)
 	
 // note: most of this ordering is important	
 	P_LoadBlockMap (lumpnum+ML_BLOCKMAP);

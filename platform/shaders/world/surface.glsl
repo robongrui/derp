@@ -72,6 +72,32 @@ float paletteShininess(uint index) {
     if(index>=160u&&index<168u) return 16.0;  // Pale yellows.
     return 12.0;
 }
+// How bare a texel of a metal texture (frameMean.a +32, metalSurface in
+// scene3d/scene.cpp) is, for highlights in the metal's own colour: steel
+// greys and bright brass fully, paint, rust and coloured parts not at all.
+float metalness(uint index) {
+    vec3 rgb=texelFetch(palette,ivec2(int(index),0),0).rgb;
+    float top=max(rgb.r,max(rgb.g,rgb.b)),saturation=(top-min(rgb.r,min(rgb.g,rgb.b)))/max(top,1e-3);
+    float luma=dot(rgb,vec3(0.299,0.587,0.114));
+    // Brass: a saturated yellow-orange, bright; dull tans are paint, dark
+    // oranges rust.
+    bool brass=saturation>0.4&&luma>0.35&&rgb.r>=rgb.g&&rgb.g>=rgb.b&&rgb.g>=rgb.r*0.55;
+    return brass?1.0:1.0-smoothstep(0.1,0.25,saturation);
+}
+// A highlight's strength at half vector h. Brushed metal (brushed: how
+// much) is brushed along brush, a unit vector in the surface: smooth along
+// it, rough across it, so the highlight stretches into a streak across the
+// brush lines rather than a round spot that reads as plastic. Anisotropic Blinn-Phong, each
+// direction's exponent scaled so the streak keeps the spot's energy.
+float highlightAt(vec3 bumped,vec3 h,float shininess,vec3 brush,float brushed) {
+    float nh=saturate(dot(bumped,h)),spot=pow(nh,shininess);
+    if(brushed<=0.0) return spot;
+    float along=dot(h,brush),across=dot(h,cross(bumped,brush));
+    float sharp=shininess*4.0,broad=max(shininess/8.0,2.0);
+    float exponent=(sharp*along*along+broad*across*across)/max(along*along+across*across,1e-6);
+    float streak=pow(nh,exponent)*sqrt((sharp+2.0)*(broad+2.0))/(shininess+2.0);
+    return mix(spot,streak,brushed);
+}
 // Gloss and highlight sharpness from a texture's material (frameMean.a,
 // surfaceMaterial in scene3d/scene.cpp) and the texel's own colour, for
 // games whose palettes don't follow DOOM's ramps. Metal shines where it is

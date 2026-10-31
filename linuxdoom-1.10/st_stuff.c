@@ -42,6 +42,7 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 
 #include "st_stuff.h"
 #include "st_lib.h"
+#include "st_library.h"
 #include "r_local.h"
 
 #include "p_local.h"
@@ -57,6 +58,7 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 
 // State.
 #include "doomstat.h"
+#include "p_library.h"
 
 // Data.
 #include "dstrings.h"
@@ -108,6 +110,9 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 
 #define ST_NUMFACES \
           (ST_FACESTRIDE*ST_NUMPAINFACES+ST_NUMEXTRAFACES)
+
+// The library's own (st_library.c), past the rest: not loaded or unloaded with them.
+#define ST_LIBRARYFACE		ST_NUMFACES
 
 #define ST_TURNOFFSET		(ST_NUMSTRAIGHTFACES)
 #define ST_OUCHOFFSET		(ST_TURNOFFSET + ST_NUMTURNFACES)
@@ -329,7 +334,7 @@ static patch_t*		shortnum[10];
 static patch_t*		keys[NUMCARDS]; 
 
 // face status patches
-static patch_t*		faces[ST_NUMFACES];
+static patch_t*		faces[ST_NUMFACES+1];
 
 // face background
 static patch_t*		faceback;
@@ -787,6 +792,13 @@ void ST_updateFaceWidget(void)
     static int	priority = 0;
     boolean	doevilgrin;
 
+    // In the library he is a zombieman, and his face only looks.
+    if (P_Library () && faces[ST_LIBRARYFACE])
+    {
+	st_faceindex = ST_LIBRARYFACE;
+	return;
+    }
+
     if (priority < 10)
     {
 	// dead
@@ -1224,6 +1236,7 @@ void ST_loadGraphics(void)
     }
     faces[facenum++] = W_CacheLumpName("STFGOD0", PU_STATIC);
     faces[facenum++] = W_CacheLumpName("STFDEAD0", PU_STATIC);
+    faces[ST_LIBRARYFACE] = ST_LibraryFace ();
 
 }
 
@@ -1468,6 +1481,14 @@ void ST_createWidgets(void)
 }
 
 static boolean	st_stopped = true;
+
+
+// The whole bar drawn again next time (after a screen of its own covered
+// it: the library's black ones, m_library.c).
+void ST_Refresh (void)
+{
+    st_firsttime = true;
+}
 
 
 void ST_Start (void)

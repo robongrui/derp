@@ -32,7 +32,7 @@ CMake also downloads the Nuked OPL3 emulator (LGPL-2.1+) and TinySoundFont
 GeneralUser GS SoundFont (32 MB, pinned and hash-checked) into
 `build/play/soundfonts/` and copies it beside the game; `-DDOOM_SOUNDFONT=OFF`
 skips it, and music then falls back to OPL (to the system synthesizer on macOS).
-On macOS, game data is copied into `build/play/Play DOOM.app`. You can supply
+On macOS, game data is copied into `build/play/Play DERP.app`. You can supply
 an original DOOM/DOOM II IWAD instead. Without bundled data, the app presents
 a file picker at launch. On Linux and Windows use `doom -iwad /path/to/game.wad`.
 `platform/i_music.c` picks the music device. MUS and MIDI scores go through
@@ -313,7 +313,7 @@ and their floor shadows fall from that light.
 
 ```sh
 SDL_GPU_DRIVER=vulkan SDL_VULKAN_LIBRARY=/opt/homebrew/lib/libvulkan.1.dylib \
-  "build/play/Play DOOM.app/Contents/MacOS/Play DOOM"
+  "build/play/Play DERP.app/Contents/MacOS/Play DERP"
 ```
 
 `-rendercheck` captures on E1M1 from the former native Metal renderer, SDL_gpu

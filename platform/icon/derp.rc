@@ -1,0 +1,3 @@
+// The program icon on Windows; SDL uses the first icon for the window too.
+// Made from platform/icon/derp-logo.png by scripts/make-icons.py.
+1 ICON "derp.ico"

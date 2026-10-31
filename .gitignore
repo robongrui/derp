@@ -1,5 +1,6 @@
 # Build output and the locally packaged app
 /build/
+/Play DERP.app/
 /Play DOOM.app/
 /CMakeUserPresets.json
 /dist/
@@ -24,8 +25,16 @@
 
 # Local notes, plans and research write-ups, never published
 /CLAUDE.md
+# Local-only dev tools, never published: CMake includes devtools/devtools.cmake when present
+/devtools/
 /PLAN-*.md
 /*-research.md
+# Episode 0.5's map generator, private; the map it makes is committed (below)
+/scp_7179_b/mapgen/
+!/scp_7179_b/library.wad
+# Episode 0.5's design notes and handover (its public page: scp_7179_b/README.md)
+/scp_7179_b/PLAN.md
+/scp_7179_b/HANDOVER.md
 .claude/
 
 # Scratch output from the render, music and perf tools

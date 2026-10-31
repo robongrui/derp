@@ -52,6 +52,8 @@ int Game_DamagingFloor(int special)
     return special == 4 || special == 5 || special == 7 || special == 11 || special == 16;
 }
 
+const char *Game_RainLiquidFlat(void) { return "NUKAGE1"; }
+
 /* Single textures whose family says otherwise, checked first: checked by
    ear and eye in the maps, or plain in rendered views of them. Where a
    texture could be read as stone or metal it stays stone: metal rings, and
@@ -111,6 +113,7 @@ game_surface Game_FlatSurface(const char *name)
         {"FLOOR5_2", GAME_SURFACE_STONE}, {"FLOOR5_3", GAME_SURFACE_STONE}, {"FLOOR4_6", GAME_SURFACE_STONE},
         {"FLOOR4_8", GAME_SURFACE_STONE},
         {"FLOOR5_4", GAME_SURFACE_STONE}, {"FLAT20", GAME_SURFACE_STONE}, {"FLAT5_3", GAME_SURFACE_WOOD},
+        {"CEIL3_5", GAME_SURFACE_STONE},
         {"CEIL5_2", GAME_SURFACE_METAL}, {"CEIL1_2", GAME_SURFACE_METAL}, {"CEIL1_3", GAME_SURFACE_METAL},
         {"FLAT2", GAME_SURFACE_METAL}, {"FLAT17", GAME_SURFACE_METAL}, {"FLOOR1_7", GAME_SURFACE_METAL},
         {"GRNLITE1", GAME_SURFACE_METAL}, {NULL, GAME_SURFACE_STONE}};

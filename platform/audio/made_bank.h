@@ -22,6 +22,9 @@ const made_sample_t *MadeBank_Impact(int kind, int variant);
 /* A take of an ambient kind's loop (audio/ambient_synth.h); each layer of
    the kind (audio/ambience.h) plays its own. */
 const made_sample_t *MadeBank_Loop(int kind, int layer);
+/* Wind's and rain's take at a strength step (0 the lightest to
+   AMBIENT_STEPS - 1 the hardest); MadeBank_Loop gives their usual one. */
+const made_sample_t *MadeBank_StepLoop(int kind, int step);
 /* Separately built optional computer palette. The 32 s periodic body plays
    once; the three spatial activity takes last 32, 37 and 43 s. Original loops
    above retain their existing samples and durations. NULL before the build. */

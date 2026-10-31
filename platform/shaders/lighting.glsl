@@ -59,6 +59,16 @@ bool flashPasses(uint j,vec3 origin3,vec3 delta,inout float low,inout float high
 // after the blockers (doom_flash_slice_blockers): a table of first<<16|count
 // per slice, then 16-bit indices. A ray meets no wall outside its azimuth.
 #define FLASH_SLICES 256u
+// atan2 for the slice lookup: GPU atan is slow and runs per light per pixel.
+// Off by about 1e-5 radians, far inside the bin of margin the slices keep
+// (doom_flash_slice_blockers), so a pixel tests the same walls.
+float sliceAtan(float y,float x) {
+    float ax=abs(x),ay=abs(y),a=min(ax,ay)/max(max(ax,ay),1e-20),s=a*a;
+    float r=((-0.0464964749*s+0.15931422)*s-0.327622764)*s*a+a;
+    if(ay>ax) r=1.57079637-r;
+    if(x<0.0) r=3.14159274-r;
+    return y<0.0?-r:r;
+}
 // FEATURE_STIPPLED_SHADOWS: the flashlight's lamp is a short diagonal
 // segment across the ray, FLASH_LAMP_RADIUS each way, instead of a point.
 // Each pixel still casts one ray, from the point on it its ordered-dither
@@ -69,25 +79,34 @@ bool flashPasses(uint j,vec3 origin3,vec3 delta,inout float low,inout float high
 // the distance behind it. Diagonal, so the steps run in order across both
 // the vertical edges of wall ends and the level ones of lintels and steps.
 #define FLASH_LAMP_RADIUS 1.5
-float flashAt(vec3 point,vec3 normal,uint i,float stipple) {
-    float amount=flashAtOpen(point,normal,i);
-    if(amount<=0.0) return 0.0;
+// Lamps (direction.w minus their size: shots, projectiles, barrels) shine
+// from four points on a fixed diagonal through their center
+// (doom_flash_lamp_point); stipple, in flashStipple's steps, is where on it
+// a ray leaves from, so shadow edges soften into a chunky ordered dither.
+// Their slices list what rays from each point meet, by its own slice.
+// The light reaching point past the walls, from its unblocked amount
+// (flashAtOpen, above 0).
+float flashShadowed(vec3 point,uint i,float stipple,float amount) {
     vec3 origin3=lights[i].position.xyz;
     vec3 delta=point-origin3;
     // Blockers are listed by the slice of the lamp's own ray (below); the
-    // segment is short enough that a ray from its end meets the same ones.
+    // flashlight's segment is short enough that a ray from its end meets the
+    // same ones.
     vec3 sliceDelta=delta;
     if(stipple!=0.0&&lights[i].direction.w>0.0&&dot(delta.xy,delta.xy)>1.0) {
         vec2 across=normalize(vec2(-delta.y,delta.x));
         origin3+=vec3(across,1.0)*(stipple*FLASH_LAMP_RADIUS);
         delta=point-origin3;
+    } else if(stipple!=0.0&&lights[i].direction.w<0.0) {
+        origin3+=vec3(stipple*-lights[i].direction.w*0.57735027);
+        delta=point-origin3;sliceDelta=delta;
     }
     float extent=lights[i].direction.w>0.0?0.0:lights[i].direction.x,low=-extent,high=extent;
     uint first=lights[i].first&0x7fffffffu,count=lights[i].count;
     if((lights[i].first&0x80000000u)!=0u) {
         // Straight above or below the light no wall is crossed.
         if(sliceDelta.x!=0.0||sliceDelta.y!=0.0) {
-            float turn=(atan(sliceDelta.y,sliceDelta.x)+3.14159265)*(float(FLASH_SLICES)/6.2831853);
+            float turn=(sliceAtan(sliceDelta.y,sliceDelta.x)+3.14159265)*(float(FLASH_SLICES)/6.2831853);
             uint slice=min(uint(max(turn,0.0)),FLASH_SLICES-1u);
             uint table=first+2u*count,indices=table+FLASH_SLICES/4u;
             uint entry=lightWords[table+slice/4u][slice%4u];
@@ -98,6 +117,10 @@ float flashAt(vec3 point,vec3 normal,uint i,float stipple) {
         }
     } else for(uint j=first;j<first+2u*count;j+=2u) if(!flashPasses(j,origin3,delta,low,high)) return 0.0;
     return extent>0.0?amount*(high-low)/(2.0*extent):amount;
+}
+float flashAt(vec3 point,vec3 normal,uint i,float stipple) {
+    float amount=flashAtOpen(point,normal,i);
+    return amount>0.0?flashShadowed(point,i,stipple,amount):0.0;
 }
 float flashAt(vec3 point,vec3 normal,uint i) {return flashAt(point,normal,i,0.0);}
 float flashAt(vec3 point,uint i) {return flashAt(point,vec3(0),i,0.0);}
@@ -157,6 +180,14 @@ float heightFogTau(float oz,float pz,float distance,float density,float falloff,
 float fogBeamIntegral(float distance,float radius) {
     float u=clamp(distance/max(radius,0.001),0.0,1.0);
     return radius*(u-u*u*u+0.5*u*u*u*u);
+}
+// Snow, sand and ash fill the air down by the ground: there the height fog
+// takes the open air's colour (c.haze) for its own dark grey, as thick as
+// it falls or blows. In DOOM 2's streets the dark grey pooled at the foot
+// of every far wall under the pale haze, like ambient occlusion.
+float weatherAir() {
+    bool filled=c.weather.w==WEATHER_SNOW||c.weather.w==WEATHER_SAND||c.weather.w==WEATHER_ASH;
+    return filled?saturate(c.weather.x*1.25):0.0;
 }
 uint fogLight(uint n) {return n==0u?fogA.y:n==1u?fogA.z:n==2u?fogA.w:fogB.x;}
 vec4 fogAlong(vec3 end) {

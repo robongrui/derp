@@ -38,9 +38,11 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "m_menu.h"
 #include "m_random.h"
 #include "i_system.h"
+#include "i_video.h"
 
 #include "p_setup.h"
 #include "p_saveg.h"
+#include "p_library.h"
 #include "p_tick.h"
 
 #include "d_main.h"
@@ -56,6 +58,7 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "w_wad.h"
 
 #include "p_local.h" 
+#include "p_phobos.h"
 
 #include "s_sound.h"
 
@@ -105,6 +108,7 @@ int             gamemap;
 boolean         paused; 
 boolean         sendpause;             	// send a pause event next tic 
 boolean         sendsave;             	// send a save event next tic 
+int             sendkiosk = -1;       	// something taken at the library's kiosk, next tic (m_kiosk.c)
 boolean         usergame;               // ok to save / end game 
  
 boolean         timingdemo;             // if true, exit with report on completion 
@@ -155,6 +159,8 @@ int             key_strafeleft;
 int		key_straferight; 
 int             key_fire;
 int		key_use;
+int		key_jump;
+int		key_boots;
 int		key_strafe;
 int		key_speed; 
  
@@ -190,6 +196,7 @@ boolean*	mousebuttons = &mousearray[1];		// allow [-1]
 // mouse values are used once 
 int             mousex;
 int		mousey;         
+static int	mouseturns[BACKUPTICS];	// the mouse's part of each ticcmd's turn
 
 int             dclicktime;
 int		dclickstate;
@@ -257,6 +264,16 @@ void G_BuildTiccmd (ticcmd_t* cmd)
     strafe = gamekeydown[key_strafe] || mousebuttons[mousebstrafe] 
 	|| joybuttons[joybstrafe]; 
     speed = gamekeydown[key_speed] || joybuttons[joybspeed];
+
+    // Caps Lock on = always run; the run key then walks.
+    {
+	static int lastcaps = -1;
+	int caps = I_CapsLock ();
+	if (lastcaps != -1 && caps != lastcaps)
+	    players[consoleplayer].message = caps ? "ALWAYS RUN ON" : "ALWAYS RUN OFF";
+	lastcaps = caps;
+	speed ^= caps;
+    }
  
     forward = side = 0;
     
@@ -332,6 +349,9 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	|| joybuttons[joybfire]) 
 	cmd->buttons |= BT_ATTACK; 
  
+    if (gamekeydown[key_jump])
+	cmd->buttons |= BT_JUMP;
+
     if (gamekeydown[key_use] || joybuttons[joybuse] ) 
     { 
 	cmd->buttons |= BT_USE;
@@ -411,6 +431,7 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	side += mousex*2; 
     else 
 	cmd->angleturn -= mousex*0x8; 
+    mouseturns[maketic%BACKUPTICS] = strafe ? 0 : -mousex*0x8;
 
     mousex = mousey = 0; 
 	 
@@ -438,7 +459,47 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	sendsave = false; 
 	cmd->buttons = BT_SPECIAL | BTS_SAVEGAME | (savegameslot<<BTS_SAVESHIFT); 
     } 
+
+    // Taken at the library's kiosk (m_kiosk.c).
+    if (sendkiosk >= 0)
+    {
+	cmd->buttons = BT_SPECIAL | BTS_KIOSK | (sendkiosk & BTS_KIOSKMASK);
+	sendkiosk = -1;
+    }
 } 
+
+//
+// G_MouseTurn
+// For a renderer that turns the view every frame (the 3D one): in *last
+// the mouse's part of the newest run tic's turn, in *pending what ticcmds
+// built but not run yet and the mouse events still queued will add, both
+// as angleturn. *pending is 0 when the next tic won't turn the player
+// (dead, frozen after a teleport, the chainsaw's pull) or the mouse strafes.
+//
+void G_MouseTurn (int* last, int* pending)
+{
+    player_t*	player = &players[consoleplayer];
+    int		x = mousex;
+    int		i;
+    // Upside down (Phobos) P_MovePlayer turns the other way.
+    int		sign = P_ViewUpside () ? -1 : 1;
+
+    *last = gametic ? sign*mouseturns[(gametic-1)%BACKUPTICS] : 0;
+    *pending = 0;
+    if (player->playerstate != PST_LIVE || !player->mo
+	|| player->mo->reactiontime || (player->mo->flags & MF_JUSTATTACKED)
+	|| gamekeydown[key_strafe] || mousebuttons[mousebstrafe]
+	|| joybuttons[joybstrafe])
+	return;
+    for (i = eventtail ; i != eventhead ; i = (i+1)&(MAXEVENTS-1))
+	if (events[i].type == ev_mouse)
+	    x += events[i].data2*(mouseSensitivity+5)/10;
+    if (x > 4095) x = 4095;
+    else if (x < -4095) x = -4095;
+    *pending = -sign*x*0x8;
+    for (i = gametic ; i < maketic ; i++)
+	*pending += sign*mouseturns[i%BACKUPTICS];
+}
  
 
 //
@@ -549,6 +610,10 @@ boolean G_Responder (event_t* ev)
 	    return true;	// status window ate it 
 	if (AM_Responder (ev)) 
 	    return true;	// automap ate it 
+	// Phobos: the grav boots on or off.
+	if (ev->type == ev_keydown && ev->data1 == key_boots
+	    && P_ToggleBoots (&players[consoleplayer]))
+	    return true;
     } 
 	 
     if (gamestate == GS_FINALE) 
@@ -703,7 +768,9 @@ void G_Ticker (void)
     {
 	if (playeringame[i]) 
 	{ 
-	    if (players[i].cmd.buttons & BT_SPECIAL) 
+	    if ((players[i].cmd.buttons & (BT_SPECIAL|BTS_KIOSK)) == (BT_SPECIAL|BTS_KIOSK))
+		P_LibraryKiosk (&players[i], players[i].cmd.buttons & BTS_KIOSKMASK);
+	    else if (players[i].cmd.buttons & BT_SPECIAL) 
 	    { 
 		switch (players[i].cmd.buttons & BT_SPECIALMASK) 
 		{ 
@@ -1026,6 +1093,10 @@ void G_DoCompleted (void)
     int             i; 
 	 
     gameaction = ga_nothing; 
+
+    // Episode 0.5, the library (E0M1): there is no way out of it yet.
+    if (gameepisode == 0)
+	return;
  
     for (i=0 ; i<MAXPLAYERS ; i++) 
 	if (playeringame[i]) 
@@ -1246,6 +1317,8 @@ void G_DoLoadGame (void)
     P_UnArchiveWorld (); 
     P_UnArchiveThinkers (); 
     P_UnArchiveSpecials (); 
+    P_LibraryBufferEnd (savebuffer + length);
+    P_UnArchiveLibrary ();
  
     if (*save_p != 0x1d) 
 	I_Error ("Bad savegame");
@@ -1314,6 +1387,8 @@ void G_DoSaveGame (void)
     P_ArchiveWorld (); 
     P_ArchiveThinkers (); 
     P_ArchiveSpecials (); 
+    P_LibraryBufferEnd (savebuffer + capacity);
+    P_ArchiveLibrary ();
 	 
     *save_p++ = 0x1d;		// consistancy marker 
 	 
@@ -1359,7 +1434,7 @@ static boolean G_MapExists (int episode, int map)
 {
     char	name[9];
 
-    if (gamemode == commercial)
+    if (gamemode == commercial && episode != 0)
 	sprintf (name, "MAP%02d", map);
     else
 	sprintf (name, "E%dM%d", episode, map);
@@ -1438,7 +1513,9 @@ G_InitNew
     // This was quite messy with SPECIAL and commented parts.
     // Supposedly hacks to make the latest edition work.
     // It might not work properly.
-    if (episode < 1)
+    // Episode 0 is 0.5, the library (scp_7179_b): its one map, E0M1, in
+    // any game that has it loaded.
+    if (episode < 1 && !(episode == 0 && W_CheckNumForName ("E0M1") >= 0))
       episode = 1; 
 
     if ( gamemode == retail )
@@ -1459,7 +1536,7 @@ G_InitNew
     
 
   
-    if (map < 1) 
+    if (map < 1 || episode == 0) 
 	map = 1;
     
     if ( (map > 9)
@@ -1519,6 +1596,7 @@ G_InitNew
     else
 	switch (episode) 
 	{ 
+	  case 0:
 	  case 1: 
 	    skytexture = R_TextureNumForName ("SKY1"); 
 	    break; 

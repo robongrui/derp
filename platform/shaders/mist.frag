@@ -5,6 +5,8 @@ layout(set=2,binding=0) uniform sampler2D cloud;
 layout(set=2,binding=1) uniform sampler2D depth;
 layout(std140,set=3,binding=0) uniform Camera CAMERA_BLOCK c;
 layout(location=0) out vec4 outColor;
+#include "whiteout.glsl"
+#include "fog_bank.glsl"
 float heightFogTau(float oz,float pz,float distance,float density,float falloff,float reference) {
     float x=falloff*abs(pz-oz);
     float f=x<1e-3?1.0-x*0.5+x*x/6.0:(1.0-exp(-x))/x;
@@ -30,7 +32,7 @@ void main() {
         float noise=textureLod(cloud,vec2(dot(vWorld.xy,vec2(0.7071)),vWorld.z-tic*0.35)/112.0,0.0).r;
         float glow=vLight*across*across*along*near*(0.5+noise)*0.05;
         glow=floor(glow*32.0+bayer4(ivec2(floor(gl_FragCoord.xy/max(c.fx2.x,1.0)))))/32.0;
-        outColor=vec4(vTint*c.fx.x*transmission,glow);
+        outColor=vec4(vTint*c.fx.x*transmission,glow*(1.0-whiteout(vWorld,false)));   // lost in a blizzard (whiteout.glsl)
         return;
     }
     float soft=saturate((sceneZ-layerZ)/8.0);
@@ -40,5 +42,9 @@ void main() {
     vec2 uv=vWorld.xy/160.0+vec2(c.fog.w*0.009,c.fog.w*0.005)+vUV;
     float noise=textureLod(cloud,uv,0.0).r;
     float alpha=vLight*(0.25+noise*0.75)*soft;
+    // In the fog bank (fog_bank.glsl) far sheets sink into it, and where a
+    // blast or a torch has opened it (bankClear) the sheets are gone too.
+    if(c.bank.w>0.0) alpha*=bankNear(vWorld).a*bankClear(vWorld.xy);
+    alpha*=1.0-whiteout(vWorld,(vMode&MODE_MIST_OUTSIDE)!=0u);   // and in a blizzard's whiteout (whiteout.glsl)
     outColor=vec4(mix(fogHaze(c.fx.yzw),vTint,transmission)*c.fx.x,alpha);
 }

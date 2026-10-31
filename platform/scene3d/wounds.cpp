@@ -41,6 +41,13 @@ void woundView(const mobj_t *thing,const mobj_t *viewer,const Image &image,bool 
     surfaces[thing]={viewer,&image,x,y,feet,top,bottom,rx,ry,
         (float)(thing->angle*(2*doomPi/4294967296.0)),pose?*pose:BodyPose{},leveltime,flipped,pose!=nullptr};
 }
+bool woundSpriteView(const mobj_t &thing,SpriteView &out) {
+    auto found=surfaces.find(&thing);
+    if(found==surfaces.end()||!found->second.image||leveltime-found->second.tic>2)return false;
+    const WoundSurface &s=found->second;
+    out={s.image,s.x,s.y,s.top,s.bottom,s.rx,s.ry,s.flipped};
+    return true;
+}
 static bool opaqueAt(const Image &image,doom_wounds::Point point) {
     int c=(int)std::floor(point.u),r=(int)std::floor(point.v);
     return c>=0&&r>=0&&c<image.width&&r<image.height&&image.pixels[((size_t)r*image.width+c)*2+1];
@@ -107,7 +114,7 @@ static doom_wounds::Point projected(Wound &wound,const Image &image,bool flipped
 }
 
 void woundHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,fixed_t slope,int damage,const mobj_t *shooter) {
-    if(!settings.wounds||!target||!target->info)return;
+    if(!settings.wounds||!target||!target->info||bloodTint(target)==BLOOD_NONE)return;   // nothing to bleed: no bloody hole either
     if(!(target->info->flags&MF_COUNTKILL)&&Game_ThingRole(target->type)!=GAME_THING_UNCOUNTED_MONSTER)return;
     if(target->sprite<0||target->sprite>=numsprites)return;
     const auto &sprite=sprites[target->sprite];int frame=target->frame&FF_FRAMEMASK;
@@ -176,7 +183,7 @@ void woundHit(mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_
     }
     list.push_back(wound);
 }
-void forgetWounds(const mobj_t *thing) {wounds.erase(thing);surfaces.erase(thing);}
+void forgetWounds(const mobj_t *thing) {wounds.erase(thing);surfaces.erase(thing);forgetCraters(thing);}
 int woundSpots(const mobj_t *thing,WoundSpot *out,int most) {
     auto found=wounds.find(thing);
     if(found==wounds.end())return 0;
@@ -187,7 +194,8 @@ int woundSpots(const mobj_t *thing,WoundSpot *out,int most) {
     }
     return count;
 }
-void woundsShutdown() {wounds.clear();surfaces.clear();lyings.clear();standing.clear();}
+// scp_7179_b is real
+void woundsShutdown() {wounds.clear();surfaces.clear();lyings.clear();standing.clear();cratersShutdown();}
 
 // How tall a monster stands, by its first drawing, to tell lying death drawings.
 static float standingTop(const mobj_t &thing) {
@@ -248,9 +256,18 @@ static byte woundMark(float x,float y,float radius,uint32_t seed) {
     return stain;
 }
 
+static bool woundHoles(const mobj_t &thing,const Image &image,bool flipped,float rx,float ry,std::vector<byte> &mask);
 bool woundMask(const mobj_t &thing,const Image &image,bool flipped,float rx,float ry,std::vector<byte> &mask) {
+    if(!settings.wounds)return false;
+    bool holes=woundHoles(thing,image,flipped,rx,ry,mask);
+    // Nukage rain's bites over them (craters.cpp).
+    return craterMask(thing,image,mask,holes)||holes;
+}
+
+// The shot holes alone (woundMask).
+static bool woundHoles(const mobj_t &thing,const Image &image,bool flipped,float rx,float ry,std::vector<byte> &mask) {
     auto found=wounds.find(&thing);
-    if(!settings.wounds||found==wounds.end()||found->second.empty()||image.pixels.empty())return false;
+    if(found==wounds.end()||found->second.empty()||image.pixels.empty())return false;
     bool dead=thing.health<=0;
     // Death drawings face the viewer; lying ones carry the holes along the body.
     float tall=standingTop(thing);
@@ -294,9 +311,9 @@ bool woundMask(const mobj_t &thing,const Image &image,bool flipped,float rx,floa
     return any;
 }
 
-void woundVertex(Vertex &vertex,byte state) {
+void woundVertex(Vertex &vertex,byte state,int tint) {
     if(state<2||state>5)return;
-    const auto &shades=bloodPalette();
+    const auto &shades=bloodPalette(tint);
     if(shades.empty())return;
     static const float shade[6]={0,0,0.02f,0.45f,0.82f,0.22f};
     byte color=shades[(size_t)std::lround(shade[state]*(shades.size()-1))];
@@ -311,7 +328,7 @@ void woundVertex(Vertex &vertex,byte state) {
 // texture column edge (0..width) on the row's top or bottom; flip says the
 // texture runs right to left on screen.
 void maskedRow(std::vector<Vertex> &out,const std::vector<byte> &mask,int width,int r,bool flip,
-               const std::function<Vertex(int,bool)> &corner) {
+               const std::function<Vertex(int,bool)> &corner,int tint) {
     int c=0;
     while(c<width) {
         byte state=mask[(size_t)r*width+c];
@@ -320,7 +337,7 @@ void maskedRow(std::vector<Vertex> &out,const std::vector<byte> &mask,int width,
         if(state!=1) {
             int a=flip?end:c,b=flip?c:end;    // left to right on screen
             Vertex v[4]={corner(a,false),corner(b,false),corner(b,true),corner(a,true)};
-            if(state>=2)for(Vertex &vertex:v)woundVertex(vertex,state);
+            if(state>=2)for(Vertex &vertex:v)woundVertex(vertex,state,tint);
             quad(out,v[0],v[1],v[2],v[3]);
         }
         c=end;
@@ -332,7 +349,7 @@ static bool rowWounded(const std::vector<byte> &mask,int width,int r) {
 }
 
 void woundedQuads(std::vector<Vertex> &out,const Vertex &base,const Image &image,const std::vector<byte> &mask,
-                  float x,float y,float top,float rx,float ry,bool flip,float rowHeight) {
+                  float x,float y,float top,float rx,float ry,bool flip,float rowHeight,int tint) {
     int w=image.width,h=image.height;
     float left=-(float)image.left,right=left+w;
     auto at=[&](int edge,float z,float v) {
@@ -352,7 +369,7 @@ void woundedQuads(std::vector<Vertex> &out,const Vertex &base,const Image &image
     for(int r=0;r<h;++r) {
         if(!rowWounded(mask,w,r)) {if(block<0)block=r;continue;}
         flush(r);
-        maskedRow(out,mask,w,r,flip,[&](int edge,bool bottom){return at(edge,top-(r+(bottom?1:0))*rowHeight,(float)(r+(bottom?1:0)));});
+        maskedRow(out,mask,w,r,flip,[&](int edge,bool bottom){return at(edge,top-(r+(bottom?1:0))*rowHeight,(float)(r+(bottom?1:0)));},tint);
     }
     flush(h);
 }

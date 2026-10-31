@@ -33,10 +33,13 @@ rcsid[] = "$Id: p_user.c,v 1.3 1997/01/28 22:08:29 b1 Exp $";
 #include "d_event.h"
 
 #include "p_local.h"
+#include "p_phobos.h"
+#include "p_library.h"
 
 #include "doomstat.h"
 
 #include <math.h>
+#include <stdlib.h>
 
 
 
@@ -57,6 +60,42 @@ boolean		onground;
 boolean P_UseResponsiveMovement (void)
 {
     return !classicmovement && !demoplayback && !demorecording && !netgame;
+}
+
+// DOOM adds the strafe thrust on top of the forward one, so diagonals run up
+// to 1.4 times faster; the tighter tuning holds the pair to the longer of the
+// two, as fast as either key alone. Normal plus (F4, strafeboost): a running
+// diagonal held for STRAFE_BUILD tics eases back into DOOM's strafe-running,
+// so the speed builds instead of lurching; walking, or letting go of either
+// key, holds it to the longer key again. Called every tic of tuned movement.
+#define STRAFE_BUILD	20
+
+static int	diagonalheld[MAXPLAYERS];
+
+double P_DiagonalKeep (player_t* player)
+{
+    ticcmd_t*	cmd = &player->cmd;
+    double	f = abs (cmd->forwardmove), s = abs (cmd->sidemove), keep;
+    int*	held = player >= players && player < players + MAXPLAYERS
+		    ? &diagonalheld[player - players] : NULL;	// NULL: a test's
+
+    if (!f || !s)
+    {
+	if (held)
+	    *held = 0;
+	return 1;
+    }
+    keep = (f > s ? f : s)/sqrt (f*f + s*s);
+    // Running: the forward key at the run key's speed (forwardmove[1], g_game.c).
+    if (!strafeboost || !held || f <= 0x19)
+    {
+	if (held)
+	    *held = 0;
+	return keep;
+    }
+    if (*held < STRAFE_BUILD)
+	++*held;
+    return keep + (1 - keep)*(*held)/STRAFE_BUILD;
 }
 
 
@@ -258,9 +297,17 @@ void P_MovePlayer (player_t* player)
 {
     ticcmd_t*		cmd;
     // Match original terminal speed with 3/4 friction: (1-3/4)/(1-29/32).
-    int thrust = P_UseResponsiveMovement () ? 2048*8/3 : 2048;
+    int thrust = P_LibraryLegs (P_UseResponsiveMovement () ? 2048*8/3 : 2048);
 	
     cmd = &player->cmd;
+
+    // Upside down (Phobos: spun over the top, or on a ceiling in grav boots), turning
+    // and strafing go as they look.
+    if (player == &players[consoleplayer] && P_ViewUpside ())
+    {
+	cmd->angleturn = -cmd->angleturn;
+	cmd->sidemove = -cmd->sidemove;
+    }
 	
     player->mo->angle += (cmd->angleturn<<16);
 
@@ -271,15 +318,47 @@ void P_MovePlayer (player_t* player)
 	return;
     }
 
+    // Phobos, grav boots on: he walks on what he stands on, wall or ceiling too.
+    if (P_BootsMove (player))
+	return;
+
     // Do not let the player control movement
     //  if not onground.
     onground = (player->mo->z <= player->mo->floorz);
-	
-    if (cmd->forwardmove && onground)
-	P_Thrust (player, player->mo->angle, cmd->forwardmove*thrust);
-    
-    if (cmd->sidemove && onground)
-	P_Thrust (player, player->mo->angle-ANG90, cmd->sidemove*thrust);
+
+    // On Phobos without boots there is nothing to walk with (mu*g is next to no
+    // grip): the legs push off the floor, hop by hop; with the run key held the
+    // suit's thrusters push instead, on the floor or aloft.
+    if (P_Phobos () && !P_Booted (player->mo))
+    {
+	P_Jump (player, onground);
+	P_Jetpack (player);
+	P_PlayerSpin (player);
+    }
+    else
+    {
+    int		forward = cmd->forwardmove*thrust;
+    int		side = cmd->sidemove*thrust;
+
+    // Diagonals: see P_DiagonalKeep.
+    if (P_UseResponsiveMovement ())
+    {
+	double	keep = P_DiagonalKeep (player);
+
+	forward = (int)(forward*keep);
+	side = (int)(side*keep);
+    }
+
+    if (forward && onground)
+	P_Thrust (player, player->mo->angle, forward);
+
+    if (side && onground)
+	P_Thrust (player, player->mo->angle-ANG90, side);
+
+    // On Phobos, aloft: the suit's thrusters instead.
+    if (!onground)
+	P_Jetpack (player);
+    }
 
     if ( (cmd->forwardmove || cmd->sidemove) 
 	 && player->mo->state == &states[S_PLAY] )
@@ -388,6 +467,10 @@ void P_PlayerThink (player_t* player)
     }
 			
 	
+    // The library's books: the one aimed at, and reading, standing still
+    // (p_library_books.c).
+    P_LibraryBooks (player);
+
     if (player->playerstate == PST_DEAD)
     {
 	P_DeathThink (player);
@@ -403,6 +486,7 @@ void P_PlayerThink (player_t* player)
 	P_MovePlayer (player);
     
     P_CalcHeight (player);
+    P_BootsEye (player);
 
     if (player->mo->subsector->sector->special
 	&& !((debugfly || debuggod) && P_DebugAllowed ()))

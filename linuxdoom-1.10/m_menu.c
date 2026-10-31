@@ -44,6 +44,7 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 #include "z_zone.h"
 #include "v_video.h"
 #include "w_wad.h"
+#include "r_data.h"
 
 #include "r_local.h"
 
@@ -63,6 +64,7 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 #include "sounds.h"
 
 #include "m_menu.h"
+#include "p_library.h"
 #include "d_deh.h"
 
 // p_user.c; p_local.h clashes with <fcntl.h> here.
@@ -229,12 +231,22 @@ void M_DrawThermo(int x,int y,int thermWidth,int thermDot);
 void M_DrawEmptyCell(menu_t *menu,int item);
 void M_DrawSelCell(menu_t *menu,int item);
 void M_WriteText(int x, int y, char *string);
+static void M_WriteTextIn (int x, int y, char* string, const byte* translation);
 int  M_StringWidth(char *string);
 int  M_StringHeight(char *string);
 void M_StartControlPanel(void);
 void M_StartMessage(char *string,void *routine,boolean input);
 void M_StopMessage(void);
 void M_ClearMenus (void);
+
+// The questions in the library (m_library.c).
+boolean M_LibraryResponder (int ch);
+boolean M_LibraryDrawer (void);
+void M_LibraryTicker (void);
+// The library's kiosk (m_kiosk.c).
+boolean M_KioskResponder (int ch);
+boolean M_KioskDrawer (void);
+void M_KioskTicker (void);
 
 
 
@@ -280,6 +292,7 @@ menu_t  MainDef =
 //
 enum
 {
+    eplibrary,
     ep1,
     ep2,
     ep3,
@@ -287,8 +300,12 @@ enum
     ep_end
 } episodes_e;
 
+// The first, episode 0.5 (scp_7179_b), is written in the small message
+// font, unassuming and a little out of place (M_DrawEpisode); without its
+// map or the textures it needs, it isn't there (M_LibraryEpisode).
 menuitem_t EpisodeMenu[]=
 {
+    {1,"", M_Episode,'0'},
     {1,"M_EPI1", M_Episode,'k'},
     {1,"M_EPI2", M_Episode,'t'},
     {1,"M_EPI3", M_Episode,'i'},
@@ -302,7 +319,7 @@ menu_t  EpiDef =
     EpisodeMenu,	// menuitem_t ->
     M_DrawEpisode,	// drawing routine ->
     48,63,              // x,y
-    ep1			// lastOn
+    ep1			// lastOn: the game's first, not the library
 };
 
 //
@@ -943,6 +960,36 @@ void M_DrawNewGame(void)
     V_DrawPatchDirect (54,38,0,W_CacheLumpName("M_SKILL",PU_CACHE));
 }
 
+// Whether the episode menu offers episode 0.5, the library: its map (E0M1)
+// is loaded and the game is DOOM II or its like (TNT, Plutonia), whose
+// bookcase the books are aimed at (layout.h); not Freedoom, whose bookcase
+// is drawn differently. Anywhere else, DOOM 1 included, it isn't there.
+// Asked when a new game is chosen, the textures being known by then; the
+// menu is set up for it once. DOOM II and its like get a small episode
+// menu of their own for it.
+static int	libraryshown = -1;
+
+static void M_LibraryEpisode(void)
+{
+    if (libraryshown >= 0)
+	return;
+    libraryshown = !netgame && gamemode == commercial && W_CheckNumForName("E0M1") >= 0
+	&& R_CheckTextureNumForName("PANBOOK") >= 0 && W_CheckNumForName("FREEDOOM") < 0;
+    if (!libraryshown)
+    {
+	EpiDef.menuitems++;
+	EpiDef.numitems--;
+	EpiDef.lastOn = 0;
+    }
+    else if (gamemode == commercial)
+    {
+	EpisodeMenu[ep1].name[0] = 0;	// the game's own, written too
+	EpiDef.numitems = 2;
+	EpiDef.lastOn = 1;
+	NewDef.prevMenu = &EpiDef;
+    }
+}
+
 void M_NewGame(int choice)
 {
     if (netgame && !demoplayback)
@@ -951,7 +998,8 @@ void M_NewGame(int choice)
 	return;
     }
 	
-    if ( gamemode == commercial )
+    M_LibraryEpisode();
+    if ( gamemode == commercial && !libraryshown )
 	M_SetupNextMenu(&NewDef);
     else
 	M_SetupNextMenu(&EpiDef);
@@ -963,9 +1011,77 @@ void M_NewGame(int choice)
 //
 int     epi;
 
+// The library's name in a pale steel grey that is none of DOOM's colours:
+// each of the palette's colours by its brightness, against the font's
+// brightest, set on that grey and found again in the palette.
+static const byte* M_SteelGrey (void)
+{
+    static byte		table[256];
+    static boolean	made;
+    const byte*		pal;
+    int			i, j, best;
+    float		brightest = 1;
+
+    if (made)
+	return table;
+    pal = W_CacheLumpName ("PLAYPAL", PU_CACHE);
+    // The font's brightest pixel, over all its letters.
+    for (i = 0; i < HU_FONTSIZE; i++)
+    {
+	patch_t*	p = hu_font[i];
+	int		x;
+
+	for (x = 0; p && x < SHORT (p->width); x++)
+	{
+	    column_t*	column = (column_t*)((byte*)p + LONG (p->columnofs[x]));
+
+	    for (; column->topdelta != 0xff; column = (column_t*)((byte*)column + column->length + 4))
+		for (j = 0; j < column->length; j++)
+		{
+		    const byte*	c = pal + 3*((byte*)column)[3 + j];
+		    float	b = c[0]*0.3f + c[1]*0.59f + c[2]*0.11f;
+
+		    if (b > brightest)
+			brightest = b;
+		}
+	}
+    }
+    for (i = 0; i < 256; i++)
+    {
+	float	shade = (pal[3*i]*0.3f + pal[3*i+1]*0.59f + pal[3*i+2]*0.11f)/brightest;
+	float	want[3], d, nearest = 1e9f;
+
+	shade = shade > 1 ? 1 : shade;
+	want[0] = 176*shade;
+	want[1] = 186*shade;
+	want[2] = 200*shade;
+	for (best = 0, j = 0; j < 256; j++)
+	{
+	    d = (pal[3*j]-want[0])*(pal[3*j]-want[0]) + (pal[3*j+1]-want[1])*(pal[3*j+1]-want[1])
+		+ (pal[3*j+2]-want[2])*(pal[3*j+2]-want[2]);
+	    if (d < nearest)
+		nearest = d, best = j;
+	}
+	table[i] = (byte)best;
+    }
+    made = true;
+    return table;
+}
+
 void M_DrawEpisode(void)
 {
-    V_DrawPatchDirect (54,38,0,W_CacheLumpName("M_EPISOD",PU_CACHE));
+    if (W_CheckNumForName("M_EPISOD") >= 0)
+	V_DrawPatchDirect (54,38,0,W_CacheLumpName("M_EPISOD",PU_CACHE));
+    if (libraryshown > 0)
+    {
+	// Grey, and a little off the line the others keep.
+	M_WriteTextIn(EpiDef.x + 3, EpiDef.y + 6, "0.5 - SCP_7179_B", M_SteelGrey ());
+	if (gamemode == commercial)
+	    M_WriteText(EpiDef.x, EpiDef.y + LINEHEIGHT + 4,
+			gamemission == pack_tnt ? "TNT: EVILUTION"
+			: gamemission == pack_plut ? "THE PLUTONIA EXPERIMENT"
+			: W_CheckNumForName("FREEDOOM") >= 0 ? "FREEDOOM: PHASE 2" : "HELL ON EARTH");
+    }
 }
 
 void M_VerifyNightmare(int ch)
@@ -991,8 +1107,11 @@ void M_ChooseSkill(int choice)
 
 void M_Episode(int choice)
 {
+    // The episode: 0 is 0.5, the library, when the menu has it.
+    int episode = choice + (libraryshown > 0 ? 0 : 1);
+
     if ( (gamemode == shareware)
-	 && choice)
+	 && episode > 1)
     {
 	M_StartMessage(DEH_String (SWSTRING),NULL,false);
 	M_SetupNextMenu(&ReadDef1);
@@ -1001,14 +1120,14 @@ void M_Episode(int choice)
 
     // Yet another hack...
     if ( (gamemode == registered)
-	 && (choice > 2))
+	 && (episode > 3))
     {
       fprintf( stderr,
 	       "M_Episode: 4th episode requires UltimateDOOM\n");
-      choice = 0;
+      episode = 1;
     }
-	 
-    epi = choice;
+
+    epi = episode - 1;
     M_SetupNextMenu(&NewDef);
 }
 
@@ -1172,9 +1291,12 @@ void M_QuitDOOM(int choice)
 {
   char** endmsg = gamemode == commercial ? doom2_endmsg : doom1_endmsg;
 
+  // In the library its own (scp_7179_b): there is no leaving it.
+  if (gamestate == GS_LEVEL && P_Library ())
+    strcpy(endstring,"YOU CAN STOP PLAYING.\n\nYOU CANNOT LEAVE.\n\nARE YOU SURE? Y/N");
   // We pick index 0 which is language sensitive,
   //  or one at random.
-  if (language != english )
+  else if (language != english )
     sprintf(endstring,"%s\n\n%s", DEH_String (endmsg[0]), DEH_String (DOSY));
   else
     sprintf(endstring,"%s\n\n%s", DEH_String (endmsg[gametic%NUM_QUITMESSAGES]),
@@ -1375,6 +1497,17 @@ M_WriteText
   int		y,
   char*		string)
 {
+    M_WriteTextIn (x, y, string, NULL);
+}
+
+// The same, each pixel's colour through translation (or as it is: NULL).
+static void
+M_WriteTextIn
+( int		x,
+  int		y,
+  char*		string,
+  const byte*	translation )
+{
     int		w;
     char*	ch;
     int		c;
@@ -1408,7 +1541,10 @@ M_WriteText
 	w = SHORT (hu_font[c]->width);
 	if (cx+w > SCREENWIDTH)
 	    break;
-	V_DrawPatchDirect(cx, cy, 0, hu_font[c]);
+	if (translation)
+	    V_DrawPatchTranslated (cx, cy, 0, hu_font[c], translation);
+	else
+	    V_DrawPatchDirect(cx, cy, 0, hu_font[c]);
 	cx+=w;
     }
 }
@@ -1567,6 +1703,9 @@ boolean M_Responder (event_t* ev)
 	return true;
     }
     
+    if (M_LibraryResponder (ch) || M_KioskResponder (ch))
+	return true;
+
     // Take care of any messages that need input
     if (messageToPrint)
     {
@@ -1830,6 +1969,9 @@ void M_DrawCheats(void)
     int		i;
     int		y;
 
+    // the hint lines overlap the status bar; like the help screens,
+    // this makes D_Display redraw the whole bar once the menu closes
+    inhelpscreens = true;
     M_WriteText(160 - M_StringWidth("CHEATS")/2, 16, "CHEATS");
     for (i = 0; i < dbg_end; i++)
     {
@@ -1968,7 +2110,7 @@ void M_Drawer (void)
         return;
     }
 
-    if (!menuactive)
+    if (!menuactive || M_LibraryDrawer () || M_KioskDrawer ())
 	return;
 
     if (currentMenu->routine)
@@ -2023,6 +2165,8 @@ void M_SetupNextMenu(menu_t *menudef)
 //
 void M_Ticker (void)
 {
+    M_LibraryTicker ();
+    M_KioskTicker ();
     if (--skullAnimCounter <= 0)
     {
 	whichSkull ^= 1;

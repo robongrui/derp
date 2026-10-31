@@ -24,11 +24,11 @@ The shareware `heretic1.wad` should work but has not been tried.
 
 Build the SDL app as described in [`BUILDING.md`](../BUILDING.md). That also
 builds the Heretic program, `derp-heretic`, and on the Mac puts it inside
-`Play DOOM.app`.
+`Play DERP.app`.
 
 Then either:
 
-- start **Play DOOM**, choose the folder with your Heretic WAD and pick it.
+- start **Play DERP**, choose the folder with your Heretic WAD and pick it.
   The launcher hands Heretic WADs over to the Heretic program by itself; or
 - start it from a terminal with the full path to the WAD:
 

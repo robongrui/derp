@@ -123,6 +123,38 @@ int main() {
     check(area(map,2,270,41,floorUp)==0,"A raised floor must not see a pool far below its lip");
     map.sectors[2].floor=-40;
     check(area(map,2,270,-39,floorUp)>0,"Pool glow must spill over a low rim");
+    {
+        // A big hall cluttered with low steps (sector 1): rays through the
+        // line tree must stop exactly where the plain line list stops them.
+        BakeMap flat;
+        flat.sectors={{0,128,true,{}},{24,96,false,{}}};
+        auto add=[&](float ax,float ay,float bx,float by,int front,int back) {
+            int index=(int)flat.lines.size();flat.lines.push_back({ax,ay,bx,by,front,back});
+            for(int s:{front,back})if(s>=0)flat.sectors[s].lines.push_back(index);
+        };
+        add(0,0,1024,0,0,-1);add(1024,0,1024,1024,0,-1);add(1024,1024,0,1024,0,-1);add(0,1024,0,0,0,-1);
+        unsigned seed=12345;
+        auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
+        for(int n=0;n<300;++n) {
+            float x=16+random()*992,y=16+random()*992,angle=random()*6.2831853f,size=4+random()*60;
+            if(n%10==0)angle=(n%20?0:1.5707963f); // Axis-aligned lines too.
+            add(x,y,x+std::cos(angle)*size,y+std::sin(angle)*size,0,1);
+        }
+        BakeMap tree=flat;buildBakeTrees(tree);
+        check(!tree.sectors[0].tree.empty()&&flat.sectors[0].tree.empty(),"A sector with many lines must get a line tree");
+        for(int n=0;n<4000;++n) {
+            float x=8+random()*1008,y=8+random()*1008,z=1+random()*100,angle=random()*6.2831853f,rise=random()*1.6f-0.8f;
+            if(n%7==0)angle=(n%4)*1.5707963f;
+            float d[3]={std::cos(angle)*std::cos(rise),std::sin(angle)*std::cos(rise),std::sin(rise)};
+            if(n%11==0){d[0]=0;d[1]=n%2?1.0f:-1.0f;d[2]=0;}
+            float length=n%3?INFINITY:random()*800;
+            SkyCeiling sky=n%2?SkyCeiling::open:SkyCeiling::escape;
+            BakeHit a,b;
+            bool plain=traceRay(flat,0,x,y,z,d,length,sky,&a),fast=traceRay(tree,0,x,y,z,d,length,sky,&b);
+            check(plain==fast&&a.kind==b.kind&&a.line==b.line&&a.sector==b.sector&&a.part==b.part&&a.x==b.x&&a.y==b.y&&a.z==b.z,
+                  "A line tree must not change where a ray stops");
+        }
+    }
     float direction[3];
     for(float u:{0.0f,0.5f,0.99f})for(float v:{0.0f,0.3f,0.7f}) {
         cosineDirection(flat,u,v,direction);

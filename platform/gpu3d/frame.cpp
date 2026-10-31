@@ -9,17 +9,48 @@ namespace gpu3d {
 // beyond it the clamped border texels dim the view.
 static std::vector<Vertex> settingsQuad;
 static float settingsOrigin[2]={},settingsScale=1;
-static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const FrameView &view) {
+// F4's FPS readout (statsOverlay) in the top left corner, at a whole-pixel scale.
+static std::vector<Vertex> statsQuad;
+static GpuTextureRef statsTexture;
+#ifdef DOOM_DEVTOOLS
+// A local dev tool's overlay (devOverlay) in the top right corner, at a whole-pixel scale.
+static std::vector<Vertex> overlayQuad;
+static GpuTextureRef overlayTexture;
+#endif
+// The render stretched over a target of targetWidth x targetHeight: the HUD's
+// place, then the upscale mode (settings.upscale) and screen pixels per render pixel.
+static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const FrameView &view,int targetWidth,int targetHeight) {
     SDL_GPUColorTargetInfo info={};
     info.texture=target;info.load_op=SDL_GPU_LOADOP_DONT_CARE;info.store_op=SDL_GPU_STOREOP_STORE;
     SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(command,&info,1,nullptr);
     SDL_BindGPUGraphicsPipeline(pass,presentPipeline);
-    float hudRect[4]={view.uiX/width,view.uiY/height,view.uiWidth/width,view.uiHeight/height};
-    SDL_PushGPUFragmentUniformData(command,0,hudRect,sizeof(hudRect));
+    float stretch[8]={view.uiX/width,view.uiY/height,view.uiWidth/width,view.uiHeight/height,
+                      (float)settings.upscale,(float)targetWidth/width,(float)targetHeight/height,
+#ifdef DOOM_DEVTOOLS
+                      devGlitch()};
+#else
+                      0};
+#endif
+    SDL_PushGPUFragmentUniformData(command,0,stretch,sizeof(stretch));
     SDL_PushGPUFragmentUniformData(command,1,&view.camera,sizeof(view.camera));
-    SDL_GPUTextureSamplerBinding samplers[]={{colorTexture,linearClamp},{bloomTexture,linearClamp},{hudTexture,linearClamp},{paletteLUT,nearestClamp}};
+    SDL_GPUSampler *upscaled=settings.upscale==1?nearestClamp:linearClamp;
+    SDL_GPUTextureSamplerBinding samplers[]={{colorTexture,upscaled},{bloomTexture,linearClamp},{hudTexture,linearClamp},{paletteLUT,nearestClamp}};
     SDL_BindGPUFragmentSamplers(pass,0,samplers,4);
     SDL_DrawGPUPrimitives(pass,3,1,0,0);
+#ifdef DOOM_DEVTOOLS
+    if(!overlayQuad.empty()&&overlayTexture) {
+        SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
+        SDL_GPUTextureSamplerBinding image={gpu(overlayTexture),nearestClamp};
+        SDL_BindGPUFragmentSamplers(pass,0,&image,1);
+        drawVertices(pass,overlayQuad);
+    }
+#endif
+    if(!statsQuad.empty()&&statsTexture) {
+        SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
+        SDL_GPUTextureSamplerBinding image={gpu(statsTexture),nearestClamp};
+        SDL_BindGPUFragmentSamplers(pass,0,&image,1);
+        drawVertices(pass,statsQuad);
+    }
     if(!settingsQuad.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
         SDL_GPUTextureSamplerBinding panel={settingsTexture,nearestClamp};
@@ -36,7 +67,7 @@ static void capture(SDL_GPUCommandBuffer *command,const FrameView &view,int w,in
         release(image);SDL_SubmitGPUCommandBuffer(command);
         saveScreenshot(nullptr,0,0,0);return;
     }
-    present(command,image,view);
+    present(command,image,view,w,h);
     SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(command);
     SDL_GPUTextureRegion source={};source.texture=image;source.w=(Uint32)w;source.h=(Uint32)h;source.d=1;
     SDL_GPUTextureTransferInfo target={download,0,(Uint32)w,(Uint32)h};
@@ -61,10 +92,10 @@ std::vector<Vertex> panelQuad(Uint32 drawableWidth,Uint32 drawableHeight,float o
     screenQuad(quad,-1,1,2,2,-origin[0]/pw,-origin[1]/ph,(dw-origin[0])/pw,(dh-origin[1])/ph);
     return quad;
 }
-// Draws the settings panel into image and places it over the drawable.
-static void layoutSettingsPanel(Uint32 drawableWidth,Uint32 drawableHeight,std::vector<unsigned> &image) {
+// Draws the settings panel (or an open book's page) into image and places it over the drawable.
+static void layoutSettingsPanel(Uint32 drawableWidth,Uint32 drawableHeight,std::vector<unsigned> &image,void (*draw)(unsigned *)) {
     image.assign((size_t)DOOM_SETTINGS_WIDTH*DOOM_SETTINGS_HEIGHT,0);
-    I_Render3DSettingsDraw(image.data());
+    draw(image.data());
     settingsQuad=panelQuad(drawableWidth,drawableHeight,settingsOrigin,settingsScale);
 }
 // Mirrors and probes draw the whole map from elsewhere; a depth prepass of
@@ -86,7 +117,8 @@ static unsigned probeAtlasSerial=~0u;
 // Its sprites: the main view's, or extra in their place.
 static void drawMirror(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &mirror,const float plane[4],MirrorTarget &target,
                        const std::map<int,std::vector<Vertex>> *extra=nullptr) {
-    int divisor=settings.retroReflections?8:2;
+    // Retro: an eighth of the screen; a wall mirror, looked into, a quarter (about DOOM's own pixels).
+    int divisor=settings.retroReflections?(&target==&glassMirror&&glassMirrorSilvered?4:8):2;
     int rw=std::max(1,(int)(view.worldW/divisor)),rh=std::max(1,(int)(view.worldH/divisor));
     if(!target.color||rw!=target.width||rh!=target.height) {
         release(target.color);release(target.depth);
@@ -221,12 +253,12 @@ static void drawScene(SDL_GPUCommandBuffer *render,SDL_GPURenderPass *pass,const
     for(const auto &batch:shadowBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
     SDL_BindGPUGraphicsPipeline(pass,decalPipeline);
     for(const auto &batch:decalBatches) {bindImage(pass,images.at(-1-batch.first).texture,linearClamp);drawVertices(pass,batch.second);}
-    SDL_BindGPUGraphicsPipeline(pass,particlePipeline);drawVertices(pass,particleVertices);
+    SDL_BindGPUGraphicsPipeline(pass,particlePipeline);drawVertices(pass,particleVertices);drawVertices(pass,glowVertices);
     SDL_BindGPUGraphicsPipeline(pass,crestPipeline);drawVertices(pass,crestVertices);
     // Window glass over everything behind it, shards included; it writes no depth.
     if(!glassVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,glassPipeline);
-        SDL_GPUTextureSamplerBinding images[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp},
+        SDL_GPUTextureSamplerBinding images[]={{gpu(skyImage()),linearRepeat},{paletteTexture,nearestClamp},
                                               {glassReflected?glassMirror.color:paletteTexture,nearestClamp},
                                               {probeAtlas?probeAtlas:paletteTexture,nearestClamp}};
         SDL_BindGPUFragmentSamplers(pass,0,images,4);bindLightBlockers(pass);
@@ -310,6 +342,12 @@ static void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const U
     SDL_BindGPUFragmentSamplers(glowPass,0,&solid,1);SDL_BindGPUFragmentSamplers(glowPass,2,&solid,1);
     float noBlend[4]={};SDL_PushGPUFragmentUniformData(render,0,noBlend,sizeof(noBlend));
     drawVertices(glowPass,skyVertices);
+    // Glowing particles (embers) glow where the world leaves them seen.
+    // (the weapon below is drawn with the emission pipeline again).
+    if(!glowVertices.empty()) {
+        SDL_BindGPUGraphicsPipeline(glowPass,glowParticlePipeline);drawVertices(glowPass,glowVertices);
+        SDL_BindGPUGraphicsPipeline(glowPass,emissionPipeline);
+    }
     // The weapon hides glow behind it too; it is drawn over the view in
     // the HUD's frame, so the glow from lamps behind it would otherwise
     // show through it.
@@ -352,6 +390,17 @@ void releaseReflection() {
 } // namespace gpu3d
 
 using namespace gpu3d;
+// The render size for a drawable: a percentage of it, or (scale above 100) a
+// fixed height no taller than the drawable, the width keeping its shape.
+static void renderSize(int drawableWidth,int drawableHeight,int &w,int &h) {
+    if(settings.scale>100&&settings.scale<drawableHeight) {
+        h=settings.scale;w=std::max(1,(int)std::lround((double)drawableWidth*h/drawableHeight));
+    }
+    else {
+        int percent=std::min(settings.scale,100);
+        w=std::max(1,drawableWidth*percent/100);h=std::max(1,drawableHeight*percent/100);
+    }
+}
 void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     applySampleCount();
     // A new level's build and bakes run first, with the loading screen up.
@@ -359,29 +408,36 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
         int w=width,h=height;
         if(!colorTexture) {
             int pw=1,ph=1;SDL_GetWindowSizeInPixels(gameWindow,&pw,&ph);
-            w=std::max(1,pw*settings.scale/100);h=std::max(1,ph*settings.scale/100);
+            renderSize(pw,ph,w,h);
         }
         runLoading(w,h,showLoading);
     }
     SDL_GPUCommandBuffer *command=SDL_AcquireGPUCommandBuffer(device);
     if(!command) {fprintf(stderr,"GPU command buffer: %s\n",SDL_GetError());return;}
     SDL_GPUTexture *swapchain=nullptr;Uint32 drawableWidth=0,drawableHeight=0;
+    uint64_t waitStart=SDL_GetTicksNS();   // the frame's moments, for the FPS readout (statsFrame)
     // A hidden window (render checks) has no swapchain: the frame is drawn for capture() alone.
     if(SDL_GetWindowFlags(gameWindow)&SDL_WINDOW_HIDDEN) {
         int pw=1,ph=1;SDL_GetWindowSizeInPixels(gameWindow,&pw,&ph);drawableWidth=(Uint32)pw;drawableHeight=(Uint32)ph;
     }
-    else if(!SDL_WaitAndAcquireGPUSwapchainTexture(command,gameWindow,&swapchain,&drawableWidth,&drawableHeight)||!swapchain) {
-        flushUploads();SDL_SubmitGPUCommandBuffer(command);return;
+    else {
+        double paceWait=paceStart();
+        presentationWait();   // the present mode and the frame limit (presentation.cpp)
+        if(!SDL_WaitAndAcquireGPUSwapchainTexture(command,gameWindow,&swapchain,&drawableWidth,&drawableHeight)||!swapchain) {
+            flushUploads();SDL_SubmitGPUCommandBuffer(command);return;
+        }
+        paceAcquired(paceWait);
     }
     uint64_t frameStart=SDL_GetTicksNS();
-    int w=std::max(1,(int)drawableWidth*settings.scale/100),h=std::max(1,(int)drawableHeight*settings.scale/100);
+    int w,h;renderSize((int)drawableWidth,(int)drawableHeight,w,h);
     if(w!=width||h!=height||!colorTexture) {
         width=w;height=h;allocateTargets(w,h);
-        fprintf(stderr,"GPU resolution: %dx%d (display %ux%u, %d%%).\n",w,h,drawableWidth,drawableHeight,settings.scale);
+        fprintf(stderr,"GPU resolution: %dx%d (display %ux%u).\n",w,h,drawableWidth,drawableHeight);
     }
     if(!paletteLUT||((settings.palette||(settings.reflections&&settings.retroReflections))&&worldPending))updatePaletteLUT(palette);
     std::vector<unsigned> overlay=hudPixels(pixels);
     FrameView view=prepareFrame(w,h);Uniforms &camera=view.camera;
+    uint64_t prepared=SDL_GetTicksNS();
     bool drawMist=!mistVertices.empty()||!shaftVertices.empty();
     bool msaa=sampleCount!=SDL_GPU_SAMPLECOUNT_1;
     // Transient quads join the frame upload; textures created while drawing
@@ -392,7 +448,22 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     std::vector<const std::vector<Vertex>*> transient={&hud,&cross};
     for(const auto &draw:weapons)transient.push_back(&draw.vertices);
     std::vector<unsigned> settingsImage;settingsQuad.clear();
-    if(I_Render3DSettingsOpen()) {layoutSettingsPanel(drawableWidth,drawableHeight,settingsImage);transient.push_back(&settingsQuad);}
+    if(I_Render3DSettingsOpen()) {layoutSettingsPanel(drawableWidth,drawableHeight,settingsImage,I_Render3DSettingsDraw);transient.push_back(&settingsQuad);}
+    else if(I_Render3DPageOpen()) {layoutSettingsPanel(drawableWidth,drawableHeight,settingsImage,I_Render3DPageDraw);transient.push_back(&settingsQuad);}
+    int statsW=0,statsH=0;statsQuad.clear();
+    if((statsTexture=statsOverlay(statsW,statsH,w,h,(int)drawableWidth,(int)drawableHeight))) {
+        float dw=(float)drawableWidth,dh=(float)drawableHeight,scale=(float)std::max(1,(int)drawableHeight/540),margin=8*scale;
+        screenQuad(statsQuad,margin/dw*2-1,1-margin/dh*2,statsW*scale/dw*2,statsH*scale/dh*2,0,0,1,1);
+        transient.push_back(&statsQuad);
+    }
+#ifdef DOOM_DEVTOOLS
+    int overlayW=0,overlayH=0;overlayQuad.clear();
+    if((overlayTexture=devOverlay(overlayW,overlayH))) {
+        float dw=(float)drawableWidth,dh=(float)drawableHeight,scale=(float)std::max(1,(int)drawableHeight/720),margin=12*scale;
+        screenQuad(overlayQuad,(dw-margin-overlayW*scale)/dw*2-1,1-margin/dh*2,overlayW*scale/dw*2,overlayH*scale/dh*2,0,0,1,1);
+        transient.push_back(&overlayQuad);
+    }
+#endif
     // Profiling: the scene goes in a command buffer of its own, timed by a
     // fence. The swapchain's may wait for the compositor, which in a window
     // keeps the display's rate even without vsync.
@@ -406,10 +477,19 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
     drawMainView(render,view,camera,drawMist,msaa,weapons,hud,cross);
     if(camera.materials[1]>0)drawBloom(render,view,camera,weapons);
     if(render!=command)submitProfiled(render,frameStart);
-    if(swapchain)present(command,swapchain,view);
+    if(swapchain)present(command,swapchain,view,(int)drawableWidth,(int)drawableHeight);
     flushUploads();
     if(screenshotPending||renderCheckDue()) {screenshotPending=false;capture(command,view,(int)drawableWidth,(int)drawableHeight);}
-    else if(!SDL_SubmitGPUCommandBuffer(command)) I_Error((char*)"GPU rendering failed: %s",SDL_GetError());
+    else {
+        double submitStart=paceStart();
+        if(!SDL_SubmitGPUCommandBuffer(command)) I_Error((char*)"GPU rendering failed: %s",SDL_GetError());
+        if(swapchain)paceSubmitted(submitStart);
+        // Hidden (render checks): no swapchain to wait for, so nothing held the
+        // game back from the GPU; frames piled up in flight until the device
+        // was lost a few hundred frames in. Each one waits for the last.
+        if(!swapchain&&(SDL_GetWindowFlags(gameWindow)&SDL_WINDOW_HIDDEN))SDL_WaitForGPUIdle(device);
+    }
+    statsFrame(waitStart,frameStart,prepared,SDL_GetTicksNS());
     char renderer[64];snprintf(renderer,sizeof(renderer),"%s 3D",SDL_GetGPUDeviceDriver(device));
     if(renderer[0])renderer[0]=(char)toupper((unsigned char)renderer[0]);
     updateTitle(w,h,renderer);

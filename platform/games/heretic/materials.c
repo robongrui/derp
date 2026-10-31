@@ -53,6 +53,9 @@ int Game_DamagingFloor(int special)
     return special == 4 || special == 5 || special == 7 || special == 16;
 }
 
+/* No nukage in Heretic (Game_NukageRain is never on). */
+const char *Game_RainLiquidFlat(void) { return 0; }
+
 static const char *const metalFlats[] = { "FLOOR08", "FLOOR28", "FLOOR29", "FLOOR30", 0 };
 static const char *const woodFlats[] = { "FLOOR10", "FLOOR25", "FLAT508", 0 };
 static const char *const soilFlats[] = { "FLOOR01", "FLOOR05", "FLOOR17", "FLOOR19", "FLOOR27",

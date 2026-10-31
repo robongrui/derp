@@ -216,18 +216,50 @@ static inline int doom_flash_bins_of(const doom_flash_t *f,const doom_light_bloc
     return 1;
 }
 static inline int doom_flash_bin(int k) {return (k%DOOM_FLASH_BINS+DOOM_FLASH_BINS)%DOOM_FLASH_BINS;}
-static inline uint32_t doom_flash_cull_hidden(const doom_flash_t *f,doom_light_blocker_t *blockers,uint32_t count) {
+/* Lamps: shots, projectiles and barrels shine from a body of light, a
+ * direction[3] of minus its size (no cone). The shaders cast each Doom
+ * texel's ray from one of four points on a fixed diagonal through it, at
+ * -0.75, -0.25, 0.25 and 0.75 of the size, picked by an ordered dither
+ * (flashShadowed in lighting.glsl), or from its center; culling and slicing
+ * keep every line any of these meets. In a row, the points an edge hides
+ * run from one end, so a shadow's edge steps through the dither in order:
+ * sparse dots, checkerboard, dense dots. The points must clear every wall
+ * that can stop a ray. */
+#define DOOM_FLASH_LAMP_POINTS 5
+static inline float doom_flash_lamp(const doom_flash_t *f) {return f->direction[3]<0?-f->direction[3]:0;}
+/* The light as seen from lamp point k: 0..3 along the diagonal, 4 the center. */
+static inline doom_flash_t doom_flash_lamp_point(const doom_flash_t *f,int k) {
+    doom_flash_t point=*f;
+    float along=k<4?(-0.75f+0.5f*k)*doom_flash_lamp(f)*0.57735027f:0;
+    for(int axis=0;axis<3;++axis) point.position[axis]+=along;
+    return point;
+}
+static inline int doom_flash_lamp_points(const doom_flash_t *f) {return doom_flash_lamp(f)>0?DOOM_FLASH_LAMP_POINTS:1;}
+/* Clears hidden[i] where line i is not hidden from f, as culling above. */
+static inline void doom_flash_mark_seen(const doom_flash_t *f,const doom_light_blocker_t *blockers,uint32_t count,unsigned char *hidden) {
     float x=f->position[0],y=f->position[1];
     float depth[DOOM_FLASH_BINS];
     doom_flash_depths(f,blockers,count,depth);
-    uint32_t kept=0;
     for(uint32_t i=0;i<count;++i) {
+        if(!hidden[i]) continue;
         const doom_light_blocker_t *b=&blockers[i];
         float nearest=doom_flash_segment_distance(x,y,b);
-        int first,last,hidden=doom_flash_bins_of(f,b,nearest,&first,&last);
-        for(int k=first;hidden&&k<=last;++k) hidden=depth[doom_flash_bin(k)]<nearest-0.25f;
-        if(!hidden) blockers[kept++]=*b;
+        int first,last,still=doom_flash_bins_of(f,b,nearest,&first,&last);
+        for(int k=first;still&&k<=last;++k) still=depth[doom_flash_bin(k)]<nearest-0.25f;
+        hidden[i]=(unsigned char)still;
     }
+}
+#define DOOM_FLASH_CULL_MAX 8192
+static inline uint32_t doom_flash_cull_hidden(const doom_flash_t *f,doom_light_blocker_t *blockers,uint32_t count) {
+    unsigned char hidden[DOOM_FLASH_CULL_MAX];
+    if(count>DOOM_FLASH_CULL_MAX) return count;
+    for(uint32_t i=0;i<count;++i) hidden[i]=1;
+    for(int k=0;k<doom_flash_lamp_points(f);++k) {
+        doom_flash_t point=doom_flash_lamp_point(f,k);
+        doom_flash_mark_seen(&point,blockers,count,hidden);
+    }
+    uint32_t kept=0;
+    for(uint32_t i=0;i<count;++i) if(!hidden[i]) blockers[kept++]=blockers[i];
     return kept;
 }
 /* Directional lists for the GPU (flashAt in lighting.glsl): every pixel
@@ -247,24 +279,27 @@ static inline uint32_t doom_flash_slice(float dx,float dy) {
 }
 static inline uint32_t doom_flash_slice_blockers(const doom_flash_t *f,const doom_light_blocker_t *blockers,uint32_t count,
                                                  uint32_t table[DOOM_FLASH_SLICES],uint16_t *indices,uint32_t capacity) {
-    const int per=DOOM_FLASH_BINS/DOOM_FLASH_SLICES;
-    float depth[DOOM_FLASH_BINS];
+    const int per=DOOM_FLASH_BINS/DOOM_FLASH_SLICES,points=doom_flash_lamp_points(f);
+    float depth[DOOM_FLASH_LAMP_POINTS][DOOM_FLASH_BINS];
+    doom_flash_t at[DOOM_FLASH_LAMP_POINTS];
     uint32_t sizes[DOOM_FLASH_SLICES]={0},stamp[DOOM_FLASH_SLICES]={0},total=0;
     if(count>65535||capacity>65535) return UINT32_MAX;
-    doom_flash_depths(f,blockers,count,depth);
+    /* A lamp's slices list what a ray from any of its points meets, the
+     * slice taken from that point (as the shaders do). */
+    for(int k=0;k<points;++k) {at[k]=points>1?doom_flash_lamp_point(f,k):*f;doom_flash_depths(&at[k],blockers,count,depth[k]);}
     /* Pass 0 counts each slice's blockers, pass 1 lists them. */
     for(int pass=0;pass<2;++pass) {
         if(pass) {
             for(int s=0;s<DOOM_FLASH_SLICES;++s) {table[s]=total<<16;total+=sizes[s];stamp[s]=0;}
             if(total>capacity) return UINT32_MAX;
         }
-        for(uint32_t i=0;i<count;++i) {
+        for(uint32_t i=0;i<count;++i) for(int p=0;p<points;++p) {
             const doom_light_blocker_t *b=&blockers[i];
-            float nearest=doom_flash_segment_distance(f->position[0],f->position[1],b);
-            int first,last,binned=doom_flash_bins_of(f,b,nearest,&first,&last);
+            float nearest=doom_flash_segment_distance(at[p].position[0],at[p].position[1],b);
+            int first,last,binned=doom_flash_bins_of(&at[p],b,nearest,&first,&last);
             if(!binned) {first=0;last=DOOM_FLASH_BINS-1;}
             for(int k=first;k<=last;++k) {
-                if(binned&&depth[doom_flash_bin(k)]<nearest-0.25f) continue;
+                if(binned&&depth[p][doom_flash_bin(k)]<nearest-0.25f) continue;
                 /* Visible in bin k: listed where k or a neighbor lies. */
                 for(int n=-1;n<=1;++n) {
                     int s=doom_flash_bin(k+n)/per;

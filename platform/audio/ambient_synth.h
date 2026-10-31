@@ -35,9 +35,24 @@ float Ambient_Level(int kind);
 void Ambient_Render(int kind, unsigned seed, int rate, float *out, int frames,
                     const float *light, int tics);
 
+/* Wind and rain (rain on the windows too) come in AMBIENT_STEPS strengths,
+   0.1 to 1, a take each: a light air to a gale, a drizzle to a downpour.
+   Ambient_Render makes the usual one (a breeze, a downpour). */
+#define AMBIENT_STEPS 10
+int Ambient_Stepped(int kind);
+float Ambient_UsualStrength(int kind);
+/* A take at a strength (0.1-1), as loud as the usual take whatever its
+   strength, so all fill the 8 bits alike; how hard it blows or rains is
+   heard in the take, and how loud in Ambient_Loudness. */
+void Ambient_RenderStrength(int kind, float strength, unsigned seed, int rate, float *out, int frames);
+/* How loud a stepped kind plays at a strength (0-1) against its usual:
+   with the square root of it, fading out under the lightest take. */
+float Ambient_Loudness(int kind, float strength);
+
 /* The pieces, in machine_synth.c, liquid_synth.c and fire_synth.c. */
 void Machine_Render(int kind, unsigned seed, int rate, float *out, int frames,
                     const float *light, int tics);
 void Liquid_Render(int kind, unsigned seed, int rate, float *out, int frames);
-void Fire_Render(int kind, unsigned seed, int rate, float *out, int frames);
+/* strength only for wind and rain (Ambient_RenderStrength). */
+void Fire_Render(int kind, unsigned seed, int rate, float *out, int frames, float strength);
 #endif

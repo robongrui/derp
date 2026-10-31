@@ -12,6 +12,7 @@
 #include "hidden.h"
 #include "hidden_synth.h"
 #include "map.h"
+#include "frozen.h"
 
 #define REACH 1100.0f       /* walls farther off than this aren't heard */
 #define NEAR 48.0f          /* nor one the listener stands against */
@@ -89,6 +90,12 @@ static void build(void)
     fprintf(stderr, " walls.\n");
 }
 
+/* Whether the air at the wall's middle is below freezing (frozen.h): nothing drips there. */
+static int frozen(const wall_t *w)
+{
+    return Frozen_Air && Frozen_Air(0.5f * (w->x1 + w->x2), 0.5f * (w->y1 + w->y2));
+}
+
 /* Whether the wall is in reach of the listener at (x, y). */
 static int in_reach(const wall_t *w, float x, float y)
 {
@@ -117,7 +124,7 @@ int Hidden_Tic(hidden_event_t *event)
     for (int i = 0; i < count; ++i)
         if (in_reach(&walls[i], x, y))
             for (int k = 0; k < HIDDEN_KINDS; ++k)
-                if (walls[i].kinds & 1 << k) amount[k] += walls[i].length;
+                if (walls[i].kinds & 1 << k && !(k == HIDDEN_DRIP && frozen(&walls[i]))) amount[k] += walls[i].length;
     for (int pass = 0; pass < 2 && total <= 0; ++pass)
         for (int k = 0; k < HIDDEN_KINDS; ++k)
         {
@@ -133,7 +140,8 @@ int Hidden_Tic(hidden_event_t *event)
     const wall_t *w = NULL;
     float roll = unit() * amount[kind];
     for (int i = 0; i < count && !w; ++i)
-        if (walls[i].kinds & 1 << kind && in_reach(&walls[i], x, y) && (roll -= walls[i].length) <= 0) w = &walls[i];
+        if (walls[i].kinds & 1 << kind && in_reach(&walls[i], x, y) && !(kind == HIDDEN_DRIP && frozen(&walls[i]))
+            && (roll -= walls[i].length) <= 0) w = &walls[i];
     if (!w) return 0;
     float t = 0.15f + 0.7f * unit(), dx = w->x2 - w->x1, dy = w->y2 - w->y1;
     /* A line's front is on its right; the sound sits just off the face. */

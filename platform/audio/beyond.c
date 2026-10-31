@@ -5,7 +5,10 @@
  * farthest-reaching runs first.
  * Only a space that is clearly bigger and rings longer counts, so stepping
  * from a hall into the corridor hears the hall, and the corridor seen from
- * the hall adds nothing. */
+ * the hall adds nothing. A tunnel (room.h) rings long by its shape, not its
+ * size, so a space beyond need only outlast it as a room. And the rays along
+ * it run out of its ends: the same tube going on is no space beyond, but a
+ * hall at its end is. */
 #include <math.h>
 #include <string.h>
 #include "beyond.h"
@@ -18,6 +21,8 @@
 #define FALLOFF 512.0f      /* an opening this much farther off than close by couples half */
 #define SPEED 10700.0f      /* sound, map units per second, as room.c */
 #define TRIES 2             /* openings measured at most, the farthest-reaching first */
+#define ALONG 0.87f         /* a run within 30 degrees of a tunnel's axis runs out of its end */
+#define WIDER 1.5f          /* past a tunnel's end, a tube no wider than this is the same tunnel going on */
 #define PI_F 3.14159265f
 
 static float middle_reach(const room_outline_t *o)
@@ -52,7 +57,10 @@ static int beyond_run(const room_t *room, const room_outline_t *outline, int bes
     int centre = (best + best_length / 2) % ROOM_RAYS;
     float angle = centre * 2 * PI_F / ROOM_RAYS, along = opening + 0.5f * (outline->reach[centre] - opening);
     Room_MeasureAt(outline->x + cosf(angle) * along, outline->y + sinf(angle) * along, facing, &b->room, &b->outline);
-    if (b->outline.volume < BIGGER * outline->volume || b->room.decay < LONGER * room->decay) return 0;
+    if (b->outline.volume < BIGGER * outline->volume) return 0;
+    int tunnel_end = room->tunnel > 0.5f && fabsf(cosf(angle - facing - room->axis)) > ALONG;
+    int more_tunnel = tunnel_end && b->room.tunnel > 0.5f && b->room.width < WIDER * room->width;
+    if (more_tunnel || b->room.decay < LONGER * room->room_decay) return 0;
 
     float open = fminf(best_length / (float)ROOM_RAYS / OPEN_SHARE, 1);
     b->coupling = sqrtf(open) / (1 + fmaxf(opening - 64, 0) / FALLOFF);
@@ -70,7 +78,7 @@ static int beyond_run(const room_t *room, const room_outline_t *outline, int bes
 void Beyond_Measure(const room_t *room, const room_outline_t *outline, float facing, beyond_t *b)
 {
     memset(b, 0, sizeof(*b));
-    b->room.decay = 0.2f;
+    b->room.decay = b->room.room_decay = 0.2f;
     b->near = *outline;
     if (outline->volume <= 0) return;
     float middle = middle_reach(outline), edge = fmaxf(ESCAPE_TIMES * middle, middle + ESCAPE_MORE);

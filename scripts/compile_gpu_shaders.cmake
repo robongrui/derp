@@ -29,6 +29,7 @@ set(shaders
     "opaque_frag|world.frag|OPAQUE"
     "cutout_frag|world.frag|CUTOUT"
     "coverage_frag|world.frag|COVERAGE"
+    "overlay_frag|world.frag|OVERLAY"
     "sky_frag|sky.frag|"
     "sky_surface_frag|sky.frag|SURFACE"
     "shadow_frag|shadow.frag|"

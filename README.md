@@ -31,7 +31,7 @@ loaded WAD while the game runs.
 Everything the renderer adds is worked out from the original artwork, maps and
 game state. It needs no replacement textures, models, authored lighting or
 edited maps. The sound works the same way: not a single recorded sample is
-added. Every sound DOOM didn't have, from a lamp's buzz to a window breaking,
+added (one spoken word aside, see [Credits](#credits)). Every sound DOOM didn't have, from a lamp's buzz to a window breaking,
 is synthesized by code when the game starts, and where it plays is read from
 the map. DOOM should feel more physically coherent while staying the same
 game.
@@ -70,9 +70,15 @@ graphics panel with **F4**.
   the source material, and there are no added sound files either.
 - **Compatibility:** vanilla and limit-removing maps, including DEHACKED
   patches.
+- **For mappers:** a `DERPINFO` lump sets a map's weather, wind and sun, a
+  distance fog and wall mirrors, or switches on the Phobos physics with a
+  gravity of its own. Other ports ignore it. See [DERPINFO.md](DERPINFO.md).
 - **Heretic too:** Raven's Heretic runs as a second program on the same
   renderer, lighting and sound, tuned for its fantasy world. The launcher
   hands Heretic WADs over by itself. See [Heretic](#heretic) below.
+- **Phobos, taken literally:** DOOM's first episode on a moon 22 km across,
+  in vacuum, at 1/1700 g. Optional. See [Phobos](#phobos) below.
+- **Episode 0.5:** [SCP_7179_B](#episode-05-scp_7179_b).
 - **Not supported:** Boom, MBF21 and GZDoom maps, Hexen, DOOM 64, slopes,
   3D floors, model packs, ray tracing and multiplayer.
 - **Window glass:** windows found in the map get glass that reflects the room
@@ -87,12 +93,17 @@ graphics panel with **F4**.
   hit landed, or a ragdoll: the drawing raised into a body, thrown down and
   drawn back into a sprite. See [Monsters die differently every time](#monsters-die-differently-every-time)
   and [Ragdolls are drawn back into sprites](#ragdolls-are-drawn-back-into-sprites).
-- **Rain and wear:** DOOM's first episode lies at night in a downpour, rain
-  runs down the windows and blows in through broken ones, and walls and
+- **Climate and weather:** pick the weather (rain, snow, nukage rain, sand,
+  ash, fog or dry ice), the time of day, the temperature and the wind, or
+  leave each to the map. The map's rooms are worked out when it loads, the
+  wind blows through them, and blasts, footsteps and doors disturb what
+  falls and lies. See [The climate is picked, the weather worked out](#the-climate-is-picked-the-weather-worked-out).
+- **Rain and wear:** DOOM's first episode can lie at night in a downpour,
+  rain runs down the windows and blows in through broken ones, and walls and
   plates show their years. See [Rain, night and wear](#rain-night-and-wear).
 - **Room acoustics:** echoes and reverb measured from the map, with sounds
   finding their way round corners, through doors and windows, and fading
-  with distance as they do in air.
+  with distance as they do in air. Long narrow tunnels ring like sewers.
 - **Sounds DOOM never had, synthesized:** sparks, dying lamps, breaking
   glass, footsteps, and the hum, bubble and wind of the map around you. None
   of them is a recording; small synths written for each sound generate them
@@ -102,11 +113,14 @@ graphics panel with **F4**.
   synth, plus an offline renderer for comparing them.
 - **Settings panel:** **F4** switches the individual graphics and sound effects
   on and off and tunes them.
+- **For testers:** F4 → Graphics → Display → **Show FPS** set to Full shows
+  a frame-time graph and what each system costs, for screenshots in bug
+  reports.
 - A headless demo runner, regression tests and a GPU performance smoke test
   for development.
 
-The Mac build gets the most testing. The Linux and Windows builds compile in CI
-but have had less real play.
+The Windows build gets the most testing. The macOS and Linux builds compile in
+CI but have had less real play.
 
 ## Download and play
 
@@ -114,8 +128,9 @@ Ready-to-play builds for macOS, Windows and Linux are on the
 [Releases page](https://github.com/robongrui/derp/releases). Each one
 includes Freedoom, so it plays straight away.
 
-On Windows and Linux, put your own `.wad` files in the `wads` folder next to
-the game. On the Mac, choose your WAD folder when the app starts.
+On Windows start **Play DERP.exe**, on Linux **play-derp**, and put your own
+`.wad` files in the `wads` folder next to it. On the Mac, choose your WAD
+folder when the app starts.
 
 [PLAY.md](PLAY.md) has the controls and a description of the graphics and
 sound options.
@@ -144,6 +159,39 @@ version is used and DERP's made-up one stays off.
 
 Heretic is new and less played than DOOM; [`heretic/README.md`](heretic/README.md)
 has its controls, what works and what doesn't yet.
+
+## Phobos
+
+DOOM's first episode says it takes place on Phobos, a moon of Mars 22 km
+across. Pick **Phobos** for **Gameplay** in **F4 → Game → Mode** and the
+episode is played as if that were literally true. It is off by default,
+touches only the first episode (DOOM's or Freedoom: Phase 1's), and never
+runs in demos or netgames.
+
+Phobos pulls at 1/1700 of Earth's gravity, so you can't walk. Movement keys
+give gentle hops that float for about twenty seconds, Use next to a wall
+kicks you off along the floor, E jumps, and running fires the suit's
+thrusters. Knockback and recoil are real; a barrel is 225 kg of
+monopropellant. Air has a pressure in every sector and rushes out through
+every opening: doors cycle as airlocks, a broken window vents a room, and
+what isn't held down goes with the draft, monsters included. Outside is
+vacuum under a black sky with Mars hanging in it, and the sky is no lid:
+you and your rockets go up until about 900 m. Grav boots let you walk on
+ceilings, and **Guns turn you** spins you into backflips.
+
+How much help you get, from legs and guns only to thrusters and grav boots,
+is on **F4 → Game → Phobos**. Mappers can switch it on for their own maps
+with `phobos = true` in [DERPINFO](DERPINFO.md).
+
+See [`linuxdoom-1.10/p_phobos.c`](linuxdoom-1.10/p_phobos.c) and
+[`linuxdoom-1.10/p_boots.c`](linuxdoom-1.10/p_boots.c).
+
+## Episode 0.5: SCP_7179_B
+
+It's in the episode menu when you play DOOM II, TNT or Plutonia. It is the
+one place where DERP brings a map of its own. That is all this README says about it;
+[`scp_7179_b/README.md`](scp_7179_b/README.md) has how to start it and the
+credits.
 
 ## Screenshots
 
@@ -241,6 +289,10 @@ gets tighter reflections than busy artwork.
 
 It is a rough guess meant to make the existing art react to light. There is no
 attempt at physically based materials.
+
+With **Metal shading** on, bare metal takes highlights in its own colour, and
+plates that are mostly blank in the artwork get a brushed sheen: sharp along
+the brush, broad across it, running the way the artwork's streaks do.
 
 ![Metal walls catching light along their panels](screens/gloss-metal-walls.jpg)
 
@@ -345,7 +397,13 @@ lamps does the same, so a lamp's pool shows on a saturated floor as clearly as
 on the grey one next to it. What dynamic light adds rolls off on bright
 texels, so a lit wall doesn't get far ahead of the dark floor next to it.
 
-See [`platform/scene3d/lights.cpp`](platform/scene3d/lights.cpp) and
+The beam lights the weather too. Flakes, drops and grains in it light up, it
+shows as a cone in snow, sand and ash, fog and dry ice glow where it passes,
+and lying snow and sand glitter from fixed facets on each grain instead of
+random sparkles.
+
+See [`platform/scene3d/beam_air.cpp`](platform/scene3d/beam_air.cpp),
+[`platform/scene3d/lights.cpp`](platform/scene3d/lights.cpp) and
 [`platform/scene3d/exposure.cpp`](platform/scene3d/exposure.cpp).
 
 ### Flashlight shadows have stippled edges
@@ -627,6 +685,20 @@ See
 [`platform/shaders/mist.frag`](platform/shaders/mist.frag) and
 [`platform/shaders/present.frag`](platform/shaders/present.frag).
 
+### Sun and sky light follow one rule
+
+Every surface takes sun and sky light by one rule: how much of the sky it
+really sees, traced when the level loads, anchored on its sector's light
+level. There are no separate indoor and outdoor rules, so nothing steps
+where a roof ends. A hole in a roof shades at the light of the rooms round
+it, so its extra light shows only where the traced sun lands, and sunbeams
+rise from the whole sun patch, porches included. Porches, doorless
+recesses and the space under an overhang count as one open ground with the
+yard they open onto.
+
+See [`platform/scene3d/bake_sun.cpp`](platform/scene3d/bake_sun.cpp) and
+[`platform/scene3d/open_air.cpp`](platform/scene3d/open_air.cpp).
+
 ### Rain, night and wear
 
 Most of DERP's look is derived from the WAD, but the game's own episodes can
@@ -634,7 +706,8 @@ also get a look picked by hand. With **Authored episodes** on, DOOM's first
 episode lies at night in a steady downpour: the sun is hidden, and the lit
 rooms shine out through their windows into the dark. Only maps the IWAD
 itself holds get it; Freedoom's maps and PWADs keep the derived look, sun
-and all. Turned off, every map is lit as the WAD gives it.
+and all. Pick **Authored** for **Gameplay** in **F4 → Game → Mode**; with
+**Normal**, every map is lit as the WAD gives it.
 
 Rain falls wherever the sky is open, as streaks of whole Doom pixels that
 step at the game's tic rate, slanted by a wind of its own. It splashes where
@@ -643,9 +716,7 @@ window glass, and the ground under the sky lies wet in a few baked steps.
 Through a broken window the wind blows the rain in, and the floor and wall
 beneath the window soak. A few rooms beside the open sky have a crack in the
 ceiling, damp around it, with rain dripping through onto a small puddle. The
-rain is heard as a dense, soft patter. F4 → **Weather and wear → Rain**
-picks Never, Authored episodes (it rains where an authored look has rain) or
-Always.
+rain is heard as a dense, soft patter.
 
 The weather has also left marks over the years. Dark streaks run down the
 outside walls below windows that look out under the sky, rusty on metal, and
@@ -659,6 +730,102 @@ See [`platform/scene3d/weather.cpp`](platform/scene3d/weather.cpp),
 [`platform/scene3d/wear.cpp`](platform/scene3d/wear.cpp),
 [`platform/shaders/world/wear.glsl`](platform/shaders/world/wear.glsl) and
 [`platform/games/doom/authored.c`](platform/games/doom/authored.c).
+
+### The climate is picked, the weather worked out
+
+**F4 → Game → Mode → Weather** has four choices, each either the map's own
+or one choice for every map:
+
+- **Weather:** Clear, Rain, Snow, Nukage rain, Sand, Ash, Fog or Dry ice.
+- **Time of day:** Dawn, Morning, Noon, Afternoon, Dusk or Night.
+- **Temperature:** -30 °C to 50 °C.
+- **Wind:** Still, Breeze, Strong or Gale, and where it blows from.
+
+Not every combination makes sense, so the menu never offers one that
+doesn't fit: no snow above freezing, no sandstorm in still air, no fog in a
+gale, no 50 °C at night. The choices follow the menu's order. The weather
+is always all there, and a choice that clashes moves the ones below it to
+the nearest value that fits. Where the map's own weather clashes with a
+choice, the map's gives way. Real heat bleaches the sky, raises a warm haze
+and shimmers the far ground.
+
+**Snow** falls as flakes one Doom pixel wide and lies in ragged drifts,
+deeper the harder it falls, in even patches in still air and long scoured
+streaks in a gale. Windows frost from their edges in, and out in the snow
+the echoes fade and dull. Hard snow in a hard wind turns into a
+**blizzard**: flakes streak edge to edge and a whiteout swallows everything
+a few hundred units away, its density shaped on real visibility data.
+**Sand** blows along the ground with a dust haze and creeps in ripples;
+**ash** falls dark grey from an eruption, with a few glowing embers.
+**Fog** lies smooth in the low ground. **Dry ice** lies banded and heavy,
+pours off ledges, fills pits and low streets and leaves walkways clear.
+**Nukage rain** is a rule of the game, not a look: it hurts what stands
+under it, so like Phobos it is off in demos and netgames.
+
+Below freezing, **water ices over**, map cell by map cell, by the air's
+temperature where it lies, and gathers into floes. Splashes and caustics
+stay under the ice.
+
+The outdoors stays a shader trick: the sky's far weather is drawn as
+sheets, and nothing is simulated where no one would notice. **Clear**
+weather costs nothing; the wind is only heard.
+
+See [`platform/climate_rules.h`](platform/climate_rules.h),
+[`platform/scene3d/climate.cpp`](platform/scene3d/climate.cpp),
+[`platform/scene3d/snow.cpp`](platform/scene3d/snow.cpp),
+[`platform/scene3d/sand.cpp`](platform/scene3d/sand.cpp),
+[`platform/scene3d/ash.cpp`](platform/scene3d/ash.cpp),
+[`platform/scene3d/fog.cpp`](platform/scene3d/fog.cpp),
+[`platform/scene3d/dry_ice.cpp`](platform/scene3d/dry_ice.cpp),
+[`platform/scene3d/whiteout.cpp`](platform/scene3d/whiteout.cpp) and
+[`platform/scene3d/water_ice.cpp`](platform/scene3d/water_ice.cpp).
+
+### Rooms are found in the map, and the wind blows through them
+
+When a level loads, its sectors are joined into rooms: sectors that open
+wide into each other (a pedestal, a step, a strip of other light) are one
+room, doors, window frames and narrow recesses are openings, and a sector
+open to the sky along much of its edge is a porch, which counts as outside.
+It is worked out from the map alone, the same in every program.
+
+Air flows between the rooms through their openings, pushed by the wind
+outside, and every room keeps a temperature, heated by its floor area and
+cooled by what comes in. What falls outside rides those drafts indoors:
+snow trails across the floor from a broken window, slush where it's
+warmer, rime round cold inlets, sand fingering in from a doorway and piling
+where it lands. A doorway opened during play lays snow and rain in front of
+it as a broken window does.
+
+See [`platform/rooms.c`](platform/rooms.c),
+[`platform/scene3d/rooms.cpp`](platform/scene3d/rooms.cpp),
+[`platform/scene3d/drafts.cpp`](platform/scene3d/drafts.cpp),
+[`platform/scene3d/floor_film.cpp`](platform/scene3d/floor_film.cpp) and
+[`platform/scene3d/blown_in.cpp`](platform/scene3d/blown_in.cpp).
+
+### The weather is pushed around
+
+Gusts roll across open ground and shove every flake, drop and grain;
+indoors a draft's jet stirs what rides it, tight at the opening and
+swirling where it turns. What comes through a broken window keeps flying
+the way it flew outside and slows down indoors.
+
+Things that happen disturb it. A rocket, barrel or BFG ball shoves what
+flies, blows the drifts on the floor into a ragged rim, punches a hole in
+the fog that fills back in from its edge, and throws up a puff of whatever
+lay there. Projectiles leave wakes, bodies land in puffs, footsteps leave
+prints, bullets kick the floor and slamming doors breathe out. Torches and
+anything burning are hot spots: what flies rises over them, snow melts and
+the fog boils away. Outdoors the craters and prints stay in the snow, sand
+and ash and fill back in as more falls or the wind blows.
+
+The rule behind it all: a hit takes a few frames, recovering takes seconds,
+and anything settled sleeps, so a quiet room costs nothing.
+
+See [`platform/scene3d/air_push.cpp`](platform/scene3d/air_push.cpp),
+[`platform/scene3d/disturbances.cpp`](platform/scene3d/disturbances.cpp),
+[`platform/scene3d/disturbance_sources.cpp`](platform/scene3d/disturbance_sources.cpp),
+[`platform/scene3d/powder.cpp`](platform/scene3d/powder.cpp) and
+[`platform/scene3d/ground_dents.cpp`](platform/scene3d/ground_dents.cpp).
 
 ### Blood is made from the WAD too
 
@@ -1000,6 +1167,19 @@ the corridor seen from the hall adds nothing.
 
 See [`platform/audio/beyond.c`](platform/audio/beyond.c).
 
+### Tunnels ring like sewers
+
+A long narrow passage is told from the floor plan: the longest pair of
+opposite rays, read straight across the side walls, with doorways and
+alcoves ignored. In such a tube the tail grows from its cross-section, up
+to two and a half times the room's own, sound flutters between the side
+walls (more over water), and the echoes from along it are smeared so no
+copy comes back off the far end. Facing down the tube the tail narrows.
+Rooms that aren't tubes sound exactly as before.
+
+See [`platform/audio/room.c`](platform/audio/room.c) and
+[`platform/audio/reverb.c`](platform/audio/reverb.c).
+
 ### The map hums
 
 When a level starts, its textures and things are read for what should make a
@@ -1187,7 +1367,7 @@ Please don't commit or upload commercial WAD files to this repository.
 
 You need CMake 3.21+ and a C11/C++17 compiler (Apple Clang, Clang, GCC or
 Visual Studio 2022). SDL3 is downloaded automatically if it isn't installed.
-The build makes both programs, `doom` (`Play DOOM.app` on the Mac) and
+The build makes both programs, `doom` (`Play DERP.app` on the Mac) and
 `derp-heretic`; on the Mac the Heretic program goes inside the app.
 
 ```sh
@@ -1196,6 +1376,26 @@ cmake -S . -B build/play -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON \
 cmake --build build/play --parallel
 ctest --test-dir build/play --output-on-failure
 ```
+
+## Credits
+
+[`THIRD_PARTY.md`](THIRD_PARTY.md) lists every library and data set that
+comes from elsewhere, with its license. Beyond the code:
+
+- **Microsoft Sam** speaks exactly one word in the game, rendered with
+  [OpenSAPI4](https://github.com/phyce/OpenSAPI4).
+- **SCP_7179_B** draws on "SCP-7179" by Calibold, from the SCP Wiki,
+  <https://scpwiki.com/scp-7179>, licensed under
+  [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). The SCP
+  Foundation and its concepts belong to the SCP Wiki community. More, with
+  spoilers kept behind a fold, in
+  [`scp_7179_b/README.md`](scp_7179_b/README.md#credits).
+
+## No warranty
+
+DERP is provided as is, without warranty of any kind. Use it at your own
+risk. Sections 15 and 16 of the GPL ([`LICENSE.TXT`](LICENSE.TXT)) say this
+in full.
 
 ## License
 

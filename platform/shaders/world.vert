@@ -12,6 +12,7 @@ layout(location=5) in uvec2 inLightMask;
 layout(location=6) in vec2 inSun;
 layout(location=7) in uint inStatic;
 layout(location=8) in uint inLampTint;
+layout(location=9) in float inLift;
 layout(std140,set=1,binding=0) uniform Camera CAMERA_BLOCK c;
 // The depth prepass and the shading pass must place every pixel identically.
 invariant gl_Position;
@@ -23,16 +24,17 @@ layout(std140,set=1,binding=1) uniform Plane { vec4 plane; };
 out float gl_ClipDistance[1];
 #endif
 void main() {
-    vUV=inUV;vLight=inLight;vMode=inMode;vWorld=inPosition;vTint=inTint;vLightMask=inLightMask;vSun=inSun;vStatic=inStatic;vLampTint=inLampTint;
+    vec3 position=inPosition+vec3(0,0,inLift);
+    vUV=inUV;vLight=inLight;vMode=inMode;vWorld=position;vTint=inTint;vLightMask=inLightMask;vSun=inSun;vStatic=inStatic;vLampTint=inLampTint;vLift=inLift;
     if((inMode&MODE_SCREEN)!=0u) {gl_Position=vec4(inPosition.xy,0,1);vDistance=0;}
     else {
-        vec3 d=inPosition-c.eye.xyz;
+        vec3 d=position-c.eye.xyz;
         float z=dot(d,c.forward.xyz);vDistance=z;
         float n=c.projection.z,f=c.projection.w;
         gl_Position=vec4(dot(d,c.right.xyz)*c.projection.x,
                          dot(d,c.up.xyz)*c.projection.y,z*f/(f-n)-n*f/(f-n),z);
     }
 #ifdef REFLECT
-    gl_ClipDistance[0]=dot(inPosition,plane.xyz)-plane.w-0.5;
+    gl_ClipDistance[0]=dot(position,plane.xyz)-plane.w-0.5;
 #endif
 }

@@ -181,6 +181,8 @@ extern int	key_straferight;
 
 extern int	key_fire;
 extern int	key_use;
+extern int	key_jump;
+extern int	key_boots;
 extern int	key_strafe;
 extern int	key_speed;
 
@@ -254,6 +256,8 @@ default_t	defaults[] =
 
     {"key_fire",&key_fire, KEY_RCTRL},
     {"key_use",&key_use, ' '},
+    {"key_jump",&key_jump, 'e'},
+    {"key_boots",&key_boots, 'g'},
     {"key_strafe",&key_strafe, KEY_RALT},
     {"key_speed",&key_speed, KEY_RSHIFT},
 

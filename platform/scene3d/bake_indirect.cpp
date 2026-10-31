@@ -1,8 +1,37 @@
 /* Indirect light baked at level load: bounce, sky light and occlusion,
    and light flowing between sectors. */
 #include "internal.h"
+#include "../rooms.h"
 
 namespace doom3d {
+namespace {
+// A door shut at load has no height in bakeMap: its floor's samples start
+// above its ceiling and every ray stops at once, so the floor that comes to
+// light as it opens was baked shut in (no bounce, no sky, all occluded),
+// darker and greyer than the floors round it (E1M1's sector 2, the walls
+// round the yard). Its own surfaces are baked as it stands open, in a copy
+// of bakeMap with such doors raised to the height they open to: nobody sees
+// them while it is shut. Every other surface is baked against bakeMap, the
+// door shut, so nothing leaks through it.
+struct OpenDoors {
+    BakeMap map;
+    std::vector<char> door;   // per sector: a door shut at load, raised in map
+    bool any=false;
+    OpenDoors() {
+        Rooms_Build();
+        door.assign(numsectors,0);
+        for(int s=0;s<numsectors&&s<(int)bakeMap.sectors.size();++s) {
+            const BakeSector &b=bakeMap.sectors[s];float top;
+            if(b.ceiling-b.floor<8&&Rooms_Door(s,&top)&&top-b.floor>=8)door[s]=1,any=true;
+        }
+        if(!any)return;
+        map=bakeMap;
+        for(int s=0;s<numsectors;++s)if(door[s]) {float top;Rooms_Door(s,&top);map.sectors[s].ceiling=top;}
+    }
+    // The map a sample in sector is baked against.
+    const BakeMap &of(int sector) const {return any&&sector>=0&&sector<(int)door.size()&&door[sector]?map:bakeMap;}
+};
+}
 int bounceKey=-1;
 
 int bakeThingsKey=-1,ambientKey=-1,flowKey=-1;
@@ -26,7 +55,15 @@ void bakeBounce() {
     uint64_t start=SDL_GetTicksNS();
     bool sun=bounceKey&2,lights=bounceKey&4;
     std::array<float,3> sunEnergy={};
-    if(sun)for(int c=0;c<3;++c)sunEnergy[c]=sunTint[c]*sunLevel;
+    // Under falling weather the sun sinks as the direct sun does (scene.cpp).
+    if(sun)for(int c=0;c<3;++c)sunEnergy[c]=sunTint[c]*sunLevel*(1-0.85f*overcast());
+    // What the weather leaves on the ground (weather.cpp's bake, as having
+    // fallen a while) bounces as wear.glsl draws it: what settles in its own
+    // colour (snow white, ash dark grey, sand), wet ground darker.
+    Weather kind=settings.weather?falling():WEATHER_NONE;
+    const WeatherKind &weather=weatherKind(kind);
+    std::array<float,3> lies=weather.lies?weather.lies():std::array<float,3>{0.8f,0.82f,0.87f};
+    if(kind!=WEATHER_NONE)bakeWetness();
     std::vector<std::array<float,3>> flatAlbedo((size_t)numsectors*2,{0.5f,0.5f,0.5f});
     for(int i=0;i<numsectors;++i)for(int ceiling=0;ceiling<2;++ceiling) {
         int pic=ceiling?sectors[i].ceilingpic:sectors[i].floorpic;
@@ -48,9 +85,11 @@ void bakeBounce() {
         float grey=0.299f*a[0]+0.587f*a[1]+0.114f*a[2];
         for(float &c:a)c=grey+0.25f*(c-grey);
     }
+    {float grey=luminance(lies.data());for(float &c:lies)c=grey+0.25f*(c-grey);}
     auto radiance=[&](const BakeHit &hit,float out[3]) {
         if(hit.kind==BakeHit::thing)return; // Decorations stay dark.
         const uint8_t *light=nullptr;float visible=0;const std::array<float,3> *albedo=nullptr;
+        std::array<float,3> covered;
         if(hit.kind==BakeHit::wall) {
             const BakeLine &line=bakeMap.lines[hit.line];
             int side=line.front==hit.sector?0:1;
@@ -69,6 +108,15 @@ void bakeBounce() {
             albedo=&flatAlbedo[(size_t)hit.sector*2+ceiling];
             light=flatCell(ceiling?ceilingLight:floorLight,cell);
             visible=ceiling?0:contactCells[4*cell+2]/255.0f;
+            // snowAt's share of covered texels at that depth, roughly.
+            if(uint8_t ground=!ceiling&&kind!=WEATHER_NONE?groundBakeAt(cell):0) {
+                float deep=(ground-1)/254.0f;covered=*albedo;
+                if(weather.settles) {
+                    float share=std::clamp((deep*1.1f-0.35f)/0.45f,0.0f,1.0f);
+                    for(int c=0;c<3;++c)covered[c]+=(lies[c]-covered[c])*share;
+                } else if(weather.wets)for(float &c:covered)c*=1-0.36f*deep;
+                albedo=&covered;
+            }
         }
         // The surface shows its static light within the headroom its sector
         // leaves (fillHeadroom), as world.frag draws it.
@@ -76,14 +124,16 @@ void bakeBounce() {
         if(lights) {for(int c=0;c<3;++c)shown[c]=light[c]/255.0f*2;fillHeadroom(shown,lighting(&sectors[hit.sector]));}
         for(int c=0;c<3;++c)out[c]=(*albedo)[c]*(sunEnergy[c]*visible+shown[c]);
     };
+    const OpenDoors doors;
     auto gather=[&](int sector,float x,float y,float z,const float normal[3],uint32_t seed,float out[3]) {
         // A per-sample rotation of the stratified pattern trades banding for fine noise.
         seed=seed*2654435761u;seed^=seed>>15;float rotation=(seed&1023)/1024.0f;
         out[0]=out[1]=out[2]=0;
+        const BakeMap &map=doors.of(sector);
         for(int n=0;n<16;++n) {
             float direction[3],hitLight[3]={};BakeHit hit;
             cosineDirection(normal,((n&3)+0.5f)/4,std::fmod(((n>>2)+0.5f)/4+rotation,1.0f),direction);
-            if(traceRay(bakeMap,sector,x,y,z,direction,512,SkyCeiling::escape,&hit)||hit.kind==BakeHit::none)continue;
+            if(traceRay(map,sector,x,y,z,direction,512,SkyCeiling::escape,&hit)||hit.kind==BakeHit::none)continue;
             radiance(hit,hitLight);
             for(int c=0;c<3;++c)out[c]+=hitLight[c]/16;
         }
@@ -105,7 +155,7 @@ void bakeBounce() {
         out[0]=out[1]=out[2]=0;
         int pic=ceiling?sectors[sector].ceilingpic:sectors[sector].floorpic;
         if(pic==skyflatnum)return;
-        const BakeSector &s=bakeMap.sectors[sector];
+        const BakeSector &s=doors.of(sector).sectors[sector];
         gather(sector,mapOrigin[0]+(x+0.5f)*mapCell,mapOrigin[1]+(y+0.5f)*mapCell,ceiling?s.ceiling-1:s.floor+1,
                ceiling?down:up,(uint32_t)(y*mapWidth+x)*2+ceiling,out);
     };
@@ -292,13 +342,15 @@ void bakeAmbient() {
     // Occlusion counts only hits within 64 units; rays run on only to find
     // the sky, so on maps without one they stop there, open either way.
     float reach=skyLights.empty()?64:INFINITY;
+    const OpenDoors doors;
     auto gather=[&](int sector,float x,float y,float z,const float normal[3],uint32_t seed,std::array<float,2> &out) {
         seed=seed*2654435761u;seed^=seed>>15;float rotation=(seed&1023)/1024.0f;
         float sky=0,open=0;
+        const BakeMap &map=doors.of(sector);
         for(int n=0;n<12;++n) {
             float direction[3];BakeHit hit;
             cosineDirection(normal,((n&3)+0.5f)/4,std::fmod(((n>>2)+0.5f)/3+rotation,1.0f),direction);
-            if(traceRay(bakeMap,sector,x,y,z,direction,reach,SkyCeiling::escape,&hit)) {sky+=reach==INFINITY;open+=1;continue;}
+            if(traceRay(map,sector,x,y,z,direction,reach,SkyCeiling::escape,&hit)) {sky+=reach==INFINITY;open+=1;continue;}
             if(hit.kind==BakeHit::none) {open+=1;continue;}
             open+=std::min(1.0f,std::sqrt((hit.x-x)*(hit.x-x)+(hit.y-y)*(hit.y-y)+(hit.z-z)*(hit.z-z))/64);
         }
@@ -313,7 +365,7 @@ void bakeAmbient() {
             out={0,1};
             int pic=ceiling?sectors[sector].ceilingpic:sectors[sector].floorpic;
             if(pic==skyflatnum)return;
-            const BakeSector &s=bakeMap.sectors[sector];
+            const BakeSector &s=doors.of(sector).sectors[sector];
             gather(sector,mapOrigin[0]+(x+0.5f)*mapCell,mapOrigin[1]+(y+0.5f)*mapCell,ceiling?s.ceiling-1:s.floor+1,
                    ceiling?down:up,(uint32_t)(y*mapWidth+x)*2+ceiling,out);
         },
@@ -332,7 +384,8 @@ void bakeAmbient() {
 // The most visible one is stored per cell as its flow neighbor (seam map,
 // fourth channel) with a weight (contact map alpha); during play the cell's
 // light rises toward that sector's current light, so flickering rooms
-// flicker faintly beyond their openings. Doors count as they start (closed).
+// flicker faintly beyond their openings. Doors count as they start (closed),
+// but for a shut door's own floor, baked as it stands open (OpenDoors).
 void bakeFlow() {
     loadingStage(LoadStage::Flow);
     finishRelight();
@@ -346,13 +399,15 @@ void bakeFlow() {
     int blocksX=(mapWidth+step-1)/step,blocksY=(mapHeight+step-1)/step;
     std::vector<Flow> blocks((size_t)blocksX*blocksY);
     std::vector<int> blockSector((size_t)blocksX*blocksY,noSector);
+    const OpenDoors doors;
     parallelFor(blocksY,[&](int by) {
         std::vector<std::pair<int,float>> score;
         for(int bx=0;bx<blocksX;++bx) {
             int x=std::min(bx*step+step/2,mapWidth-1),y=std::min(by*step+step/2,mapHeight-1);
             size_t b=(size_t)by*blocksX+bx;int sector=seamCells[(size_t)y*mapWidth+x].own;
             blockSector[b]=sector;if(sector==noSector)continue;
-            const BakeSector &s=bakeMap.sectors[sector];
+            const BakeMap &map=doors.of(sector);
+            const BakeSector &s=map.sectors[sector];
             if(s.ceiling-s.floor<8)continue;
             float px=mapOrigin[0]+(x+0.5f)*mapCell,py=mapOrigin[1]+(y+0.5f)*mapCell,pz=s.floor+std::min(40.0f,(s.ceiling-s.floor)*0.5f);
             float rotation=hashUnit(bx,by,0x51f1u);
@@ -361,7 +416,7 @@ void bakeFlow() {
                 float angle=(k+rotation)*2*doomPi/12,direction[3]={std::cos(angle),std::sin(angle),0};
                 static const std::pair<float,float> lengths[]={{48,1.0f},{96,0.6f},{160,0.35f}};
                 for(auto [length,weight]:lengths) {
-                    if(!traceRay(bakeMap,sector,px,py,pz,direction,length,SkyCeiling::open))break;
+                    if(!traceRay(map,sector,px,py,pz,direction,length,SkyCeiling::open))break;
                     float ex=px+direction[0]*length,ey=py+direction[1]*length;
                     int end=int(R_PointInSubsector((fixed_t)(ex*FRACUNIT),(fixed_t)(ey*FRACUNIT))->sector-sectors);
                     if(end==sector)continue;

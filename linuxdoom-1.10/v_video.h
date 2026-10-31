@@ -85,6 +85,15 @@ V_DrawPatchDirect
   int		scrn,
   patch_t*	patch );
 
+// As V_DrawPatch, each pixel's colour through translation (256 indices).
+void
+V_DrawPatchTranslated
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  const byte*	translation );
+
 
 // Draw a linear block of pixels into the view buffer.
 void

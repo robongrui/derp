@@ -33,6 +33,8 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 /* These belong to occlusion's same-sector branch; every test sound is in
    the other room and uses the real acoustic graph instead. */
 void Map_Gather(float x, float y) { (void)x; (void)y; }
+/* The two test rooms are rooms apart (the room map isn't built here). */
+int Map_SameRoom(int a, int b) { return a == b; }
 int Map_Cross(float x, float y, float cx, float cy, float length, crossing_t *out, int max)
 {
     (void)x; (void)y; (void)cx; (void)cy; (void)length; (void)out; (void)max;

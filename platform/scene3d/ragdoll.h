@@ -46,6 +46,27 @@ struct Relief {
 const Relief *reliefFor(int lump,int sideLump,bool sideFlip,int backLump,bool backFlip);
 void reliefsShutdown();
 
+#ifdef DOOM_DEVTOOLS
+// For local dev tools (devtools/): one body as its card camera last drew it. All in body space (as
+// the skeleton: x right as drawn, unmirrored; mirror says whether the card draws it mirrored): live
+// the pose simulated this tic, shown the one the card holds, shift how far that is moved where it is
+// drawn (its flight runs smooth), posed the relief in the shown pose, walls the walls round it (x0, y0,
+// x1, y1, top) and floor its floors on a grid of floorStep units from floorX, floorY. The camera: the
+// eye's way to the body (azimuth, radians in drawn space) and the angle and tilt it drew at (degrees).
+struct DollPeek {
+    const Relief *body=nullptr;const std::vector<V3> *posed=nullptr;
+    DollPose live{},shown{};V3 shift{};
+    bool mirror=false,landed=false,resting=false,baked=false,smooth=false;
+    int tics=0,shownAt=0,lastPose=0,every=1;   // its tics, the poses drawn, the tic of the last, a pose every so many tics
+    int cardKey=0;float azimuth=0;int angle=0,tilt=0;
+    std::vector<std::array<float,5>> walls;
+    static constexpr int floorSide=9;float floorStep=16,floorX=0,floorY=0,floor[floorSide][floorSide]={};
+};
+struct DollBody { const mobj_t *thing;int start; };
+std::vector<DollBody> ragdollBodies();   // every ragdoll, the oldest kill first
+bool ragdollPeek(const mobj_t *thing,float fraction,DollPeek &out);
+#endif
+
 // Each part's motion from rest to now: world = m * rest + t.
 struct PartMotion { float m[3][3];V3 t; };
 void partMotions(const DollPose &rest,const DollPose &now,std::array<PartMotion,DOLL_PARTS> &out);

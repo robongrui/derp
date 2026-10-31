@@ -1390,6 +1390,10 @@ void DEH_Init (void)
     for (i = 0; i < NUMSTATES; i++)
 	original_actions[i] = states[i].action;
 
+    // DERP's own wording, keyed on the original text so patches that
+    // replace "Picked up a clip." still win.
+    DEH_Replace ("Picked up a clip.", "Picked up a mag.");
+
     // -nodeh skips the patches embedded in the WADs.
     if (!M_CheckParm ("-nodeh"))
 	for (i = 0; i < numlumps; i++)

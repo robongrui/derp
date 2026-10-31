@@ -23,12 +23,18 @@ int I_Render3DSettingsOpen(void);
 void I_Render3DSettingsKey(int scancode, int shift);
 void I_Render3DSettingsClick(int x, int y, int button);
 void I_Render3DSettingsDraw(unsigned *pixels);
+/* A library book open (scene3d/book_view.cpp): its page drawn in the panel's
+   image while F4's panel is closed. */
+int I_Render3DPageOpen(void);
+void I_Render3DPageDraw(unsigned *pixels);
 void I_Render3DSettingsMouse(float x, float y, int button);
 /* The loading screen, in the same 640x400 image and font: title, a bar
    fraction (0-1) full and the stage under it, on black. */
 void I_Render3DLoadingDraw(unsigned *pixels, const char *title, const char *stage, float fraction);
 void I_Render3DScreenshot(void);
 void I_Render3DToggleFlashlight(void);
+/* The key left of 1: steps F4's "Show FPS" on (off, window title, FPS, full) and saves it. */
+void I_Render3DCycleStats(void);
 int I_Render3DIsAccelerated(void);
 /* Frame profiling for the performance smoke test (tests/perf_smoke.c). While
    enabled, frames present without vsync and each waits for the GPU so its

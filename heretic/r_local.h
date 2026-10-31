@@ -482,10 +482,14 @@ extern void (*R_BeforeTic)(void);
 extern void (*R_MuzzleFlash)(mobj_t *source, int weapon, int projectile);
 extern void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z);
 extern void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, fixed_t slope, int damage);
+// Renderer only: the game's airborne blood just spawned, and whose it is.
+extern void (*R_BloodSpilled)(mobj_t *blood, mobj_t *bleeder);
 // Every damage event, before it is applied (renderer only: who hit what, with what).
 extern void (*R_DamageHit)(mobj_t *target, mobj_t *inflictor, mobj_t *source, int damage);
 extern boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fixed_t y, fixed_t z);
 extern void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+extern void (*R_GlassStruck)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);	/* never called (DOOM's Phobos) */
+extern int (*R_RainedIn)(mobj_t *mo);	/* never called (DOOM's nukage rain) */
 // Frames between tics (the accelerated renderer interpolates).
 extern boolean r_uncapped;
 

@@ -40,6 +40,7 @@ rcsid[] = "$Id: p_inter.c,v 1.4 1997/02/03 22:45:11 b1 Exp $";
 #include "am_map.h"
 
 #include "p_local.h"
+#include "p_phobos.h"
 
 #include "s_sound.h"
 
@@ -819,10 +820,13 @@ P_DamageMobj
 				target->x,
 				target->y);
 		
-	thrust = damage*(FRACUNIT>>3)*100/target->info->mass;
+	// On Phobos the blow's real momentum: a shove ~45 times weaker.
+	thrust = P_Phobos () ? P_PhobosThrust (damage, target->info->mass)
+	    : damage*(FRACUNIT>>3)*100/target->info->mass;
 
 	// make fall forwards sometimes
-	if ( damage < 40
+	if ( !P_Phobos ()
+	     && damage < 40
 	     && damage > target->health
 	     && target->z - inflictor->z > 64*FRACUNIT
 	     && (P_Random ()&1) )

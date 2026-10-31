@@ -51,7 +51,7 @@ extern SDL_GPUSampleCount sampleCount;
 extern SDL_GPUGraphicsPipeline *opaquePipeline,*skyPipeline,*skySurfacePipeline,*reflectSkySurfacePipeline,*worldPipeline,*shadowPipeline,*decalPipeline,*particlePipeline,*crestPipeline,*heatPipeline,
     *weaponPipeline,*hudPipeline,*solidPipeline,*mistPipeline,*shaftPipeline,*overlayWeaponPipeline,*overlayHudPipeline,*overlaySolidPipeline,
     *reflectOpaquePipeline,*reflectSkyPipeline,*reflectWorldPipeline,*emissionPipeline,*blurPipeline,*presentPipeline,*depthPipeline,*prepassPipeline,*coveragePipeline,*cutoutPipeline,
-    *settingsPipeline,*glassPipeline,*reflectPrepassPipeline;
+    *settingsPipeline,*glassPipeline,*reflectPrepassPipeline,*glowParticlePipeline;
 // Render targets at the render resolution (width x height); bloom at half.
 extern SDL_GPUTexture *multisampleTexture,*colorTexture,*depthTexture,*sceneDepth,*emissionTexture,*emissionDepth,*bloomScratch,*bloomTexture;
 extern int width,height;
@@ -81,6 +81,11 @@ void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGrap
                SDL_GPUGraphicsPipeline *coverage=nullptr,SDL_GPUGraphicsPipeline *cutout=nullptr,bool sprites=true);
 void drawOverlays(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,const FrameView &view,
                   const std::vector<SpriteDraw> &weapons,const std::vector<Vertex> &hud,const std::vector<Vertex> &cross,bool depth);
+
+// presentation.cpp: before each frame takes its swapchain image, the chosen
+// present mode and frames in flight (F4 "Frame presentation") and the frame
+// limit (F4 "Frame limit"), the adaptive mode's switching, profiling uncapped.
+void presentationWait();
 
 // frame.cpp
 void releaseReflection();

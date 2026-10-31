@@ -12,8 +12,10 @@
 #include "w_wad.h"
 #include "impact_synth.h"
 #include "steps.h"
+#include "library_steps.h"
 #include "../game_profile.h"
 #include "../game_materials.h"
+#include "frozen.h"
 
 #define WADERS 64
 #define MONSTER_STRIDE 44.0f  /* monsters walk in jumps; a splash every so many units */
@@ -58,6 +60,11 @@ static int floor_kind(int pic)
     return pic >= 0 && pic < known ? kinds[pic] : IMPACT_STEP_STONE;
 }
 static int wet(int kind) { return kind == IMPACT_SPLASH_WATER || kind == IMPACT_SPLASH_THICK; }
+/* Water frozen over underfoot (frozen.h) steps as stone does. */
+static int on_ice(int kind, float x, float y)
+{
+    return kind == IMPACT_SPLASH_WATER && Frozen_Water && Frozen_Water(x, y) ? IMPACT_STEP_STONE : kind;
+}
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
 static int grounded(const mobj_t *mo) { return mo->z <= mo->floorz + FRACUNIT / 2; }
 
@@ -72,6 +79,8 @@ static int emit(step_event_t *events, int count, int max, int kind, const mobj_t
    (Step_Layers), by how hard it lands and what they carry. */
 static int emit_step(step_event_t *events, int count, int max, int kind, const mobj_t *mo, float force)
 {
+    int library = LibrarySteps_Player(events, count, max, kind, mo, force);
+    if (library >= 0) return library;
     const player_t *player = mo->player;
     impact_layer_t layers[3];
     int layer_count = Step_Layers(kind, force, player ? player->armortype : 0,
@@ -84,12 +93,17 @@ static int emit_step(step_event_t *events, int count, int max, int kind, const m
 static int player_steps(step_event_t *events, int count, int max)
 {
     static const mobj_t *last_mo;
-    static float last_x, last_y, last_z, walked;
+    static float last_x, last_y, last_z, walked, last_shift_x, last_shift_y, last_shift_z;
     static int was_grounded = 1;
     const mobj_t *mo = players[consoleplayer].mo;
     if (!mo) return count;
-    float x = units(mo->x), y = units(mo->y), z = units(mo->z);
-    int ground = grounded(mo), kind = floor_kind(mo->subsector->sector->floorpic);
+    float x = units(mo->x), y = units(mo->y), z = units(mo->z), shift_x, shift_y, shift_z;
+    /* Carried through geometry built alike (the library): no step taken, no fall. */
+    Game_WorldShift(&shift_x, &shift_y, &shift_z);
+    last_x += Game_ShiftGrew(shift_x, last_shift_x); last_y += Game_ShiftGrew(shift_y, last_shift_y);
+    last_z += Game_ShiftGrew(shift_z, last_shift_z);
+    last_shift_x = shift_x; last_shift_y = shift_y; last_shift_z = shift_z;
+    int ground = grounded(mo), kind = LibrarySteps_Floor(on_ice(floor_kind(mo->subsector->sector->floorpic), x, y));
     if (mo != last_mo) { last_mo = mo; last_x = x; last_y = y; last_z = z; was_grounded = ground; walked = 0; return count; }
     float moved = hypotf(x - last_x, y - last_y), fall = last_z - z;
     last_x = x; last_y = y; last_z = z;
@@ -122,8 +136,8 @@ static int monster_splashes(step_event_t *events, int count, int max)
         if (!Game_ThinkerIsMobj(th)) continue;
         const mobj_t *mo = (const mobj_t *)th;
         if (mo->player || !(mo->flags & MF_SHOOTABLE) || (mo->flags & MF_CORPSE) || mo->health <= 0 || !grounded(mo)) continue;
-        int kind = floor_kind(mo->subsector->sector->floorpic);
         float x = units(mo->x), y = units(mo->y);
+        int kind = on_ice(floor_kind(mo->subsector->sector->floorpic), x, y);
         if (!wet(kind) || hypotf(x - lx, y - ly) > WADE_REACH) continue;
         wader_t *w = NULL, *free_slot = NULL;
         for (int i = 0; i < WADERS && !w; ++i)
@@ -154,5 +168,6 @@ int Steps_Tic(step_event_t *events, int max)
     if (gamestate != GS_LEVEL || !players[consoleplayer].mo || !players[consoleplayer].mo->subsector) return 0;
     if (level != r_levelserial) { level = r_levelserial; memset(waders, 0, sizeof(waders)); }
     int count = player_steps(events, 0, max);
-    return monster_splashes(events, count, max);
+    count = monster_splashes(events, count, max);
+    return LibrarySteps_People(events, count, max);
 }

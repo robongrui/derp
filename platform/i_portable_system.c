@@ -1,5 +1,6 @@
 /* Common C11 system interface for the portable and legacy Linux targets. */
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
@@ -49,9 +50,15 @@ byte *I_ZoneBase(int *size)
     return memory;
 }
 
-int I_GetTime(void)
+#ifdef DOOM_DEVTOOLS
+/* Local dev tools (devtools/) may run the game's clock slow: game seconds per real second. */
+extern double devTimeScale;
+#endif
+
+/* Nanoseconds since the first call, on the game's clock. */
+static uint64_t elapsedNanoseconds(void)
 {
-    uint64_t ticks;
+    uint64_t elapsed;
 #ifdef _WIN32
     static LARGE_INTEGER frequency, base;
     LARGE_INTEGER now;
@@ -62,9 +69,9 @@ int I_GetTime(void)
     }
     if (!QueryPerformanceCounter(&now))
         I_Error("Could not read the monotonic clock");
-    uint64_t elapsed = (uint64_t)(now.QuadPart - base.QuadPart);
-    ticks = (elapsed / frequency.QuadPart) * TICRATE
-          + (elapsed % frequency.QuadPart) * TICRATE / frequency.QuadPart;
+    uint64_t counts = (uint64_t)(now.QuadPart - base.QuadPart);
+    elapsed = (counts / frequency.QuadPart) * UINT64_C(1000000000)
+            + (counts % frequency.QuadPart) * UINT64_C(1000000000) / frequency.QuadPart;
 #else
     static struct timespec base;
     static boolean initialized;
@@ -83,10 +90,35 @@ int I_GetTime(void)
         --seconds;
         nanoseconds += INT64_C(1000000000);
     }
-    ticks = (uint64_t)seconds * TICRATE
-          + (uint64_t)nanoseconds * TICRATE / UINT64_C(1000000000);
+    elapsed = (uint64_t)seconds * UINT64_C(1000000000) + (uint64_t)nanoseconds;
 #endif
+#ifdef DOOM_DEVTOOLS
+    {
+        /* Summed a call at a time, so changing the scale never jumps the clock. */
+        static uint64_t realBefore, scaled;
+        scaled += (uint64_t)((double)(elapsed - realBefore) * devTimeScale);
+        realBefore = elapsed;
+        elapsed = scaled;
+    }
+#endif
+    return elapsed;
+}
+
+int I_GetTime(void)
+{
+    uint64_t elapsed = elapsedNanoseconds();
+    uint64_t ticks = (elapsed / UINT64_C(1000000000)) * TICRATE
+                   + (elapsed % UINT64_C(1000000000)) * TICRATE / UINT64_C(1000000000);
     return (int)(ticks & INT32_MAX);
+}
+
+/* The same clock with the time since its last tic as a fraction: the 3D
+   renderer blends the world between tics by it. */
+double I_GetTimeExact(void)
+{
+    uint64_t elapsed = elapsedNanoseconds();
+    return (double)((elapsed / UINT64_C(1000000000)) * TICRATE)
+         + (double)((elapsed % UINT64_C(1000000000)) * TICRATE) / 1e9;
 }
 
 void I_WaitVBL(int count)
@@ -106,6 +138,23 @@ void I_WaitVBL(int count)
 
 void I_Init(void) { I_InitSound(); }
 void I_BeginRead(void) { }
+const char *I_ProgramFile(const char *name)
+{
+#ifdef DOOM_NATIVE
+    static char path[4096];
+    const char *base = SDL_GetBasePath();
+    FILE *file;
+    if (!base) return NULL;
+    snprintf(path, sizeof path, "%s%s", base, name);
+    file = fopen(path, "rb");
+    if (!file) return NULL;
+    fclose(file);
+    return path;
+#else
+    (void)name;
+    return NULL;
+#endif
+}
 void I_EndRead(void) { }
 void I_Tactile(int on, int off, int total)
 {
@@ -151,7 +200,11 @@ void I_Error(char *error, ...)
     I_ShutdownSound();
     I_ShutdownMusic();
 #ifdef DOOM_NATIVE
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Game_Title(), message, NULL);
+    /* No window to show it over in the tests (the dummy video driver): the
+       message is on stderr, and a box would wait on the desktop. */
+    const char *video = getenv("SDL_VIDEODRIVER");
+    if (!video || strcmp(video, "dummy"))
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Game_Title(), message, NULL);
 #endif
     I_ShutdownGraphics();
     exit(EXIT_FAILURE);

@@ -2,7 +2,13 @@
 #include <stdio.h>
 #include "doomdef.h"
 #include "doomstat.h"
+#include "d_event.h"
 #include "p_local.h"
+#include "p_phobos.h"
+#include "p_weather.h"
+#include "p_library.h"
+#include "../../derp_info.h"
+#include "m_argv.h"
 #include "sounds.h"
 #include "i_sound.h"
 #include "w_wad.h"
@@ -58,6 +64,19 @@ game_thing_role Game_ThingRole(int type)
     }
 }
 
+/* Authored: the Cacodemon bleeds blue, the Barons and Hell Knights green, a
+   Lost Soul is bone and fire with nothing to bleed. */
+game_blood_tint Game_BloodTint(int type)
+{
+    switch (type)
+    {
+    case MT_HEAD: return GAME_BLOOD_BLUE;
+    case MT_BRUISER: case MT_KNIGHT: return GAME_BLOOD_GREEN;
+    case MT_SKULL: return GAME_BLOOD_NONE;
+    default: return GAME_BLOOD_RED;
+    }
+}
+
 int Game_BlastFrame(const struct mobj_s *thing)
 {
     int state;
@@ -98,13 +117,117 @@ int Game_Sprite(game_sprite_role role)
 
 int Game_HasEffect(game_effect effect) { (void)effect; return 1; }
 
-void Game_Sun(game_sun *sun) { *sun = (game_sun){ 0, 0.3f, 0, 0.3f, 0 }; }
+/* On Phobos' night side Mars is the sky light: 42 degrees of sunlit planet,
+   some 3% of full sunlight (ten thousand full moons), and most of the light
+   outside takes its colour. */
+void Game_Sun(game_sun *sun)
+{
+    *sun = (game_sun){ 0, 0.3f, 0, P_Phobos () ? 0.85f : 0.3f, 0 };
+}
+
+void Game_SetPhobos(int on) { phobosphysics = on || M_CheckParm ("-phobos"); }
+void Game_SetWeather(int choice) { weatherchoice = choice; }
+int Game_NukageRain(void) { return P_NukageRain (); }
+void Game_SetPhobosRules(int player, int enemies, int air, int recoil)
+{ phobosplayer = player; phobosenemies = enemies; phobosair = air; phobosrecoil = recoil != 0; }
+int Game_Phobos(void) { return P_Phobos (); }
+float Game_PhobosGravity(void) { return DerpInfo_Map.gravity >= 0 ? P_PhobosPull () : 1.49e-4f; }
+void Game_WorldShift(float *dx, float *dy, float *dz) { P_LibraryShift (dx, dy, dz); }
+int Game_Carried(const struct mobj_s *thing) { return P_LibraryCarried (thing); }
+int Game_WorldWraps(void) { return P_Library (); }
+int Game_WorldRenewed(void) { return P_LibraryRenewed (); }
+int Game_FloorsAbove(void) { return P_LibraryFloorsAbove (); }
+int Game_FloorsBelow(void) { return P_LibraryFloorsBelow (); }
+int Game_Storey(int sector, float *storey, float *bottom)
+{
+    fixed_t height, low;
+    if (!P_LibraryStorey (sector, &height, &low))
+        return 0;
+    *storey = height/(float)FRACUNIT;
+    *bottom = low/(float)FRACUNIT;
+    return 1;
+}
+boolean M_LibraryBlack(void);
+int Game_LibraryEyes(float *lids, float *black)
+{
+    /* The questions and the welcome (m_library.c) are on black. */
+    if (M_LibraryBlack ()) { *lids = 0; *black = 1; return 1; }
+    return P_LibraryEyes (lids, black);
+}
+int Game_LibraryYawns(void) { return P_LibraryYawns (); }
+const char *Game_LibraryNote(void) { return P_LibraryNote (); }
+int Game_LibraryAim(float corners[4][3], int *read)
+{
+    boolean seen = false, aimed = P_LibraryAim (corners, &seen);
+    *read = seen;
+    return aimed;
+}
+int M_KioskPage(char *lines, char *marks);
+int Game_LibraryPage(char *lines, char *marks)
+{
+    int kiosk = M_KioskPage (lines, marks);   /* the kiosk's menu, shown as a page */
+    return kiosk ? kiosk : P_LibraryPage (lines, marks);
+}
+const char *Game_LibrarySays(const struct mobj_s *thing, double seconds, float *shown) { return P_LibrarySays ((const mobj_t *)thing, seconds, shown); }
+float Game_LibraryRinging(void) { return P_LibraryRinging (); }
+int Game_LibraryKnocks(void) { return P_LibraryKnocks (); }
+float Game_LibraryFallSpeed(void) { return P_LibraryFallSpeed (); }
+int Game_InLibrary(void) { return P_Library (); }
+float Game_LibraryChasm(float *side) { return P_LibraryChasm (side); }
+float Game_LibraryTired(void) { return P_LibraryTired (); }
+int Game_LibraryFall(float speed[3]) { return P_LibraryFall (&speed[0], &speed[1], &speed[2]); }
+int Game_ThingAsleep(const struct mobj_s *thing) { return P_LibraryAsleep (thing); }
+int Game_LibraryFigures(game_figure *out, int most, double seconds)
+{
+    static library_figure_t	figures[1024];
+    int				i, n = P_LibraryFigures (figures, most < 1024 ? most : 1024, seconds);
+
+    for (i = 0; i < n; i++)
+    {
+	out[i].x = figures[i].x;
+	out[i].y = figures[i].y;
+	out[i].angle = figures[i].angle;
+	out[i].sprite = figures[i].sprite;
+	out[i].frame = figures[i].frame;
+	out[i].type = figures[i].type;
+	out[i].storey = figures[i].storey;
+    }
+    return n;
+}
+float Game_Air(int sector) { return sector >= 0 && sector < numsectors ? P_SectorAir (&sectors[sector]) : 1; }
+void Game_Glass(int line, int whole) { P_PhobosGlass (line, whole); }
+int Game_Vents(game_vent *vents, int most) { return P_AirVents ((phobos_vent_t *)vents, most); }
+int Game_Adrift(const struct mobj_s *thing) { return P_Adrift ((mobj_t *)thing); }
+float Game_Draft(const struct mobj_s *thing, float way[3]) { return P_Draft ((mobj_t *)thing, way); }
+int Game_Tumble(const struct mobj_s *thing, float fraction, float up[3]) { return P_BodyUp ((mobj_t *)thing, fraction, up); }
+float Game_LookKick(void) { return P_LookKick (); }
+int Game_ViewFlipped(void) { return P_ViewFlipped (); }
+void Game_FlipView(void) { P_FlipView (); }
+int Game_BootsUpside(void) { return P_BootsUpside (); }
+void Game_BootsRolled(int over) { P_BootsRolled (over); }
+/* Both the authored looks and Phobos are the first episode's: there, the map
+   starts again as the new way to play builds it (its air, ice, light bake and
+   moods), the player keeping what he carries as at a level change (keys and
+   powers go, as when he leaves a map). */
+void G_PlayerFinishLevel (int player);
+int Game_ModeChanged(void)
+{
+    if (gamestate != GS_LEVEL || demoplayback || netgame || gamemode == commercial || gameepisode != 1)
+        return 0;
+    if (players[consoleplayer].mo)
+        G_PlayerFinishLevel (consoleplayer);
+    gameaction = ga_loadlevel;
+    return 1;
+}
 
 float Game_WaterClarity(void) { return 0; }
 
 int Game_SurfaceGloss(void) { return 0; }
 
 int Game_SectorWind(int special, float *east, float *north) { (void)special; *east = *north = 0; return 0; }
+
+extern boolean menuactive, chat_on;
+int Game_TakesText(void) { return menuactive || chat_on; }
 
 /* DOOM's light amplification visor is a colormap, not a flame. */
 int Game_Torch(float *flame) { *flame = 0; return 0; }

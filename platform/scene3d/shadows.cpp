@@ -13,7 +13,8 @@ void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
         if(card->u1<=card->u0||card->v1<=card->v0)return;
         u0=card->u0;v0=card->v0;u1=card->u1;v1=card->v1;
         float centre=(u0+u1)*0.5f-card->half;
-        x+=camera.right[0]*centre;y+=camera.right[1]*centre;z=card->top-v1;
+        float ax,ay;cardAcross(camera,ax,ay);
+        x+=ax*centre;y+=ay*centre;z=card->top-v1;
     }
     const sector_t *sector=card?R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector:thing.subsector->sector;
     if(sector->floorpic==skyflatnum) return;
@@ -22,7 +23,8 @@ void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
     if(opacity<0.015f) return;
     float width=(card?u1-u0:std::clamp(units(thing.radius)*2.0f,20.0f,80.0f))*std::min(1.7f,1.0f+height/160.0f);
     float length=width*0.65f,start=-length*0.35f;
-    Point across={camera.right[0],camera.right[1]},away={-across.y,across.x};
+    Point across;cardAcross(camera,across.x,across.y);
+    Point away={-across.y,across.x};
     if(light) {
         float dx=x-light->x,dy=y-light->y,distance=std::hypot(dx,dy);
         if(distance>1.0f&&light->z>z+8.0f) {
@@ -98,7 +100,7 @@ void flashlightSilhouette(const mobj_t &thing,const Image &image,int lump,bool f
     float sx=span.b.x-span.a.x,sy=span.b.y-span.a.y,len=std::hypot(sx,sy);if(len<1)return;
     float tx=sx/len,ty=sy/len,nx=ty,ny=-tx;
     float planeDistance=(span.a.x-lamp[0])*nx+(span.a.y-lamp[1])*ny;
-    float rx=camera.right[0],ry=camera.right[1];
+    float rx,ry;cardAcross(camera,rx,ry);
     float u0=card?card->u0:0,v0=card?card->v0:0,u1=card?card->u1:image.width,v1=card?card->v1:image.height;
     float left=card?u0-card->half:-(float)image.left,right=left+(u1-u0);
     float top=card?card->top-v0:z+image.top,bottom=top-(v1-v0);

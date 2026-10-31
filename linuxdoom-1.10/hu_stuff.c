@@ -445,6 +445,9 @@ void HU_Start(void)
 		       hu_font,
 		       HU_FONTSTART);
     
+    if (gameepisode == 0)
+	s = "0.5: scp_7179_b";
+    else
     switch ( gamemode )
     {
       case shareware:

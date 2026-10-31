@@ -42,6 +42,7 @@ rcsid[] = "$Id: p_spec.c,v 1.6 1997/02/03 22:45:12 b1 Exp $";
 
 #include "r_local.h"
 #include "p_local.h"
+#include "p_phobos.h"
 
 #include "g_game.h"
 
@@ -1002,6 +1003,11 @@ void P_PlayerInSpecialSector (player_t* player)
     // Falling, not all the way down yet?
     if (player->mo->z != sector->floorheight)
 	return;	
+
+    // On Phobos a slime pool frozen solid is only ice underfoot.
+    if ((sector->special == 4 || sector->special == 5 || sector->special == 7 || sector->special == 16)
+	&& P_SectorIced (sector))
+	return;
 
     // Has hitten ground.
     switch (sector->special)

@@ -152,7 +152,7 @@ template<class Visit> static void posedTexels(const FallRig &rig,const FallPose 
     }
 }
 void fallQuads(std::vector<Vertex> &out,const Vertex &base,const FallPose &pose,float x,float y,float feet,float rx,float ry,bool flip,
-               const std::vector<byte> *holes) {
+               const std::vector<byte> *holes,int tint) {
     float side=flip?-1.0f:1.0f;
     int width=pose.rig->width;
     posedTexels(*pose.rig,pose,[&](int c,int r,const std::array<Pt,4> &q) {
@@ -160,7 +160,7 @@ void fallQuads(std::vector<Vertex> &out,const Vertex &base,const FallPose &pose,
         if(wound==1)return;
         auto corner=[&](const Pt &p,float u,float v) {
             Vertex vertex=base;vertex.x=x+rx*p.x*side;vertex.y=y+ry*p.x*side;vertex.z=feet+p.y;vertex.u=u;vertex.v=v;
-            if(wound>=2)woundVertex(vertex,wound);
+            if(wound>=2)woundVertex(vertex,wound,tint);
             return vertex;
         };
         quad(out,corner(q[0],(float)c,(float)r),corner(q[1],(float)c+1,(float)r),corner(q[2],(float)c+1,(float)r+1),corner(q[3],(float)c,(float)r+1));

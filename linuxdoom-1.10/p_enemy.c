@@ -34,6 +34,8 @@ rcsid[] = "$Id: p_enemy.c,v 1.5 1997/02/03 22:45:11 b1 Exp $";
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_phobos.h"
+#include "p_library.h"
 
 #include "s_sound.h"
 
@@ -287,6 +289,16 @@ boolean P_Move (mobj_t*	actor)
 		
     if ((unsigned)actor->movedir >= 8)
 	I_Error ("Weird actor->movedir!");
+
+    // A brainless zombie on Phobos: a step as on Earth, which throws it off the floor.
+    if (P_Brainless (actor))
+	return P_BodyStep (actor);
+
+    // Floating free on Phobos, out of the boots' reach or torn off its feet
+    // by a draft: nothing to walk on.
+    if (P_Phobos () && !(actor->flags & MF_FLOAT)
+	&& (actor->z - actor->floorz > 24*FRACUNIT || !P_Booted (actor)))
+	return false;
 		
     tryx = actor->x + actor->info->speed*xspeed[actor->movedir];
     tryy = actor->y + actor->info->speed*yspeed[actor->movedir];
@@ -609,6 +621,10 @@ void A_Look (mobj_t* actor)
 {
     mobj_t*	targ;
 	
+    // The library's people mind nobody until hurt.
+    if (P_LibraryIndifferent (actor))
+	return;
+
     actor->threshold = 0;	// any shot will wake up
     targ = actor->subsector->sector->soundtarget;
 
@@ -678,6 +694,15 @@ void A_Chase (mobj_t*	actor)
 {
     int		delta;
 
+    // Tumbling off its feet on Phobos (P_TearLoose): no walking, no aiming
+    // until it is down on a floor again.
+    if (P_Phobos () && P_Adrift (actor))
+	return;
+
+    // The library's people wander, or run from what hurt them.
+    if (P_LibraryChase (actor))
+	return;
+
     if (actor->reactiontime)
 	actor->reactiontime--;
 				
@@ -694,8 +719,9 @@ void A_Chase (mobj_t*	actor)
 	    actor->threshold--;
     }
     
-    // turn towards movement direction if not there yet
-    if (actor->movedir < 8)
+    // turn towards movement direction if not there yet (a brainless zombie on
+    // Phobos turns only as its body does, P_BodyThink)
+    if (actor->movedir < 8 && !P_Brainless (actor))
     {
 	actor->angle &= (7<<29);
 	delta = actor->angle - (actor->movedir << 29);
@@ -741,7 +767,10 @@ void A_Chase (mobj_t*	actor)
 	return;
     }
     
-    // check for missile attack
+    // check for missile attack (a brainless zombie aloft on Phobos never gets a step
+    // in to count down, so it shoots as soon as it may)
+    if (actor->movecount < 0 && P_Brainless (actor))
+	actor->movecount = 0;
     if (actor->info->missilestate)
     {
 	if (gameskill < sk_nightmare
@@ -794,6 +823,11 @@ void A_FaceTarget (mobj_t* actor)
 	return;
     
     actor->flags &= ~MF_AMBUSH;
+
+    // Tumbling free (Phobos) it can't just turn: it twists round slowly (P_BodyThink)
+    // and swings its gun at its target as far as its arms reach (P_BodyAim).
+    if (P_Brainless (actor))
+	return;
 	
     actor->angle = R_PointToAngle2 (actor->x,
 				    actor->y,
@@ -820,12 +854,13 @@ void A_PosAttack (mobj_t* actor)
     A_FaceTarget (actor);
     if (R_MuzzleFlash) R_MuzzleFlash(actor, wp_pistol, -1);
     angle = actor->angle;
-    slope = P_AimLineAttack (actor, angle, MISSILERANGE);
+    slope = P_Brainless (actor) ? P_BodyAim (actor, &angle) : P_AimLineAttack (actor, angle, MISSILERANGE);
 
     S_StartSound (actor, sfx_pistol);
     angle += (P_Random()-P_Random())<<20;
     damage = ((P_Random()%5)+1)*3;
     P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+    P_BodyRecoil (actor, 3);	// as the player's pistol (P_Recoil)
 }
 
 void A_SPosAttack (mobj_t* actor)
@@ -843,7 +878,7 @@ void A_SPosAttack (mobj_t* actor)
     A_FaceTarget (actor);
     if (R_MuzzleFlash) R_MuzzleFlash(actor, wp_shotgun, -1);
     bangle = actor->angle;
-    slope = P_AimLineAttack (actor, bangle, MISSILERANGE);
+    slope = P_Brainless (actor) ? P_BodyAim (actor, &bangle) : P_AimLineAttack (actor, bangle, MISSILERANGE);
 
     for (i=0 ; i<3 ; i++)
     {
@@ -851,6 +886,7 @@ void A_SPosAttack (mobj_t* actor)
 	damage = ((P_Random()%5)+1)*3;
 	P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
     }
+    P_BodyRecoil (actor, 16);	// as the player's shotgun
 }
 
 void A_CPosAttack (mobj_t* actor)
@@ -867,11 +903,12 @@ void A_CPosAttack (mobj_t* actor)
     A_FaceTarget (actor);
     if (R_MuzzleFlash) R_MuzzleFlash(actor, wp_chaingun, -1);
     bangle = actor->angle;
-    slope = P_AimLineAttack (actor, bangle, MISSILERANGE);
+    slope = P_Brainless (actor) ? P_BodyAim (actor, &bangle) : P_AimLineAttack (actor, bangle, MISSILERANGE);
 
     angle = bangle + ((P_Random()-P_Random())<<20);
     damage = ((P_Random()%5)+1)*3;
     P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+    P_BodyRecoil (actor, 3);	// as the player's chaingun, a round
 }
 
 void A_CPosRefire (mobj_t* actor)

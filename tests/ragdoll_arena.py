@@ -23,11 +23,14 @@ convex subsector closed by real lines, and no seg is ever split.
   python3 tests/ragdoll_arena.py zombie out.wad [--doom1]
   monsters: zombie, shotgun, imp. --doom1 names the maps E1M1-E1M4.
 
-  python3 tests/ragdoll_arena.py showcase [monster] [weapon[:aim]]
+  python3 tests/ragdoll_arena.py showcase [monster] [weapon[:aim]] [--smooth] [-gameflag [value] ...]
   plays MAP07 in a window with -ragdollloop: the row shot, left to lie, stood up and shot
   again until you quit (default mix, ssg:mix; rocket:mix for explosions). Your graphics.cfg and
-  default.cfg are copied to output/ragdoll-showcase/ (with Deaths "Ragdolls, Hollywood")
-  and the game uses those, so it can't change yours.
+  doom.cfg are copied to output/ragdoll-showcase/ (with Deaths "Ragdolls, Hollywood")
+  and the game uses those, so it can't change yours. --smooth draws the ragdolls posed every tic and
+  blended between tics, the camera turning freely (-ragdollsmooth), to show they are simulated: the
+  game steps them like its own animations. From the first argument with one dash on, the
+  arguments go to the game as they are (e.g. -slowmo 4).
 
   python3 tests/ragdoll_arena.py run <monster> <map 1-7> <weapon[:aim[:n[:tic]]]> <sheet.png> [--side]
   builds the WAD next to the sheet and plays it with DOOM II: 20 frames 3 tics
@@ -94,7 +97,11 @@ SHOWS = {6: {'facings': (270,) * 4, 'row': (-135, -45, 45, 135), 'player': -100}
 def name8(s):
     return s.encode('ascii').ljust(8, b'\0')[:8]
 
-def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y):
+def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y, start=None):
+    """Rects may go on past the light: (..., light, floor flat, ceiling flat, wall texture). With
+    start (x, y, angle) the player starts there and no monsters are placed."""
+    def wall(i):
+        return rects[i][9] if len(rects[i]) > 9 else WALL
     vertices, vindex = [], {}
     def vertex(x, y):
         if (x, y) not in vindex:
@@ -131,9 +138,9 @@ def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y):
             continue
         def side(sector, other):
             if other < 0:
-                return (0, 0, '-', '-', WALL, sector)
-            lower = WALL if rects[other][4] != rects[sector][4] else '-'
-            upper = WALL if rects[other][5] != rects[sector][5] else '-'
+                return (0, 0, '-', '-', wall(sector), sector)
+            lower = wall(sector) if rects[other][4] != rects[sector][4] else '-'
+            upper = wall(sector) if rects[other][5] != rects[sector][5] else '-'
             return (0, 0, upper, lower, '-', sector)
         sides.append(side(front, back)); fs = len(sides) - 1
         bs = 0xFFFF
@@ -173,7 +180,7 @@ def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y):
                     continue
                 low = [m for m in members if rects[m][axis + 2] <= c]
                 high = [m for m in members if rects[m][axis] >= c]
-                if len(low) + len(high) != len(members):
+                if not low or not high or len(low) + len(high) != len(members):
                     continue
                 if axis == 0:    # x = c running north: its front (child 0) the east
                     front, back = (high, (c, by0, bx1, by1)), (low, (bx0, by0, c, by1))
@@ -188,10 +195,14 @@ def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y):
         raise SystemExit('not a guillotine layout')
     xs = [r[0] for r in rects] + [r[2] for r in rects]; ys = [r[1] for r in rects] + [r[3] for r in rects]
     tree(list(range(len(rects))), (min(xs), min(ys), max(xs), max(ys)))
-    things = [(0, player, 90, 1, 7)]
-    kinds = MONSTERS[monster] if isinstance(MONSTERS[monster], tuple) else (MONSTERS[monster],) * len(row)
-    things += [(x, ROW_Y, f, kind, 7 | 8) for x, f, kind in zip(row, facings, kinds)]
-    sectors = [(r[4], r[5], FLOOR, CEIL, r[6] if len(r) > 6 else 255, 0, 0) for r in rects]
+    if start:
+        things = [tuple(start) + (1, 7)]
+    else:
+        things = [(0, player, 90, 1, 7)]
+        kinds = MONSTERS[monster] if isinstance(MONSTERS[monster], tuple) else (MONSTERS[monster],) * len(row)
+        things += [(x, ROW_Y, f, kind, 7 | 8) for x, f, kind in zip(row, facings, kinds)]
+    sectors = [(r[4], r[5], r[7] if len(r) > 7 else FLOOR, r[8] if len(r) > 8 else CEIL, r[6] if len(r) > 6 else 255, 0, 0)
+               for r in rects]
     lumps = [
         ('THINGS', b''.join(struct.pack('<5h', *t) for t in things)),
         ('LINEDEFS', b''.join(struct.pack('<7H', *l) for l in lines)),
@@ -228,17 +239,28 @@ def blockmap(vertices, lines):
         offsets.append(header + len(data)); data += [0] + cell + [0xFFFF]
     return struct.pack('<4h', ox, oy, cols, rows) + struct.pack('<%dH' % len(offsets), *offsets) + struct.pack('<%dH' % len(data), *data)
 
+def machine():
+    """The game program, the DOOM II IWAD and the player's save folder on this machine."""
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    if sys.platform == 'win32':     # build/play is a Visual Studio tree; game data sits beside the repo
+        return (os.path.join(here, '..', 'build', 'play', 'Release', 'Play DERP.exe'),
+                os.path.join(here, '..', '..', 'DOOM-gamedata', 'gog_doom', 'doom2.wad'),
+                os.path.join(os.environ.get('APPDATA', ''), 'Local Games', 'DOOM'))
+    return (os.path.join(here, '..', 'build', 'play', 'Play DERP.app', 'Contents', 'MacOS', 'Play DERP'),
+            os.path.expanduser('~/Downloads/DOOM-gamedata/gog_doom/doom2.wad'),
+            os.path.expanduser('~/Library/Application Support/Local Games/DOOM'))
+
 def run(args, side, trace=False):
     import os, shutil, subprocess
     monster, level, spec, sheet = args
     here = os.path.dirname(os.path.abspath(__file__))
     out = os.path.dirname(os.path.abspath(sheet))
-    game = os.path.join(here, '..', 'build', 'play', 'Play DOOM.app', 'Contents', 'MacOS', 'Play DOOM')
-    iwad = os.path.expanduser('~/Downloads/DOOM-gamedata/gog_doom/doom2.wad')
+    game, iwad, mine = machine()
     wad = os.path.join(out, 'arena-%s.wad' % monster)
     write(wad, monster, False)
     graphics, config = os.path.join(out, 'graphics.cfg'), os.path.join(out, 'default.cfg')
-    player = os.path.expanduser('~/Library/Application Support/Local Games/DOOM/graphics.cfg')
+    player = os.path.join(mine, 'graphics.cfg')
     if not os.path.exists(graphics) and os.path.exists(player):
         shutil.copy(player, graphics)
     if not os.path.exists(config):
@@ -253,27 +275,26 @@ def run(args, side, trace=False):
         code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
     print('%s: exit %d' % (sheet, code))
 
-def showcase(monster, spec):
+def showcase(monster, spec, smooth=False, extra=()):
     import os, shutil, subprocess
     here = os.path.dirname(os.path.abspath(__file__))
     out = os.path.join(here, '..', 'output', 'ragdoll-showcase')
     os.makedirs(out, exist_ok=True)
     wad = os.path.join(out, 'arena-%s.wad' % monster)
     write(wad, monster, False)
-    mine = os.path.expanduser('~/Library/Application Support/Local Games/DOOM')
-    for name in ('graphics.cfg', 'default.cfg'):     # fresh copies each time: today's settings, never written back
-        if os.path.exists(os.path.join(mine, name)):
-            shutil.copy(os.path.join(mine, name), os.path.join(out, name))
+    game, iwad, mine = machine()
+    for name, yours in (('graphics.cfg', 'graphics.cfg'), ('default.cfg', 'doom.cfg')):   # fresh copies each time: today's settings, never written back
+        if os.path.exists(os.path.join(mine, yours)):
+            shutil.copy(os.path.join(mine, yours), os.path.join(out, name))
     graphics = os.path.join(out, 'graphics.cfg')     # whatever yours says: Deaths "Ragdolls, Hollywood"
     lines = open(graphics).read().splitlines() if os.path.exists(graphics) else []
     lines = [l for l in lines if l.split()[:1] not in (['deaths'], ['death_ragdoll'], ['death_blast'])]
     open(graphics, 'w').write('\n'.join(lines + ['deaths 4']) + '\n')
-    game = os.path.join(here, '..', 'build', 'play', 'Play DOOM.app', 'Contents', 'MacOS', 'Play DOOM')
-    iwad = os.path.expanduser('~/Downloads/DOOM-gamedata/gog_doom/doom2.wad')
     command = [game, '-iwad', iwad, '-file', wad, '-warp', '7', '-skill', '3', '-ragdolltest', spec, '-ragdollloop']
-    for flag, name in (('-graphics', 'graphics.cfg'), ('-config', 'default.cfg')):
-        if os.path.exists(os.path.join(out, name)):
-            command += [flag, os.path.join(out, name)]
+    command += ['-ragdollsmooth'] if smooth else []
+    command += list(extra)
+    # Always pass both, so the game never falls back to (and saves over) your own doom.cfg.
+    command += ['-graphics', graphics, '-config', os.path.join(out, 'default.cfg')]
     return subprocess.call(command)
 
 def write(path, monster, doom1):
@@ -289,11 +310,14 @@ def write(path, monster, doom1):
         out.write(b'PWAD' + struct.pack('<2i', len(lumps), offset) + body + directory)
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    # From the first argument with one dash on (with its values), the rest go to the game.
+    cut = next((i for i, a in enumerate(sys.argv) if i and a.startswith('-') and not a.startswith('--')), len(sys.argv))
+    extra = [a for a in sys.argv[cut:] if not a.startswith('--')]
+    args = [a for a in sys.argv[1:cut] if not a.startswith('--')]
     if args and args[0] == 'showcase':
         if len(args) > 3 or (len(args) > 1 and args[1] not in MONSTERS):
             raise SystemExit(__doc__)
-        return showcase(args[1] if len(args) > 1 else 'mix', args[2] if len(args) > 2 else 'ssg:mix')
+        return showcase(args[1] if len(args) > 1 else 'mix', args[2] if len(args) > 2 else 'ssg:mix', '--smooth' in sys.argv, extra)
     if args and args[0] == 'run':
         if len(args) != 5 or args[1] not in MONSTERS:
             raise SystemExit(__doc__)

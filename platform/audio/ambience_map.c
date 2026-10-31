@@ -14,6 +14,7 @@
 #include "../game_profile.h"
 #include "../game_materials.h"
 #include "ambience_spots.h"
+#include "frozen.h"
 #include "map.h"
 
 #define CELL 128.0f      /* sources of a kind within a cell join into one spot */
@@ -113,7 +114,9 @@ static void read_flats(void)
         char name[9];
         int s = (int)(sector - sectors);
         flat_name(sector->floorpic, name);
-        add(flat_kind(name, 0), cx, cy, Map_Floor(sector), area, s);
+        int floor = flat_kind(name, 0);
+        /* Water frozen over (frozen.h) neither laps nor drips. */
+        if (!(floor == AMBIENT_WATER && Frozen_Water && Frozen_Water(cx, cy))) add(floor, cx, cy, Map_Floor(sector), area, s);
         /* Under the sky the wind always blows, a little above head height;
            the rain, when it rains, falls there. */
         if (Map_Sky(sector))

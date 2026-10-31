@@ -92,7 +92,7 @@ const EdgeStrip &edgeStrip(int kind) {
 // The glow kind of a sector's liquid floor (DOOM_EMISSIVE_NONE when it is not
 // a glowing liquid).
 int liquidGlowKind(int sector) {
-    if(!sectorMist[sector].liquid||sectors[sector].floorpic==skyflatnum)return DOOM_EMISSIVE_NONE;
+    if((!sectorMist[sector].liquid&&!poolFrozen(sector))||sectors[sector].floorpic==skyflatnum)return DOOM_EMISSIVE_NONE;
     int lump=firstflat+flattranslation[sectors[sector].floorpic];
     char name[9];memcpy(name,lumpinfo[lump].name,8);name[8]=0;
     for(char &ch:name)ch=(char)toupper((unsigned char)ch);

@@ -12,6 +12,14 @@
 static inline float Map_Floor(const sector_t *s) { return s->floorheight / (float)FRACUNIT; }
 static inline float Map_Ceiling(const sector_t *s) { return s->ceilingheight / (float)FRACUNIT; }
 static inline int Map_Sky(const sector_t *s) { return s->ceilingpic == skyflatnum; }
+/* How far out in the open air a sector is for sound, 0-1, by the room map
+   (rooms.c), built at the first ask whether the renderer runs or not: under
+   the sky or a porch all but what closes it in (a hole in a hall's ceiling
+   sounds as the hall, a shallow porch as the yard), indoors none. */
+float Map_Outdoors(const sector_t *s);
+/* Whether two sectors are parts of one room or one porch (a step, a
+   pedestal, a strip of other light): sound crosses between them freely. */
+int Map_SameRoom(int a, int b);
 
 /* A line a path crosses, t units along it. One-sided lines have no far sector. */
 typedef struct { float t; line_t *line; sector_t *near, *far; int near_side; } crossing_t;

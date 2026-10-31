@@ -29,6 +29,18 @@ void I_AmbienceShowGlass(int shown);
 /* How hard it rains (0-1, scene3d/weather.cpp): the rain is heard where the wind is,
    and on the window glass until it breaks. */
 void I_AmbienceRain(float amount);
+/* How thick it snows (0-1, scene3d/weather.cpp): out under the sky echoes
+   fade and dull, and the wind softens. */
+void I_AmbienceSnow(float amount);
+/* How hard the wind blows (0 still air, 0.5 a breeze, 1 a gale;
+   scene3d/wind.cpp windAmount): which of the wind's takes plays, and how loud. */
+void I_AmbienceWind(float amount);
+/* The drafts' wind where the listener stands indoors (0-1 against the wind
+   outside, scene3d/rooms.cpp roomWind; 0 under the sky or with none known):
+   the wind is heard on indoors, fading from the openings it comes in by. */
+void I_AmbienceDraft(float amount);
+/* How many of the mixer's 32 effect channels play now (the FPS readout). */
+int I_SoundVoices(void);
 
 /* What plays the music; see platform/i_music.c. The system synthesizer
    is the Mac's own; elsewhere that choice plays the SoundFont. */

@@ -26,12 +26,14 @@ static const char
 rcsid[] = "$Id: p_mobj.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include <stdio.h>
+#include <math.h>
 #include "i_system.h"
 #include "z_zone.h"
 #include "m_random.h"
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_phobos.h"
 #include "sounds.h"
 
 #include "st_stuff.h"
@@ -170,20 +172,45 @@ void P_XYMovement (mobj_t* mo)
 	if (!P_TryMove (mo, ptryx, ptryy))
 	{
 	    // blocked move
-	    if (mo->player)
-	    {	// try to slide along it
+	    if (mo->player || P_Loose (mo))
+	    {	// try to slide along it (on Phobos, anything adrift too)
+		fixed_t	wasx = mo->x, wasy = mo->y, hitx = mo->momx, hity = mo->momy;
+		line_t*	struck = blockline;
 		P_SlideMove (mo);
+		// On Phobos nothing pushes it on again each tic: caught on a corner the
+		// slide gives up on, the walls take what they block and the rest goes on.
+		if (P_Phobos () && !P_Booted (mo) && mo->x == wasx && mo->y == wasy)
+		{
+		    if (!P_TryMove (mo, mo->x + mo->momx, mo->y))
+			mo->momx = 0;
+		    if (!P_TryMove (mo, mo->x, mo->y + mo->momy))
+			mo->momy = 0;
+		    xmove = ymove = 0;
+		}
+		// What the wall (or whatever stopped it) took off its speed: a barrel jolted.
+		{
+		    // Glass that gives way lets it on, slower by what breaking it took; else the
+		    // wall (or whatever stopped it) took what it lost.
+		    fixed_t	lost = P_Strike (mo, struck, hitx, hity);
+		    if (lost < 0)
+			lost = P_AproxDistance (hitx - mo->momx, hity - mo->momy);
+		    P_Jolt (mo, lost);
+		    P_BodyKnock (mo, lost);
+		}
 	    }
 	    else if (mo->flags & MF_MISSILE)
 	    {
 		// explode a missile
-		if (ceilingline &&
-		    ceilingline->backsector &&
-		    ceilingline->backsector->ceilingpic == skyflatnum)
+		if ((ceilingline &&
+		     ceilingline->backsector &&
+		     ceilingline->backsector->ceilingpic == skyflatnum)
+		    || (P_OpenSky (mo) && mo->z + mo->height > mo->subsector->sector->ceilingheight))
 		{
 		    // Hack to prevent missiles exploding
 		    // against the sky.
 		    // Does not handle sky floors.
+		    // On Phobos, up in the open sky, the
+		    // sky over a roof takes it the same way.
 		    P_RemoveMobj (mo);
 		    return;
 		}
@@ -207,6 +234,13 @@ void P_XYMovement (mobj_t* mo)
 		
     if (mo->z > mo->floorz)
 	return;		// no friction when airborne
+
+    // On Phobos only boots grip: the rest slides on, braked by mu*g alone.
+    if (P_Phobos () && !P_Booted (mo))
+    {
+	P_PhobosSlide (mo);
+	return;
+    }
 
     if (mo->flags & MF_CORPSE)
     {
@@ -305,6 +339,9 @@ void P_ZMovement (mobj_t* mo)
 	
 	if (mo->momz < 0)
 	{
+	    P_BodyContact (mo, mo->momz, false);
+	    P_Jolt (mo, mo->momz);
+	    P_Touchdown (mo, mo->momz);
 	    if (mo->player
 		&& mo->momz < -GRAVITY*8
 		&& !P_Flying ())
@@ -329,17 +366,32 @@ void P_ZMovement (mobj_t* mo)
     }
     else if (! (mo->flags & MF_NOGRAVITY) )
     {
+	fixed_t	gravity = P_Gravity (mo);
+
 	if (mo->momz == 0)
-	    mo->momz = -GRAVITY*2;
+	    mo->momz = -gravity*2;
 	else
-	    mo->momz -= GRAVITY;
+	    mo->momz -= gravity;
     }
 	
     if (mo->z + mo->height > mo->ceilingz)
     {
+	// On Phobos the sky is no lid: up through it faster than Phobos'
+	// escape velocity, a thing is gone for good; slower, it rises on out
+	// of sight and Phobos' pull brings it back down, minutes later.
+	if (P_Escaped (mo))
+	    return;
+
+	if (!P_OpenSky (mo))
+	{
 	// hit the ceiling
-	if (mo->momz > 0)
+	if (mo->momz > 0 && !P_CeilingHop (mo))
+	{
+	    P_BodyContact (mo, mo->momz, true);
+	    P_Jolt (mo, mo->momz);
+	    P_Touchdown (mo, mo->momz);
 	    mo->momz = 0;
+	}
 	{
 	    mo->z = mo->ceilingz - mo->height;
 	}
@@ -355,6 +407,9 @@ void P_ZMovement (mobj_t* mo)
 	    P_ExplodeMissile (mo);
 	    return;
 	}
+	}
+	else if (P_AboveSky (mo))
+	    return;
     }
 } 
 
@@ -849,7 +904,7 @@ P_SpawnPuff
 //
 // P_SpawnBlood
 // 
-void
+mobj_t*
 P_SpawnBlood
 ( fixed_t	x,
   fixed_t	y,
@@ -861,6 +916,10 @@ P_SpawnBlood
     z += ((P_Random()-P_Random())<<10);
     th = P_SpawnMobj (x,y,z, MT_BLOOD);
     th->momz = FRACUNIT*2;
+    // On Phobos nothing brings the hop back down: in air its drag stops it
+    // almost at once, in vacuum there is no hop at all.
+    if (P_Phobos ())
+	th->momz = P_SectorAir (th->subsector->sector) > 0.25f ? FRACUNIT/8 : 0;
     th->tics -= P_Random()&3;
 
     if (th->tics < 1)
@@ -870,6 +929,7 @@ P_SpawnBlood
 	P_SetMobjState (th,S_BLOOD2);
     else if (damage < 9)
 	P_SetMobjState (th,S_BLOOD3);
+    return th;
 }
 
 
@@ -959,33 +1019,53 @@ P_SpawnPlayerMissile
     fixed_t	y;
     fixed_t	z;
     fixed_t	slope;
-    
+    // Mouselook missiles fly along the view like shots (P_BulletSlope):
+    // straight away, or with classicaim only when nothing is in front.
+    boolean	look = P_LookAims (source);
+    fixed_t	height = mobjinfo[type].height;
+
     // see which target is to be aimed at
     an = source->angle;
-    slope = P_AimLineAttack (source, an, 16*64*FRACUNIT);
-    
-    if (!linetarget)
+    slope = 0;
+    linetarget = NULL;
+
+    if (!look || classicaim)
     {
-	an += 1<<26;
 	slope = P_AimLineAttack (source, an, 16*64*FRACUNIT);
 
 	if (!linetarget)
 	{
-	    an -= 2<<26;
+	    an += 1<<26;
 	    slope = P_AimLineAttack (source, an, 16*64*FRACUNIT);
-	}
 
-	if (!linetarget)
-	{
-	    an = source->angle;
-	    slope = 0;
+	    if (!linetarget)
+	    {
+		an -= 2<<26;
+		slope = P_AimLineAttack (source, an, 16*64*FRACUNIT);
+	    }
+
+	    if (!linetarget)
+	    {
+		an = source->angle;
+		slope = 0;
+	    }
 	}
     }
-		
+    look = look && !linetarget;
+
     x = source->x;
     y = source->y;
     z = source->z + 4*8*FRACUNIT;
-	
+    if (look)
+    {
+	// centered on the eye, so it flies down the crosshair
+	z = source->player->viewz - height/2;
+	if (z + height > source->ceilingz)
+	    z = source->ceilingz - height;
+	if (z < source->floorz)
+	    z = source->floorz;
+    }
+
     th = P_SpawnMobj (x,y,z, type);
 
     if (th->info->seesound)
@@ -993,11 +1073,22 @@ P_SpawnPlayerMissile
 
     th->target = source;
     th->angle = an;
-    th->momx = FixedMul( th->info->speed,
-			 finecosine[an>>ANGLETOFINESHIFT]);
-    th->momy = FixedMul( th->info->speed,
-			 finesine[an>>ANGLETOFINESHIFT]);
-    th->momz = FixedMul( th->info->speed, slope);
+    if (look)
+    {
+	fixed_t	flat = (fixed_t)(cos (tourpitch)*th->info->speed);
+
+	th->momx = FixedMul (flat, finecosine[an>>ANGLETOFINESHIFT]);
+	th->momy = FixedMul (flat, finesine[an>>ANGLETOFINESHIFT]);
+	th->momz = (fixed_t)(sin (tourpitch)*th->info->speed);
+    }
+    else
+    {
+	th->momx = FixedMul( th->info->speed,
+			     finecosine[an>>ANGLETOFINESHIFT]);
+	th->momy = FixedMul( th->info->speed,
+			     finesine[an>>ANGLETOFINESHIFT]);
+	th->momz = FixedMul( th->info->speed, slope);
+    }
 
     P_CheckMissileSpawn (th);
 }

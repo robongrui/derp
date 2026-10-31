@@ -532,6 +532,8 @@ boolean P_UndoPlayerChicken(player_t *player)
 float tourpitch;
 boolean freeaim;
 boolean classicaim;
+boolean classicmovement; // Heretic moves as it always did (no GAME_EFFECT_TUNED_MOVEMENT)
+boolean strafeboost;
 boolean debugfly, debugnoclip, debuggod, debugnomonsters, debugnotarget;
 
 boolean P_DebugAllowed(void)

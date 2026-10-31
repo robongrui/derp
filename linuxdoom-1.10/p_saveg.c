@@ -32,6 +32,7 @@ rcsid[] = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 // State.
 #include "doomstat.h"
 #include "r_state.h"
+#include "p_library.h"
 
 byte*		save_p;
 
@@ -61,6 +62,7 @@ size_t P_SaveGameBufferSize(void)
             I_Error("Savegame is too large");
         size += largest + SAVE_ALIGNMENT + 1;
     }
+    size += P_LibrarySaveSize();
     if (size > INT_MAX) I_Error("Savegame is too large");
     return size;
 }

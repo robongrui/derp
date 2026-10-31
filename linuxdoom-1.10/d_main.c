@@ -73,6 +73,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "am_map.h"
 
 #include "p_setup.h"
+#include "p_phobos.h"
 #include "r_local.h"
 
 
@@ -104,6 +105,7 @@ boolean         debugnotarget;
 boolean         respawnparm;	// checkparm of -respawn
 boolean         fastparm;	// checkparm of -fast
 boolean         classicmovement; // original player acceleration and friction
+boolean         strafeboost; // tuned movement, but held running diagonals build up DOOM's strafe-running
 
 boolean         drone;
 
@@ -854,6 +856,8 @@ void D_DoomMain (void)
     modifiedgame = false;
 	
     classicmovement = M_CheckParm ("-classicmovement");
+    if (M_CheckParm ("-phobos"))
+	phobosphysics = true;
     nomonsters = M_CheckParm ("-nomonsters");
     respawnparm = M_CheckParm ("-respawn");
     fastparm = M_CheckParm ("-fast");
@@ -988,6 +992,12 @@ void D_DoomMain (void)
 	D_AddFile (file);
     }
 	
+    // Episode 0.5's map (scp_7179_b), shipped beside the game: its E0M1 is
+    // the library. Before the player's own, which may replace it; only for
+    // DOOM II and its like (the menu also leaves Freedoom out, m_menu.c).
+    if (gamemode == commercial && I_ProgramFile ("library.wad"))
+	D_AddFile ((char *)I_ProgramFile ("library.wad"));
+
     p = M_CheckParm ("-file");
     if (p)
     {
@@ -1050,7 +1060,13 @@ void D_DoomMain (void)
     p = M_CheckParm ("-warp");
     if (p && p < myargc-1)
     {
-	if (gamemode == commercial)
+	// -warp 0: episode 0.5, the library, in any game.
+	if (!strcmp (myargv[p+1], "0"))
+	{
+	    startepisode = 0;
+	    startmap = 1;
+	}
+	else if (gamemode == commercial)
 	    startmap = atoi (myargv[p+1]);
 	else
 	{

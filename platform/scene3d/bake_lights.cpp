@@ -1,6 +1,7 @@
 /* Static lights baked at level load: lamps, glowing pools and window
    light, and the grid of lights that reach each map cell. */
 #include "internal.h"
+#include "../rooms.h"
 
 namespace doom3d {
 int lightBakeKey=-1;
@@ -13,6 +14,13 @@ bool bakeOnlyActive=false; // ...and static lights come only from it.
 std::vector<BakeLight> bakeSources;
 std::vector<SurfaceLightKey> bakeSourceKeys;
 int firstWindowSource=0; // Window lights (addWindowLights) end bakeSources; they cast no thing shadows.
+static std::vector<int> windowDoors; // Per window light: the shut door it sits in, -1 for none.
+bool shutWindowLamp(const BakeMap &map,int n) {
+    size_t k=(size_t)(n-firstWindowSource);
+    if(n<firstWindowSource||k>=windowDoors.size()||windowDoors[k]<0)return false;
+    const BakeSector &door=map.sectors[windowDoors[k]];
+    return door.ceiling<=door.floor;
+}
 // Window light reaching one point eases toward about the outdoor level, so
 // a room with windows on several sides isn't lit past it by their sum. Scales
 // rgb (by its luminance) and returns the factor.
@@ -38,7 +46,9 @@ const std::vector<int> &bakeGridLights(float x,float y) {
 }
 
 // The light bake's inputs: 1 emissive textures, 2 bake-only lights.
-int lightBakeInputs() {return (settings.emissive?1:0)|(settings.bakeOnlyLights?2:0)|(settings.windowLight?4:0)|(settings.dimLitRooms?8:0)|
+// The library (Game_WorldWraps: its lamps stand in for many alike, every
+// storey) is always bake-only: per-frame light adds nothing there.
+int lightBakeInputs() {return (settings.emissive?1:0)|(settings.bakeOnlyLights||Game_WorldWraps()?2:0)|(settings.windowLight?4:0)|(settings.dimLitRooms?8:0)|
     (settings.windowLight?(int)std::lround(settings.windowStrength*4)<<4:0)|
     (settings.dimLitRooms?(int)std::lround(settings.unlitDarkening*20)<<8:0)|(settings.windowLight&&settings.sun?1<<14:0);}
 // Bake-only lights: glowing liquid floors and ceilings (lava, nukage, slime,
@@ -47,8 +57,9 @@ int lightBakeInputs() {return (settings.emissive?1:0)|(settings.bakeOnlyLights?2
 static bool poolSurface(int sector,bool ceiling) {
     int pic=ceiling?sectors[sector].ceilingpic:sectors[sector].floorpic;
     if(pic==skyflatnum)return false;
-    int lump=firstflat+flattranslation[pic];
-    const Image &image=lumpImage(lump,true);
+    int lump=firstflat+flattranslation[pic],grey=0,glow=8;
+    bool frozen=!ceiling&&frozenLook(sector,grey,glow);
+    const Image &image=frozen?frozenFlat(firstflat+pic,grey,glow):lumpImage(lump,true);   // frozen (Phobos): its glow dying
     if(image.emissionWeight<=0)return false;
     char name[9];memcpy(name,lumpinfo[lump].name,8);name[8]=0;
     int kind=Game_GlowKind(name,1);
@@ -93,7 +104,9 @@ static void buildPoolAreas() {
             size_t index=found->second;BakeArea &area=bakeAreas[index];
             // Rays test against a point up to 48 units off the surface, inside the room.
             area.clearance=std::min(area.clearance,std::clamp(bakeMap.sectors[i].ceiling-bakeMap.sectors[i].floor-2,0.0f,48.0f));
-            const Image &image=lumpImage(firstflat+flattranslation[ceiling?sectors[i].ceilingpic:sectors[i].floorpic],true);
+            int grey=0,glow=8,pic=ceiling?sectors[i].ceilingpic:sectors[i].floorpic;
+            bool frozen=!ceiling&&frozenLook(i,grey,glow);
+            const Image &image=frozen?frozenFlat(firstflat+pic,grey,glow):lumpImage(firstflat+flattranslation[pic],true);
             for(int leaf:sectorFloors[i]) {
                 const auto &poly=floors[leaf];if(poly.size()<3)continue;
                 std::vector<std::array<float,2>> piece;float twice=0;
@@ -149,6 +162,7 @@ static void gatherStatic(const BakeMap &map,int sector,float x,float y,float z,c
     float sum[3]={},towards[3]={},total=0,groups[flickerGroups]={},sheen=0;
     float window[3]={},windowTowards[3]={},windowTotal=0;
     for(int n:bakeGridLights(x,y)) {
+        if(shutWindowLamp(map,n))continue;
         float to[3];bool inside=false;
         const float *color=n<points?bakeSources[n].color:bakeAreas[n-points].color;
         bool isWindow=n>=firstWindowSource&&n<points;
@@ -313,11 +327,27 @@ static void classifyLampSectors() {
         }
         if(!changed)break;
     }
+    // A hole in a ceiling (an enclosed sky opening, packOutdoor) brighter than
+    // the room round it falls to the room's level by its enclosure: id lit the
+    // floor under the hole as a hard-edged sunny patch (E1M6's slot, sector
+    // 167, at 255 in a 144 corridor), which the hole's rim lamps
+    // (addWindowLights) and the baked sun now draw.
+    if(!levelMood().shineOut)for(int i=0;i<numsectors;++i) {
+        if(sectors[i].ceilingpic!=skyflatnum)continue;
+        float enclosed=0;packOutdoor(&sectors[i],&enclosed);
+        int opening=Rooms_SkyOpening(i);
+        if(enclosed<=0||opening<0)continue;
+        float sum=0,open=0;
+        for(int k=0;k<Rooms_SkyIndoorCount(opening);++k) {const rooms_sky_indoor &in=*Rooms_SkyIndoor(opening,k);sum+=in.length*base[in.sector];open+=in.length;}
+        if(open>0&&sum/open<base[i])base[i]+=(sum/open-base[i])*enclosed;
+    }
     for(int i=0;i<numsectors;++i)lampDrop[i]=std::clamp(lampLightLevel(&sectors[i])/255.0f,0.12f,1.0f)-base[i];
 }
 // The sky's color: the upper rows of the sky texture, above any horizon art,
 // halfway to white.
 std::array<float,3> skyColor() {
+    // Phobos: no sky light, only Mars-shine, in Mars' rusty butterscotch.
+    if(Game_Phobos())return {1.0f,0.6f,0.4f};
     const Image &sky=wallImage(skytexture);
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     double sum[3]={};
@@ -395,7 +425,8 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
     for(float &c:tint)c/=peak;
     std::vector<std::array<float,3>> roomColors;
     if(mood.shineOut)roomColors=nightRoomColors(sources);
-    struct Window { float x,y,nx,ny,low,height,strength,sunlit;int rows;std::array<float,3> color; };
+    struct Window { float x,y,nx,ny,low,height,strength,sunlit;int rows;std::array<float,3> color;bool overhead=false,back=false;int door=-1; };
+    Rooms_Build();
     std::vector<Window> windows;
     for(int i=0;i<numlines;++i) {
         const line_t &line=lines[i];
@@ -403,15 +434,32 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
         bool frontSky=line.frontsector->ceilingpic==skyflatnum,backSky=line.backsector->ceilingpic==skyflatnum;
         if(frontSky==backSky)continue;
         const sector_t *in=frontSky?line.backsector:line.frontsector,*out=frontSky?line.frontsector:line.backsector;
-        float low=std::max(floorZ(in),floorZ(out)),high=std::min(ceilZ(in),ceilZ(out));
+        float low=std::max(floorZ(in),floorZ(out)),high=std::min(ceilZ(in),ceilZ(out)),top;
+        // A door shut at load (E1M1's computer-room wall onto the yard) gets
+        // the lamp it has open, sized by the height it opens to, sitting just
+        // inside it: shut, the door hides it from both sides; bakeMap follows
+        // the door and relight.cpp re-bakes round it as it opens.
+        bool shut=high-low<8&&Rooms_Door(int(in-sectors),&top);
+        if(shut)high=std::min(top,ceilZ(out));
         if(high-low<8)continue;
         float ax=units(line.v1->x),ay=units(line.v1->y),dx=units(line.v2->x)-ax,dy=units(line.v2->y)-ay;
         float length=std::hypot(dx,dy);if(length<8)continue;
         dx/=length;dy/=length;
         // The front side lies to the right of v1->v2.
         float nx=in==line.frontsector?dy:-dy,ny=in==line.frontsector?-dx:dx;
-        int columns=std::max(1,(int)std::lround(length/32)),rows=std::max(1,(int)std::ceil((high-low)/64));
-        float width=length/columns,height=(high-low)/rows;
+        // The rim of a hole in the ceiling over a floor that runs on under
+        // it: the light comes down through the hole, not in at the floor.
+        // One lamp per column at the roof's edge, just inside the hole,
+        // shining all round as a 64-unit window would: the floor under the
+        // roof and the floor under the hole fall off from it alike, where
+        // panels down to the floor facing in lit the roofed side brightest
+        // right at the line, leaving a dark rim round the hole's own floor.
+        float enclosed=0;
+        if(!shut&&!mood.shineOut&&std::fabs(floorZ(in)-floorZ(out))<=24&&ceilZ(in)<=ceilZ(out))packOutdoor(out,&enclosed);
+        bool overhead=enclosed>0.5f;
+        int columns=std::max(1,(int)std::lround(length/32)),rows=overhead?1:std::max(1,(int)std::ceil((high-low)/64));
+        float width=length/columns,height=overhead?std::min(high-low,64.0f):(high-low)/rows;
+        if(overhead)low=high-4-height;
         float outdoor=std::clamp(out->lightlevel/255.0f*mood.outdoor,0.12f,1.0f),level=outdoor;
         std::array<float,3> color=tint;
         if(mood.shineOut) {
@@ -435,7 +483,7 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
                 if(seamCells[cell].own!=outside)continue;
                 seen+=contactCells[4*cell+2]/255.0f;++count;
             }
-            windows.push_back({px,py,nx,ny,low,height,strength,count>0?seen/count:-1,rows,color});
+            windows.push_back({px,py,nx,ny,low,height,strength,count>0?seen/count:-1,rows,color,overhead,shut&&mood.shineOut,shut?int(in-sectors):-1});
         }
     }
     // A window onto a sunny courtyard takes over the room from those onto
@@ -452,9 +500,16 @@ static void addWindowLights(std::vector<BakeLight> &sources) {
             if(best>0.05f)sunlit=0.35f+0.65f*w.sunlit/best;
         }
         if(mood.shineOut)++shining;
-        for(int row=0;row<w.rows;++row)
-            sources.push_back({w.x+w.nx*2,w.y+w.ny*2,w.low+(row+0.5f)*w.height,mood.shineOut?224.0f:448.0f,w.strength*sunlit,0.5f,
+        if(w.overhead) {
+            sources.push_back({w.x-w.nx*2,w.y-w.ny*2,w.low+w.height,448.0f,w.strength*sunlit,0.5f,{w.color[0],w.color[1],w.color[2]}});
+            windowDoors.push_back(-1);
+            continue;
+        }
+        for(int row=0;row<w.rows;++row) {
+            sources.push_back({w.x+w.nx*(w.back?-2:2),w.y+w.ny*(w.back?-2:2),w.low+(row+0.5f)*w.height,mood.shineOut?224.0f:448.0f,w.strength*sunlit,0.5f,
                                {w.color[0],w.color[1],w.color[2]},w.height*0.5f,w.nx,w.ny,mood.shineOut?4.0f:0.0f});
+            windowDoors.push_back(w.door);
+        }
     }
     if(mood.shineOut)fprintf(stderr,"3D bake: %d window columns shine out into the night.\n",shining);
 }
@@ -565,7 +620,7 @@ void bakeLights() {
     }
     // Directions (and flicker groups) with bake-only lights, or for lamps that switch.
     bool directed=only||lampGroupCount>0;
-    firstWindowSource=(int)sources.size();
+    firstWindowSource=(int)sources.size();windowDoors.clear();
     if(settings.windowLight) {addWindowLights(sources);sourceGroups.resize(sources.size(),0);}
     bakeSourceKeys.resize(sources.size());
     int points=(int)sources.size();
@@ -602,7 +657,7 @@ void bakeLights() {
 }
 void lightBakeNewLevel() {
     lightBakeKey=-1;
-    bakeSources.clear();bakeSourceKeys.clear();bakeGrid.clear();bakeAreas.clear();sourceGroups.clear();lampDrop.clear();
+    bakeSources.clear();bakeSourceKeys.clear();windowDoors.clear();bakeGrid.clear();bakeAreas.clear();sourceGroups.clear();lampDrop.clear();
     lampGroupCount=0;lampGroupSectors.clear();lampGroupOf.clear();
     wallDirectionCells.clear();flatDirectionCells.clear();wallDirectionTexture=nullptr;flatDirectionTexture=nullptr;
 }

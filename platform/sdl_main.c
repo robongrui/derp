@@ -89,12 +89,12 @@ static void absolute_path_args(int argc, char **argv)
 static const char *program_for(int game)
 {
 #if defined(__APPLE__)
-    if (game == DOOM_WAD_DOOM) return "Play DOOM";
+    if (game == DOOM_WAD_DOOM) return "Play DERP";
 #elif defined(_WIN32)
-    if (game == DOOM_WAD_DOOM) return "doom.exe";
+    if (game == DOOM_WAD_DOOM) return "Play DERP.exe";
     if (game == DOOM_WAD_HERETIC) return "derp-heretic.exe";
 #else
-    if (game == DOOM_WAD_DOOM) return "doom";
+    if (game == DOOM_WAD_DOOM) return "play-derp";
 #endif
 #ifndef _WIN32
     if (game == DOOM_WAD_HERETIC) return "derp-heretic";
@@ -152,11 +152,11 @@ static void hand_off(int game, int argc, char **argv, const char *wad, const cha
     {
         FILE *probe = fopen(path, "rb");
 #ifdef __APPLE__
-        /* Next to the build's Play DOOM.app rather than inside it. */
+        /* Next to the build's Play DERP.app rather than inside it. */
         if (!probe && game == DOOM_WAD_DOOM)
         {
             SDL_free(path); path = NULL;
-            if (SDL_asprintf(&path, "%sPlay DOOM.app/Contents/MacOS/Play DOOM", folder) > 0) probe = fopen(path, "rb");
+            if (SDL_asprintf(&path, "%sPlay DERP.app/Contents/MacOS/Play DERP", folder) > 0) probe = fopen(path, "rb");
         }
 #endif
         if (probe) fclose(probe);

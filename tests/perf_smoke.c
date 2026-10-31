@@ -3,10 +3,18 @@
    get slow and why.
 
    doom-perf-smoke <iwad> [-maps MAP01,E1M2] [-spacing 512] [-budget 16.7]
-                   [-out perf-report] [-strict] [-at x,y[,facing]] [engine options]
+                   [-out perf-report] [-strict] [-at x,y[,facing]] [-doors] [-lines 471,12] [engine options]
 
    -at times just that spot (facing east, north, west or south, or all four),
    for re-checking a slow view the report found; use it with one map.
+
+   -doors instead opens every door that opens by hand (no key) at once and
+   times frames for a few seconds of play from the first spot (or -at), while
+   the light around the moving doors re-bakes: wall time per frame, so work
+   on other threads that slows the game shows too. -lines also sets off the
+   walk-over lines given (by number: a lowering wall, a lift), as if the
+   player crossed them. The report adds each second's mean frame, so a
+   steady slowdown shows apart from a single hitch.
 
    The world stays paused while the view moves from spot to spot, facing the
    four compass directions at each. Every frame waits for the GPU, so CPU and
@@ -72,7 +80,13 @@ static const char *map_filter;
 static FILE *report, *csv;
 static summary_t summaries[MAX_MAPS];
 
-static enum { START, LOADING, SETTLING, SAMPLING, CONFIRMING, ABLATING, SHOT_PREP, SHOT, FINISHED } state = START;
+static enum { START, LOADING, SETTLING, SAMPLING, CONFIRMING, ABLATING, SHOT_PREP, SHOT, DOORS, FINISHED } state = START;
+#define DOOR_SECONDS 6
+static int doors;             /* -doors */
+static int cross_lines[16], cross_count;   /* -lines */
+static double door_wall[4096], door_cpu[4096], door_gpu[4096];
+static int door_frames, doors_opened;
+static uint64_t door_start, door_last;
 static unsigned seen_serial, level_serial;
 static uint64_t request_time;
 static double load_ms;
@@ -133,7 +147,7 @@ static void find_maps(void)
         snprintf(wanted, sizeof(wanted), ",%s,", map_filter);
         for (char *c = wanted; *c; ++c) *c = (char)toupper((unsigned char)*c);
     }
-    for (int e = 1; e <= (gamemode == commercial ? 1 : 4); ++e)
+    for (int e = 1; e <= (gamemode == commercial ? 1 : 9); ++e) /* SIGIL adds E5, SIGIL II E6. */
         for (int m = 1; m <= (gamemode == commercial ? 32 : 9); ++m)
         {
             char name[9], key[12];
@@ -232,6 +246,49 @@ static void place(const spot_t *spot, int yaw)
     player->viewheight = VIEWHEIGHT; player->deltaviewheight = 0;
     player->viewz = mo->z + VIEWHEIGHT;
     if (player->viewz > mo->ceilingz - 4 * FRACUNIT) player->viewz = mo->ceilingz - 4 * FRACUNIT;
+}
+
+/* -doors: every door the player could open by hand starts opening. */
+static void open_doors(void)
+{
+    mobj_t *mo = players[consoleplayer].mo;
+    players[consoleplayer].cheats |= CF_GODMODE;
+    doors_opened = 0;
+    for (int i = 0; i < numlines; ++i)
+    {
+        int special = lines[i].special;
+        if ((special == 1 || special == 31 || special == 117 || special == 118) && lines[i].backsector)
+            doors_opened += P_UseSpecialLine(mo, &lines[i], 0) ? 1 : 0;
+    }
+    for (int k = 0; k < cross_count; ++k)
+        if (cross_lines[k] >= 0 && cross_lines[k] < numlines && lines[cross_lines[k]].special)
+        {
+            P_CrossSpecialLine(cross_lines[k], 0, mo);
+            ++doors_opened;
+        }
+    paused = false;
+    door_frames = 0;
+    door_start = door_last = SDL_GetTicksNS();
+}
+
+static void report_doors(void)
+{
+    if (!door_frames) { out("== %s: no frames timed with doors moving\n", maps[map_index].name); return; }
+    double total = 0, worst_wall = 0, second = 0;
+    int in_second = 0;
+    out("== %s doors, each second's mean frame:", maps[map_index].name);
+    for (int i = 0; i < door_frames; ++i)
+    {
+        total += door_wall[i]; if (door_wall[i] > worst_wall) worst_wall = door_wall[i];
+        second += door_wall[i]; ++in_second;
+        if (second >= 1000 || i == door_frames - 1) { out(" %.1f", second / in_second); second = 0; in_second = 0; }
+    }
+    out(" ms\n");
+    double mean = total / door_frames, cpu = median(door_cpu, door_frames), gpu = median(door_gpu, door_frames);
+    double wall95 = (qsort(door_wall, door_frames, sizeof(double), compare_doubles), door_wall[door_frames * 95 / 100]);
+    out("== %s doors (loaded and baked in %.1f s): %d opened, %d frames in %d s: %.1f FPS, frame %.1f ms mean, "
+        "%.1f ms 95%%, %.1f ms worst; CPU median %.1f ms, GPU median %.1f ms\n", maps[map_index].name, load_ms / 1000,
+        doors_opened, door_frames, DOOR_SECONDS, 1000 / mean, mean, wall95, worst_wall, cpu, gpu);
 }
 
 static void request_map(void)
@@ -518,11 +575,33 @@ void I_TestFrame(void)
             find_spots();
             if (!spot_count) { worst = 0; report_map(); goto next_map; }
             view = 0;
-            state = SAMPLING;
+            state = doors ? DOORS : SAMPLING;
             I_Render3DProfileTeleported();
             place(&spots[0], 0);
+            if (doors) open_doors();
         }
         return;
+    case DOORS:
+    {
+        place(&spots[0], 0);
+        uint64_t now = SDL_GetTicksNS();
+        if (fresh && door_frames < 4096)
+        {
+            door_wall[door_frames] = (now - door_last) / 1e6;
+            door_cpu[door_frames] = frame->cpuMs; door_gpu[door_frames] = frame->gpuMs;
+            ++door_frames;
+        }
+        door_last = now;
+        if (now - door_start < (uint64_t)DOOR_SECONDS * 1000000000u) return;
+        paused = true;
+        report_doors();
+        if (++map_index < map_count) { request_map(); return; }
+        fclose(report); fclose(csv); report = csv = NULL;
+        state = FINISHED;
+        I_Render3DProfile(0, 0);
+        I_Quit();
+        return;
+    }
     case SAMPLING:
         if (!fresh) { place(&spots[view / 5], view % 5 ? view % 5 - 1 : 0); return; }
         if (view % 5) record(view / 5, view % 5 - 1, frame);
@@ -597,7 +676,7 @@ int main(int argc, char **argv)
 {
     if (argc < 2 || argv[1][0] == '-')
     {
-        fprintf(stderr, "Usage: %s <iwad> [-maps MAP01,E1M2] [-spacing units] [-budget ms] [-out dir] [-strict] [-at x,y[,facing]] [engine options]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <iwad> [-maps MAP01,E1M2] [-spacing units] [-budget ms] [-out dir] [-strict] [-at x,y[,facing]] [-doors] [-lines n,n] [engine options]\n", argv[0]);
         return 1;
     }
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
@@ -619,6 +698,18 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-budget") && i + 1 < argc) budget = atof(argv[++i]);
         else if (!strcmp(argv[i], "-out") && i + 1 < argc) out_dir = argv[++i];
         else if (!strcmp(argv[i], "-strict")) strict = 1;
+        else if (!strcmp(argv[i], "-doors")) doors = 1;
+        else if (!strcmp(argv[i], "-lines") && i + 1 < argc)
+        {
+            for (char *c = argv[++i]; *c && cross_count < 16;)
+            {
+                char *end; long n = strtol(c, &end, 10);
+                if (end == c) break;
+                cross_lines[cross_count++] = (int)n;
+                c = *end == ',' ? end + 1 : end;
+            }
+            doors = 1;
+        }
         else
         {
             if (!strcmp(argv[i], "-skill")) skill_given = 1;

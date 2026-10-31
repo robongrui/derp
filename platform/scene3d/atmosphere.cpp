@@ -20,6 +20,10 @@ static float sunScatter(float x,float y,float z) {
 void buildShafts(const Uniforms &camera) {
     shaftVertices.clear();
     if(!settings.sunShafts||!settings.sun||sunLevel<=0||camera.effects[2]!=0)return;
+    // Nor while rain, snow or nukage falls (weather.cpp): sunbeams through a downpour read wrong.
+    // Dry ice lies low under clear air and keeps its sun (overcast), so its beams too: the sun
+    // stood in a clear sky over the layer with none.
+    if(fallNow>0.01f&&falling()!=WEATHER_DRY_ICE)return;
     const float *d=sunDirection,*eye=camera.eye;
     for(const SunShaft &s:sunShafts) {
         if(std::fabs(floorZ(&sectors[s.sector])-s.z)>1)continue;
@@ -43,12 +47,14 @@ void buildShafts(const Uniforms &camera) {
         quad(shaftVertices,vertex(-1,0),vertex(1,0),vertex(1,1),vertex(-1,1));
     }
 }
+// Mist over pits and liquids (with the fog option), and the fog bank's
+// sheets (fog.cpp, a weather of its own), sorted far to near together.
 void buildMist(const Uniforms &camera) {
     mistVertices.clear();
-    if(!settings.fog||camera.effects[2]!=0)return;
-    struct Triangle { float depth; Vertex v[3]; };
-    std::vector<Triangle> triangles;
-    for(int i=0;i<numsubsectors;++i) {
+    if(camera.effects[2]!=0)return;
+    std::vector<MistTriangle> triangles;
+    fogSheets(camera,triangles);
+    for(int i=0;i<numsubsectors&&settings.fog;++i) {
         const auto &poly=floors[i];if(poly.size()<3)continue;
         const sector_t &sector=*subsectors[i].sector;const auto &mist=sectorMist[&sector-sectors];
         if(!(mist.pit||mist.liquid||mist.toxic)||sector.floorpic==skyflatnum)continue;
@@ -56,6 +62,7 @@ void buildMist(const Uniforms &camera) {
         if(camera.eye[0]<bounds[0]-2000||camera.eye[0]>bounds[2]+2000||
            camera.eye[1]<bounds[1]-2000||camera.eye[1]>bounds[3]+2000)continue;
         float bottom=floorZ(&sector),top=ceilZ(&sector);
+        unsigned mode=sector.ceilingpic==skyflatnum?MODE_MIST_OUTSIDE:0u;
         float extent=std::min(mist.pit?24.0f:16.0f,std::max(0.0f,top-bottom-2));
         int layers=mist.pit?4:3;
         for(int layer=0;layer<layers&&extent>=4;++layer) {
@@ -63,9 +70,9 @@ void buildMist(const Uniforms &camera) {
             float alpha=(mist.toxic?0.09f:mist.liquid?0.075f:0.06f)*(mist.outdoor?0.65f:1.0f);
             alpha*=1.0f-layer*0.15f;
             for(size_t n=1;n+1<poly.size();++n) {
-                Triangle triangle={};int v=0;
+                MistTriangle triangle={};int v=0;
                 for(Point p:{poly[0],poly[n],poly[n+1]}) {
-                    triangle.v[v++]={p.x,p.y,z,layer*0.31f,layer*0.17f,alpha,0,mist.color[0],mist.color[1],mist.color[2]};
+                    triangle.v[v++]={p.x,p.y,z,layer*0.31f,layer*0.17f,alpha,mode,mist.color[0],mist.color[1],mist.color[2]};
                     triangle.depth+=(p.x-camera.eye[0])*camera.forward[0]+(p.y-camera.eye[1])*camera.forward[1]+(z-camera.eye[2])*camera.forward[2];
                 }
                 triangles.push_back(triangle);
@@ -82,6 +89,7 @@ void buildMist(const Uniforms &camera) {
 // the top; present.frag turns it into a raster shimmer.
 void buildHeat(const Uniforms &camera) {
     heatVertices.clear();
+    buildGroundHeat(camera);   // the heat of the day (ground_heat.cpp), whatever the switch
     if(!settings.heatHaze||camera.effects[2]!=0||sectorMist.size()!=(size_t)numsectors)return;
     auto vertex=[&](float x,float y,float z,float heat) {
         float fade=std::clamp((2400-std::hypot(x-camera.eye[0],y-camera.eye[1]))/600,0.0f,1.0f);
@@ -135,7 +143,7 @@ void buildDust(const Uniforms &camera) {
     bool sun=settings.sun&&sunLevel>0&&!contactCells.empty();
     if(!beam&&!sun)return;
     constexpr float cell=48;
-    float t=leveltime/(float)TICRATE;
+    float t=levelSeconds();
     int gx0=(int)std::floor(camera.eye[0]/cell),gy0=(int)std::floor(camera.eye[1]/cell),gz0=(int)std::floor(camera.eye[2]/cell);
     for(int gz=gz0-2;gz<=gz0+2;++gz)for(int gy=gy0-6;gy<=gy0+6;++gy)for(int gx=gx0-6;gx<=gx0+6;++gx) {
         uint32_t seed=(uint32_t)gz*83492791u;
@@ -150,8 +158,8 @@ void buildDust(const Uniforms &camera) {
         int own=seamCells[(size_t)cy*mapWidth+cx].own;
         if(own==noSector)continue;
         const sector_t &sector=sectors[own];
-        // Rain washes the air under the sky clear of dust (weather.cpp).
-        if(rainNow>0.01f&&sector.ceilingpic==skyflatnum)continue;
+        // Rain washes the air under the sky clear of dust, and snow fills it (weather.cpp).
+        if(fallNow>0.01f&&underSky(int(&sector-sectors)))continue;
         float floor=floorZ(&sector);
         if(p[2]<floor+2||p[2]>ceilZ(&sector)-2)continue;
         float bright=0,color[3]={};

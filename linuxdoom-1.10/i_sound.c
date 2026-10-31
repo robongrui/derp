@@ -694,6 +694,10 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
   handle = x = y = z = 0;
 }
 
+void I_SoundOwn(void)
+{
+}
+
 fixed_t I_SoundReach(int id)
 {
   id = 0;

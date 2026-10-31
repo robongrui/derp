@@ -14,6 +14,8 @@
 
 static made_sample_t impacts[IMPACT_KINDS][MADE_STEP_VARIANTS];
 static made_sample_t loops[AMBIENT_KINDS][AMBIENCE_LAYERS];
+/* Wind and rain: a take per strength, in place of one per layer. */
+static made_sample_t steps[AMBIENT_KINDS][AMBIENT_STEPS];
 static made_sample_t strikes[MADE_VARIANTS];
 static made_sample_t hidden[HIDDEN_KINDS][MADE_VARIANTS];
 static made_sample_t computer_body;
@@ -32,12 +34,16 @@ static made_sample_t keep(float *buffer, int length, int rate)
    come round again and again, which grates. */
 static int loop_seconds(int kind) { return kind == AMBIENT_WIND ? 32 : MADE_LOOP_SECONDS; }
 
-static made_sample_t loop(int kind, int layer)
+/* A take of a kind's loop: layer picks the seed; strength, for wind and
+   rain, how hard (below 0 the usual). */
+static made_sample_t loop(int kind, int layer, float strength)
 {
     int length = loop_seconds(kind) * MADE_RATE, fade = (int)(LOOP_FADE_SECONDS * MADE_RATE);
     float *buffer = calloc((size_t)(length + fade), sizeof(float));
     if (!buffer) return (made_sample_t){ 0 };
-    Ambient_Render(kind, 0x51ed270bu + 977u * (unsigned)kind + 7919u * (unsigned)layer, MADE_RATE, buffer, length + fade, NULL, 0);
+    unsigned seed = 0x51ed270bu + 977u * (unsigned)kind + 7919u * (unsigned)layer;
+    if (strength < 0) Ambient_Render(kind, seed, MADE_RATE, buffer, length + fade, NULL, 0);
+    else Ambient_RenderStrength(kind, strength, seed, MADE_RATE, buffer, length + fade);
     /* Equal power: the tail and the head are unrelated noise for most kinds. */
     for (int n = 0; n < fade; ++n)
     {
@@ -96,7 +102,10 @@ void MadeBank_Build(void)
             impacts[kind][v] = keep(buffer, length, rate);
         }
     for (int kind = 0; kind < AMBIENT_KINDS; ++kind)
-        for (int layer = 0; layer < AMBIENCE_LAYERS; ++layer) loops[kind][layer] = loop(kind, layer);
+        if (Ambient_Stepped(kind))
+            for (int step = 0; step < AMBIENT_STEPS; ++step) steps[kind][step] = loop(kind, step, (step + 1) / (float)AMBIENT_STEPS);
+        else
+            for (int layer = 0; layer < AMBIENCE_LAYERS; ++layer) loops[kind][layer] = loop(kind, layer, -1);
     for (int v = 0; v < MADE_VARIANTS; ++v) strikes[v] = strike(0x2545f491u * (unsigned)(v + 1));
     for (int kind = 0; kind < HIDDEN_KINDS; ++kind)
         for (int v = 0; v < MADE_VARIANTS; ++v)
@@ -127,7 +136,14 @@ const made_sample_t *MadeBank_Impact(int kind, int variant)
 }
 const made_sample_t *MadeBank_Loop(int kind, int layer)
 {
-    return kind >= 0 && kind < AMBIENT_KINDS ? ready(&loops[kind][(unsigned)layer % AMBIENCE_LAYERS]) : NULL;
+    if (kind < 0 || kind >= AMBIENT_KINDS) return NULL;
+    if (Ambient_Stepped(kind)) return MadeBank_StepLoop(kind, (int)(Ambient_UsualStrength(kind) * AMBIENT_STEPS + 0.5f) - 1);
+    return ready(&loops[kind][(unsigned)layer % AMBIENCE_LAYERS]);
+}
+const made_sample_t *MadeBank_StepLoop(int kind, int step)
+{
+    if (kind < 0 || kind >= AMBIENT_KINDS || !Ambient_Stepped(kind)) return NULL;
+    return ready(&steps[kind][step < 0 ? 0 : step >= AMBIENT_STEPS ? AMBIENT_STEPS - 1 : step]);
 }
 const made_sample_t *MadeBank_Hidden(int kind, int variant)
 {

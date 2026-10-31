@@ -128,6 +128,39 @@ void gpuUpdateTexture(const GpuTextureRef &texture,GpuFormat format,const std::v
     SDL_ReleaseGPUTransferBuffer(device,transfer);
 }
 int gpuMaxSamples() {return maxSamples;}
+// The device's own description (SDL 3.4), read once.
+static const char *deviceProperty(const char *name) {
+#if SDL_VERSION_ATLEAST(3,4,0)
+    if(device) {const char *value=SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device),name,"");return value?value:"";}
+#else
+    (void)name;
+#endif
+    return "";
+}
+const char *gpuDeviceName() {
+#if SDL_VERSION_ATLEAST(3,4,0)
+    static char name[128];if(!name[0])SDL_strlcpy(name,deviceProperty(SDL_PROP_GPU_DEVICE_NAME_STRING),sizeof name);
+    return name;
+#else
+    return "";
+#endif
+}
+const char *gpuDriverVersion() {
+#if SDL_VERSION_ATLEAST(3,4,0)
+    static char version[64];if(!version[0])SDL_strlcpy(version,deviceProperty(SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING),sizeof version);
+    return version;
+#else
+    return "";
+#endif
+}
+const char *gpuApiName() {
+    const char *driver=device?SDL_GetGPUDeviceDriver(device):nullptr;
+    if(!driver)return "";
+    if(!strcmp(driver,"vulkan"))return "VULKAN";
+    if(!strcmp(driver,"metal"))return "METAL";
+    if(!strcmp(driver,"direct3d12"))return "DIRECT3D 12";
+    return driver;
+}
 bool platformReadMask(const char *path,int w,int h,std::vector<float> &values) {
     SDL_Surface *loaded=SDL_LoadPNG(path);
     SDL_Surface *surface=loaded?SDL_ConvertSurface(loaded,SDL_PIXELFORMAT_RGBA32):nullptr;
@@ -211,10 +244,5 @@ void I_Render3DShutdown(void) {
 void I_Render3DProfile(int enabled,unsigned skip) {
     profile.skip=enabled?skip:0;
     if(profile.enabled==(enabled!=0)||!device)return;
-    profile.enabled=enabled!=0;
-    // Without vsync the swapchain never holds a profiled frame back.
-    SDL_GPUPresentMode mode=SDL_GPU_PRESENTMODE_VSYNC;
-    if(profile.enabled&&SDL_WindowSupportsGPUPresentMode(device,gameWindow,SDL_GPU_PRESENTMODE_IMMEDIATE))mode=SDL_GPU_PRESENTMODE_IMMEDIATE;
-    else if(profile.enabled&&SDL_WindowSupportsGPUPresentMode(device,gameWindow,SDL_GPU_PRESENTMODE_MAILBOX))mode=SDL_GPU_PRESENTMODE_MAILBOX;
-    SDL_SetGPUSwapchainParameters(device,gameWindow,SDL_GPU_SWAPCHAINCOMPOSITION_SDR,mode);
+    profile.enabled=enabled!=0;   // profiled frames run uncapped (presentation.cpp)
 }

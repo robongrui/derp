@@ -7,6 +7,7 @@
 #include <string.h>
 #include "doomdef.h"
 #include "p_local.h"
+#include "i_video.h"
 #include "soundst.h"
 
 // Macros
@@ -144,6 +145,7 @@ boolean         mousearray[4];
 boolean         *mousebuttons = &mousearray[1];
 	// allow [-1]
 int             mousex, mousey;             // mouse values are used once
+static int      mouseturns[BACKUPTICS];     // the mouse's part of each ticcmd's turn
 int             dclicktime, dclickstate, dclicks;
 int             dclicktime2, dclickstate2, dclicks2;
 
@@ -231,6 +233,17 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 		|| joybuttons[joybstrafe];
 	speed = gamekeydown[key_speed] || joybuttons[joybspeed]
 		|| joybuttons[joybspeed];
+
+	// DERP: Caps Lock on = always run; the run key then walks.
+	{
+		static int lastcaps = -1;
+		int caps = I_CapsLock();
+		if (lastcaps != -1 && caps != lastcaps)
+			P_SetMessage(&players[consoleplayer],
+				caps ? "ALWAYS RUN ON" : "ALWAYS RUN OFF", false);
+		lastcaps = caps;
+		speed ^= caps;
+	}
 #ifdef __WATCOMC__
 	if(useexterndriver)
 	{
@@ -652,6 +665,9 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 		}
 	}
 
+	// A tic's summed motion must fit angleturn (a short) or a flick turns backwards.
+	if(mousex > 4095) mousex = 4095;
+	else if(mousex < -4095) mousex = -4095;
 	if (strafe)
 	{
 		side += mousex*2;
@@ -660,6 +676,7 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 	{
 		cmd->angleturn -= mousex*0x8;
 	}
+	mouseturns[maketic%BACKUPTICS] = strafe ? 0 : -mousex*0x8;
 	forward += mousey;
 	mousex = mousey = 0;
 
@@ -703,6 +720,45 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 		cmd->buttons = BT_SPECIAL | BTS_SAVEGAME | (savegameslot<<BTS_SAVESHIFT);
 	}
 
+}
+
+//
+// G_MouseTurn
+// For a renderer that turns the view every frame (the 3D one): in *last
+// the mouse's part of the newest run tic's turn, in *pending what ticcmds
+// built but not run yet and the mouse events still queued will add, both
+// as angleturn. *pending is 0 when the next tic won't turn the player
+// (dead, frozen after a teleport) or the mouse strafes.
+//
+void G_MouseTurn(int *last, int *pending)
+{
+	player_t *player = &players[consoleplayer];
+	int x = mousex;
+	int i;
+
+	*last = gametic ? mouseturns[(gametic-1)%BACKUPTICS] : 0;
+	*pending = 0;
+	if(player->playerstate != PST_LIVE || !player->mo
+		|| player->mo->reactiontime || (player->mo->flags&MF_JUSTATTACKED)
+		|| gamekeydown[key_strafe] || mousebuttons[mousebstrafe]
+		|| joybuttons[joybstrafe])
+	{
+		return;
+	}
+	for(i = eventtail; i != eventhead; i = (i+1)&(MAXEVENTS-1))
+	{
+		if(events[i].type == ev_mouse)
+		{
+			x += events[i].data2*(mouseSensitivity+5)/10;
+		}
+	}
+	if(x > 4095) x = 4095;
+	else if(x < -4095) x = -4095;
+	*pending = -x*0x8;
+	for(i = gametic; i < maketic; i++)
+	{
+		*pending += mouseturns[i%BACKUPTICS];
+	}
 }
 
 
@@ -876,8 +932,10 @@ boolean G_Responder(event_t *ev)
 			mousebuttons[0] = ev->data1&1;
 			mousebuttons[1] = ev->data1&2;
 			mousebuttons[2] = ev->data1&4;
-			mousex = ev->data2*(mouseSensitivity+5)/10;
-			mousey = ev->data3*(mouseSensitivity+5)/10;
+			// Uncapped frames post one mouse event each, several per tic:
+			// sum them until G_BuildTiccmd uses and clears the motion.
+			mousex += ev->data2*(mouseSensitivity+5)/10;
+			mousey += ev->data3*(mouseSensitivity+5)/10;
 			return(true); // eat events
 
 		case ev_joystick:

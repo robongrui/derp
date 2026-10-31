@@ -27,7 +27,7 @@ void uploadFrame(SDL_GPUCommandBuffer *command,const std::vector<const std::vect
         bytes=(bytes+(Uint32)(vertices.size()*sizeof(Vertex))+255)&~Uint32(255);
     };
     for(const auto *groups:{&batches,&shadowBatches,&decalBatches,&mirrorBatches})for(const auto &batch:*groups)place(batch.second);
-    place(mistVertices);place(shaftVertices);place(particleVertices);place(crestVertices);place(heatVertices);place(skyVertices);place(glassVertices);
+    place(mistVertices);place(shaftVertices);place(particleVertices);place(glowVertices);place(crestVertices);place(heatVertices);place(skyVertices);place(glassVertices);
     for(const auto *vertices:transient)place(*vertices);
     Uint32 blockerBytes=(Uint32)(lightWords.size()*sizeof(lightWords[0]));
     Uint32 sectorBytes=(Uint32)(sectors.size()*sizeof(sectors[0]));
@@ -161,14 +161,16 @@ void drawWorld(SDL_GPUCommandBuffer *command,SDL_GPURenderPass *pass,SDL_GPUGrap
                SDL_GPUGraphicsPipeline *coverage,SDL_GPUGraphicsPipeline *cutout,bool sprites) {
     SDL_BindGPUGraphicsPipeline(pass,opaque);bindWorld(pass,reflection);
     for(const auto &batch:batches) if(opaqueBatch(batch)) {bindSurface(command,pass,batch.first,3);drawVertices(pass,batch.second);}
-    SDL_GPUTextureSamplerBinding skyImage[]={{gpu(wallImage(skytexture).texture),linearRepeat},{paletteTexture,nearestClamp}};
+    SDL_GPUTextureSamplerBinding skyImage[]={{gpu(doom3d::skyImage()),linearRepeat},{paletteTexture,nearestClamp}};
     if(!skyVertices.empty()) {
         SDL_BindGPUGraphicsPipeline(pass,skySurface);SDL_BindGPUFragmentSamplers(pass,0,skyImage,2);
         drawVertices(pass,skyVertices);
     }
-    SDL_BindGPUGraphicsPipeline(pass,sky);
-    SDL_BindGPUFragmentSamplers(pass,0,skyImage,2);
-    SDL_DrawGPUPrimitives(pass,3,1,0,0);
+    if(levelSky||farFogActive) {
+        SDL_BindGPUGraphicsPipeline(pass,sky);
+        SDL_BindGPUFragmentSamplers(pass,0,skyImage,2);
+        SDL_DrawGPUPrimitives(pass,3,1,0,0);
+    }
     auto cutouts=[&](SDL_GPUGraphicsPipeline *pipeline) {
         SDL_BindGPUGraphicsPipeline(pass,pipeline);bindWorld(pass,reflection);
         for(const auto &batch:batches) {

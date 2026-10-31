@@ -12,10 +12,10 @@ void loadSettings() {
     finishReading(settings);
     fclose(file);
 }
-static void saveSettings() {
+void saveSettings() {
     FILE *file=fopen(graphicsConfig,"w"); if(!file)return;
     writeOptions(file,settings);
     fclose(file);
 }
-void settingsChanged() {applySettings();saveSettings();tickTime=0;++settingsSerial;}
+void settingsChanged() {applySettings();saveSettings();ticSaved=false;++settingsSerial;}
 } // namespace doom3d

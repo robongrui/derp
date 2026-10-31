@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include "p_local.h"
 #include "map.h"
+#include "../rooms.h"
 
 typedef struct { float x, y, dx, dy; line_t *line; } segment_t;
 static segment_t *nearby; static int nearby_count, nearby_capacity;
@@ -72,4 +73,17 @@ int Map_Cross(float x, float y, float cx, float cy, float length, crossing_t *ou
         out[j] = (crossing_t){t, line, near, far, near_side};
     }
     return count;
+}
+
+float Map_Outdoors(const sector_t *s)
+{
+    Rooms_Build();
+    int i = (int)(s - sectors);
+    return Rooms_Outside(i) ? 1 - Rooms_Enclosure(i) : 0;
+}
+int Map_SameRoom(int a, int b)
+{
+    Rooms_Build();
+    room_kind kind = Rooms_Kind(a);
+    return a == b || ((kind == ROOM_INDOOR || kind == ROOM_SHELTERED) && Rooms_Kind(b) == kind && Rooms_Of(a) == Rooms_Of(b));
 }

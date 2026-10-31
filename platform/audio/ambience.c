@@ -36,6 +36,10 @@
 #define PI_F 3.14159265f
 
 static float raining; /* how hard it rains (Ambience_Rain) */
+static float winding = 0.5f; /* how hard the wind blows (Ambience_Wind) */
+static float snowing; /* how thick it snows (Ambience_Snow) */
+static float drafting; /* the drafts' wind where the listener stands indoors (Ambience_Draft) */
+#define DRAFT_AIR 0.5f    /* the wind of a draft as strong as the wind outside, against the open air's */
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
 
@@ -68,6 +72,25 @@ static void ray(spot_t *s, int index, float lx, float ly, int walls, int fresh)
     s->cutoff_to = cutoff;
 }
 
+/* Wind and rain play the two takes nearest their strength, cross-faded at
+   equal power: the even step on layer 0, the odd one on layer 1, so a layer
+   only changes its take where it has faded out (ambience_voices.c). The
+   kind's field, all on layer 0, is split between them. */
+static void step_between(ambience_voice_t layers[AMBIENCE_LAYERS], float strength)
+{
+    ambience_voice_t field = layers[0];
+    float p = fminf(fmaxf(strength * AMBIENT_STEPS - 1, 0), AMBIENT_STEPS - 1);
+    int lo = (int)p < AMBIENT_STEPS - 2 ? (int)p : AMBIENT_STEPS - 2;
+    float x = p - lo, w[2] = { cosf(0.5f * PI_F * x), sinf(0.5f * PI_F * x) };
+    for (int i = 0; i < 2; ++i)
+    {
+        ambience_voice_t *v = &layers[(lo + i) % 2];
+        *v = field;
+        v->left *= w[i]; v->right *= w[i]; v->send *= w[i];
+        v->step = lo + i;
+    }
+}
+
 void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], float level, int walls, int distance,
                      ambience_strike_t *strike, ambience_voice_t *computer_body)
 {
@@ -82,29 +105,61 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
     int here = (int)(listener->subsector->sector - sectors);
     float strike_level = 0, ease = 1 - expf(-1.0f / (EASE_SECONDS * TICRATE));
     if (walls) Acoustic_Follow();
-    /* Out under the sky the listener is in the wind, whatever spots lie
-       about; eased, so stepping out of a door blows up rather than switches. */
+    /* Out in the open air the listener is in the wind, whatever spots lie
+       about, as far out as the room map says (a porch as the yard, the hole
+       in a hall's ceiling not at all); indoors as much as the drafts blow
+       where they stand, fading in from the openings they come through. Eased,
+       so stepping out of a door blows up rather than switches. */
     static float open_air, open_rain;
-    int sky = Map_Sky(listener->subsector->sector);
-    open_air += ((sky && Game_HasEffect(GAME_EFFECT_WIND) ? 1 : 0) - open_air) * ease;
-    open_rain += ((sky ? 1 : 0) - open_rain) * ease;
+    float out = Map_Outdoors(listener->subsector->sector);
+    /* (No wind at all where there is no air: Phobos.) */
+    float wind_here = fmaxf(out, DRAFT_AIR * drafting);
+    open_air += ((Game_HasEffect(GAME_EFFECT_WIND) && !Game_Phobos() ? wind_here : 0) - open_air) * ease;
+    float air_here = Game_Air(here);
+    /* The rain falls on whoever stands under the sky, a hole in a ceiling or not. */
+    open_rain += ((Map_Sky(listener->subsector->sector) ? 1 : out) - open_rain) * ease;
 
     for (int k = 0; k < AMBIENT_KINDS; ++k)
     {
         if (k == AMBIENT_ROOM) continue;
+        /* Phobos: no wind, only air roaring out through a breach (Game_Vents), as loud as it
+           goes near the speed of sound and as the air round you and behind it lets it carry. */
+        int breach = k == AMBIENT_WIND && Game_Phobos();
         const reach_t *r = &ambience_reach[k];
         float sum2[AMBIENCE_LAYERS] = {0}, pan[AMBIENCE_LAYERS] = {0}, dull[AMBIENCE_LAYERS] = {0};
-        /* The rain is the wind's field again, as loud as it rains; it taps
-           on the windows as hard. */
-        float amount = k == AMBIENT_RAIN || k == AMBIENT_GLASS_RAIN ? raining : 1;
+        /* The rain is the wind's field again, as hard as it rains; it taps
+           on the windows as hard. The wind as hard as it blows; a breach
+           roars as the usual wind. */
+        float strength = k == AMBIENT_RAIN || k == AMBIENT_GLASS_RAIN ? raining
+                       : k == AMBIENT_WIND && !breach ? winding : Ambient_UsualStrength(k);
+        float amount = Ambient_Loudness(k, strength);
         if (amount < 1e-3f) continue;
         float open = k == AMBIENT_WIND ? open_air : k == AMBIENT_RAIN ? open_rain : 0;
         if (open > 1e-3f)
         {
-            float v = OPEN_AIR * open;
-            sum2[0] = v * v; pan[0] = v * v * 128; dull[0] = v * v * logf(20000);
+            /* Falling snow hushes the open air's wind and takes its edge. */
+            float hush = k == AMBIENT_WIND ? snowing : 0;
+            float v = OPEN_AIR * open * (1 - 0.35f * hush);
+            sum2[0] = v * v; pan[0] = v * v * 128; dull[0] = v * v * logf(20000 - 16000 * hush);
         }
-        for (int i = 0; i < ambience_spots[k].count; ++i)
+        if (breach)
+        {
+            game_vent vents[32];
+            int count = Game_Vents(vents, 32);
+            for (int i = 0; i < count; ++i)
+            {
+                const game_vent *g = &vents[i];
+                float dx = g->x - lx, dy = g->y - ly, dz = g->z - lz, d = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (d >= r->range) continue;
+                float rush = fminf(g->speed / 110, 1);   /* dies away fast as the pressure behind it goes */
+                float v = 1.5f * rush * rush * fminf(g->width / 48, 1.2f) * fade(d, r)
+                        * fminf(air_here, Game_Air(g->sector));
+                if (v < 1e-4f) continue;
+                float sep = 128 - 96 * sinf(atan2f(dy, dx) - facing) * fminf(hypotf(dx, dy) / 64, 1);
+                sum2[0] += v * v; pan[0] += v * v * sep; dull[0] += v * v * logf(20000);
+            }
+        }
+        for (int i = 0; i < (breach ? 0 : ambience_spots[k].count); ++i)
         {
             spot_t *s = &ambience_spots[k].spot[i];
             /* Only on glass, and not once it has broken. */
@@ -137,7 +192,8 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             if (fresh) { s->muffle = target; s->cutoff = cutoff; }
             else { s->muffle += (target - s->muffle) * ease; s->cutoff *= powf(cutoff / s->cutoff, ease); }
             s->heard = gametic;
-            float v = fminf(sqrtf(s->size / r->full), 1.5f) * s->muffle;
+            /* Through no more air than either end has (Phobos: none under the sky). */
+            float v = fminf(sqrtf(s->size / r->full), 1.5f) * s->muffle * fminf(air_here, Game_Air(s->sector));
             if (k == AMBIENT_LAMP)
             {
                 v *= (living || s->standing ? 1 : STEADY_LAMP) * lit;
@@ -151,8 +207,9 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             /* Panned as DMX pans, toward where it comes in; centered when it is all around. */
             float ax = fx - lx, ay = fy - ly;
             float sep = 128 - 96 * sinf(atan2f(ay, ax) - facing) * fminf(hypotf(ax, ay) / 64, 1);
-            /* The wind is one field the openings add up into, not separate emitters. */
-            int l = k == AMBIENT_WIND || k == AMBIENT_RAIN ? 0 : i % AMBIENCE_LAYERS;
+            /* The wind is one field the openings add up into, not separate
+               emitters; the rain, and its tapping on the panes, the same. */
+            int l = Ambient_Stepped(k) ? 0 : i % AMBIENCE_LAYERS;
             sum2[l] += v * v; pan[l] += v * v * sep; dull[l] += v * v * logf(s->cutoff);
         }
         /* The cap is on the kind as a whole: more layers make it fuller, not louder. */
@@ -176,10 +233,11 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             voices[k][l] = (ambience_voice_t){ gain * fminf(1, (254 - sep) / 127), gain * fminf(1, sep / 127),
                                                0.8f * gain, expf(dull[l] / sum2[l]) };
         }
+        if (Ambient_Stepped(k)) step_between(voices[k], strength);
     }
     /* The room tone runs all the time, very quietly; whatever else is heard
        covers it, so silence bottoms out instead of a sound waking up. */
-    float tone = level * Ambient_Level(AMBIENT_ROOM);
+    float tone = level * Ambient_Level(AMBIENT_ROOM) * air_here;
     voices[AMBIENT_ROOM][0] = (ambience_voice_t){ tone, tone, 0.8f * tone, 20000 };
     if (strike->due) strike->level = strike_level * level;
 }
@@ -200,3 +258,6 @@ void Ambience_Silence(float x, float y, float z, float radius)
 void Ambience_Glaze(int line, int whole) { Acoustic_Glass(line, whole); }
 void Ambience_ShowGlass(int shown) { Acoustic_ShowGlass(shown); }
 void Ambience_Rain(float amount) { raining = amount < 0 ? 0 : amount > 1 ? 1 : amount; }
+void Ambience_Snow(float amount) { snowing = amount < 0 ? 0 : amount > 1 ? 1 : amount; }
+void Ambience_Wind(float amount) { winding = amount < 0 ? 0 : amount > 1 ? 1 : amount; }
+void Ambience_Draft(float amount) { drafting = amount > 0 ? amount < 1 ? amount : 1 : 0; }

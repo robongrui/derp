@@ -12,6 +12,7 @@ static StaticSample traceStatic(float x,float y,float z,int sector,const BakeMap
     float groups[flickerGroups]={},window[3]={},windowTowards[3]={},windowAmount=0;
     int points=(int)bakeSources.size();
     for(int n:bakeGridLights(x,y)) {
+        if(shutWindowLamp(map,n))continue;
         float towards[3];
         const float *color=n<points?bakeSources[n].color:bakeAreas[n-points].color;
         bool isWindow=n>=firstWindowSource&&n<points;

@@ -15,6 +15,7 @@ void I_InitGraphics(void) { }
 void I_ShutdownGraphics(void) { }
 void I_StartFrame(void) { }
 void I_StartTic(void) { }
+boolean I_CapsLock(void) { return false; }
 void I_UpdateNoBlit(void) { }
 void I_FinishUpdate(void) { }
 void I_SetPalette(byte *palette) { (void)palette; }
@@ -54,12 +55,14 @@ int I_StartSound(int id, int vol, int sep, int pitch, int priority)
     return 0;
 }
 void I_StopSound(int handle) { (void)handle; }
+int I_SoundLump(const char *name) { (void)name; return 0; }
 int I_SoundIsPlaying(int handle) { (void)handle; return 0; }
 void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
 {
     (void)handle; (void)vol; (void)sep; (void)pitch;
 }
 void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z) { (void)handle; (void)x; (void)y; (void)z; }
+void I_SoundOwn(void) { }
 fixed_t I_SoundReach(int id) { (void)id; return FRACUNIT; }
 void I_InitMusic(void) { }
 void I_ShutdownMusic(void) { }

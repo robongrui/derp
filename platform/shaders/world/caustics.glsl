@@ -61,6 +61,8 @@ float causticSteps(float v) {return round(saturate(v*2.0-0.15)*4.0)/4.0;}
 // brightest lines also catch a little of it.
 // Sprites take the same light on their billboard (they face the eye), fading
 // with height above the water rather than above a sector floor.
+#include "pool_ice.glsl"
+float waterIce(vec2 t);   // world/water_ice.glsl, later in world.frag
 vec3 caustics(vec3 world,vec3 normal,uint sector,bool sprite) {
     uint flags=uint(c.flashlightTint.w);
     bool ceiling=normal.z<-0.5;
@@ -120,5 +122,8 @@ vec3 caustics(vec3 world,vec3 normal,uint sector,bool sprite) {
     float room=drive>=0.004?causticSteps(causticPatternAt(coord,max(world.z-water.y,0.0),flags)):0.0;
     float lit=flashing?causticSteps(causticPatternAt(coord,leg,flags)):0.0;
     vec3 glint=lit>=1.0?min(flash,vec3(3.0))*0.35:vec3(0);
-    return (tint*(room*min(drive,3.0)+lit*min(flash,vec3(3.0)))+glint)*proximity*fade*0.45;
+    // A pool icing over (Phobos) stills its light as the sheet closes, and so does water
+    // frozen in the cold (scene3d/water_ice.cpp) under it: the floes dim it, the sheet ends it.
+    float iced=max(poolIce(cell.r|((cell.g&127u)<<8)).x,smoothstep(0.35,0.75,waterIce(ceiling||sprite?world.xy:world.xy+normal.xy*12.0)));
+    return (tint*(room*min(drive,3.0)+lit*min(flash,vec3(3.0)))+glint)*proximity*fade*0.45*(1.0-iced);
 }

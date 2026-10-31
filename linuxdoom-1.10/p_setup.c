@@ -44,10 +44,13 @@ rcsid[] = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_phobos.h"
+#include "p_library.h"
 
 #include "s_sound.h"
 
 #include "doomstat.h"
+#include "../platform/derp_info.h"
 
 
 void	P_SpawnMapThing (mapthing_t*	mthing);
@@ -855,7 +858,7 @@ P_SetupLevel
     W_Reload ();			
 	   
     // find map name
-    if ( gamemode == commercial)
+    if ( gamemode == commercial && episode != 0)
     {
 	if (map<10)
 	    sprintf (lumpname,"map0%i", map);
@@ -872,6 +875,9 @@ P_SetupLevel
     }
 
     lumpnum = W_GetNumForName (lumpname);
+    // What the map's author asks of DERP (platform/derp_info.h), before
+    // anything below reads it (P_Phobos).
+    DerpInfo_Level (lumpname);
 	
     leveltime = 0;
 	
@@ -927,6 +933,8 @@ P_SetupLevel
 	
     // set up world state
     P_SpawnSpecials ();
+    P_AirLevel ();
+    P_LibraryLevel ();
 	
     // build subsector connect matrix
     //	UNUSED P_ConnectSubsectors ();

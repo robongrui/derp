@@ -10,8 +10,13 @@
 #include <vector>
 #include "flash_lighting.h"
 
+// A box of a sector's lines (buildBakeTrees): count 0 has children at first
+// and first+1, else it holds count entries of the sector's tree order from first.
+struct BakeNode { float low[2],high[2]; int first,count; };
 // things: decorations standing in (or reaching into) the sector; see BakeThing.
-struct BakeSector { float floor,ceiling; bool sky; std::vector<int> lines; std::vector<int> things={}; };
+// tree, order: the lines in boxes (positions in lines), for sectors with many.
+struct BakeSector { float floor,ceiling; bool sky; std::vector<int> lines; std::vector<int> things={};
+                    std::vector<BakeNode> tree={}; std::vector<int> order={}; };
 // A middle texture on a two-sided line, which blocks rays where it is opaque:
 // palette index/coverage pairs, row-major. It repeats along the line (texture
 // u = u + direction*distance from a) and spans bottom..top once, with row
@@ -53,6 +58,57 @@ inline bool thingBlocks(const BakeThing &thing,float x,float y,float z,const flo
     if(!thing.pixels[2*((size_t)row*thing.width+column)+1])return false;
     at=t;return true;
 }
+// Big sectors (SIGIL's have hundreds of lines) put their lines in a tree of
+// boxes, so a ray tests only the lines near its path. Call after the lines
+// are listed; heights may change later, the tree is 2D.
+constexpr size_t bakeTreeLines=16;
+inline void buildBakeTree(const BakeMap &map,BakeSector &s) {
+    s.tree.clear();s.order.clear();
+    if(s.lines.size()<=bakeTreeLines)return;
+    for(size_t n=0;n<s.lines.size();++n)s.order.push_back((int)n);
+    auto center=[&](int position,int axis) {
+        const BakeLine &l=map.lines[s.lines[position]];
+        return axis?l.ay+l.by:l.ax+l.bx;
+    };
+    // Padded, so a crossing found on a line always lies inside its box.
+    auto bound=[&](BakeNode &node) {
+        node.low[0]=node.low[1]=INFINITY;node.high[0]=node.high[1]=-INFINITY;
+        for(int k=node.first;k<node.first+node.count;++k) {
+            const BakeLine &l=map.lines[s.lines[s.order[k]]];
+            node.low[0]=std::min({node.low[0],l.ax,l.bx});node.high[0]=std::max({node.high[0],l.ax,l.bx});
+            node.low[1]=std::min({node.low[1],l.ay,l.by});node.high[1]=std::max({node.high[1],l.ay,l.by});
+        }
+        for(int axis=0;axis<2;++axis) {node.low[axis]-=0.05f;node.high[axis]+=0.05f;}
+    };
+    s.tree.push_back({{0,0},{0,0},0,(int)s.order.size()});
+    for(size_t n=0;n<s.tree.size();++n) {
+        bound(s.tree[n]);
+        BakeNode node=s.tree[n];
+        if(node.count<=4)continue;
+        int axis=node.high[0]-node.low[0]>=node.high[1]-node.low[1]?0:1,middle=node.first+node.count/2;
+        std::nth_element(s.order.begin()+node.first,s.order.begin()+middle,s.order.begin()+node.first+node.count,
+                         [&](int a,int b){return center(a,axis)<center(b,axis);});
+        s.tree[n].first=(int)s.tree.size();s.tree[n].count=0;
+        s.tree.push_back({{0,0},{0,0},node.first,middle-node.first});
+        s.tree.push_back({{0,0},{0,0},middle,node.first+node.count-middle});
+    }
+}
+inline void buildBakeTrees(BakeMap &map) {for(auto &s:map.sectors)buildBakeTree(map,s);}
+// Where a 2D ray (x,y)+direction*t is inside the box, as t from near to far;
+// false when it misses.
+inline bool bakeNodeSpan(const BakeNode &node,float x,float y,const float direction[3],float &near,float &far) {
+    near=-INFINITY;far=INFINITY;
+    const float origin[2]={x,y};
+    for(int axis=0;axis<2;++axis) {
+        if(std::fabs(direction[axis])<1e-12f) {
+            if(origin[axis]<node.low[axis]||origin[axis]>node.high[axis])return false;
+            continue;
+        }
+        float a=(node.low[axis]-origin[axis])/direction[axis],b=(node.high[axis]-origin[axis])/direction[axis];
+        near=std::max(near,std::min(a,b));far=std::min(far,std::max(a,b));
+    }
+    return near<=far;
+}
 // How a ray treats sky ceilings. Doom draws nothing above one, so a sun ray
 // escapes through it, and a light ray passes over it as if it were open air.
 enum class SkyCeiling { escape, open };
@@ -60,27 +116,54 @@ enum class SkyCeiling { escape, open };
 // length without hitting a wall, floor or ceiling, or (escape) leaves through
 // a sky ceiling. Upper walls under a non-sky ceiling block; crossing above a
 // sky neighbor's ceiling from a sky sector does not. A blocked ray reports
-// what stopped it in hit.
-inline bool traceRay(const BakeMap &map,int sector,float x,float y,float z,const float direction[3],float length,SkyCeiling sky,BakeHit *hit=nullptr) {
+// what stopped it in hit. roofless: sectors whose ceiling it takes for sky
+// as well (the weather's ground bake: a porch's roof, so the ground under
+// it is traced as the open ground beside it is).
+inline bool traceRay(const BakeMap &map,int sector,float x,float y,float z,const float direction[3],float length,SkyCeiling sky,BakeHit *hit=nullptr,
+                     const std::vector<char> *roofless=nullptr) {
     float t=0;int previous=-1;
     auto stop=[&](BakeHit::Kind kind,float at,int line,int part) {
         if(hit) *hit={kind,sector,line,part,x+direction[0]*at,y+direction[1]*at,z+direction[2]*at};
         return false;
     };
+    auto skyOver=[&](int index){return map.sectors[index].sky||(roofless&&(size_t)index<roofless->size()&&(*roofless)[index]);};
     for(int step=0;step<256&&sector>=0;++step) {
         const BakeSector &s=map.sectors[sector];
-        bool openTop=s.sky&&sky==SkyCeiling::open;
-        float exit=INFINITY,best=INFINITY,along=0;int crossed=-1;
+        bool sSky=skyOver(sector);
+        bool openTop=sSky&&sky==SkyCeiling::open;
+        float exit=INFINITY,best=INFINITY,along=0;int crossed=-1,first=INT32_MAX;
         if(direction[2]>0&&!openTop) exit=(s.ceiling-z)/direction[2];
         if(direction[2]<0) exit=(s.floor-z)/direction[2];
-        for(int index:s.lines) {
-            if(index==previous)continue;
+        // The nearest crossing ahead; on a tie the line listed first, so
+        // the tree finds the line the plain list would.
+        auto test=[&](int position) {
+            int index=s.lines[position];
+            if(index==previous)return;
             const BakeLine &line=map.lines[index];
             float ex=line.bx-line.ax,ey=line.by-line.ay,ox=line.ax-x,oy=line.ay-y;
             float det=direction[0]*ey-direction[1]*ex;
-            if(std::fabs(det)<1e-9f)continue;
+            if(std::fabs(det)<1e-9f)return;
             float crossing=(ox*ey-oy*ex)/det,u=(ox*direction[1]-oy*direction[0])/det;
-            if(crossing>t+1e-4f&&crossing<best&&u>=0&&u<=1){best=crossing;along=u;crossed=index;}
+            if(crossing>t+1e-4f&&(crossing<best||(crossing==best&&position<first))&&u>=0&&u<=1)
+                {best=crossing;along=u;crossed=index;first=position;}
+        };
+        if(s.tree.empty()) for(int n=0;n<(int)s.lines.size();++n) test(n);
+        else {
+            // Past the floor, ceiling or ray's end a crossing changes nothing.
+            float reach=std::min(exit,length);
+            int stack[64],depth=0;stack[depth++]=0;
+            while(depth) {
+                const BakeNode &node=s.tree[stack[--depth]];
+                float near,far;
+                if(!bakeNodeSpan(node,x,y,direction,near,far)||far<t||near>best||near>reach)continue;
+                if(node.count) {for(int k=node.first;k<node.first+node.count;++k)test(s.order[k]);continue;}
+                // Nearer child last, so it is searched first.
+                float a,b,an,bn;
+                bool hitA=bakeNodeSpan(s.tree[node.first],x,y,direction,an,a),hitB=bakeNodeSpan(s.tree[node.first+1],x,y,direction,bn,b);
+                if(!hitA&&!hitB)continue;
+                bool aFirst=!hitB||(hitA&&an<=bn);
+                stack[depth++]=aFirst?node.first+1:node.first;stack[depth++]=aFirst?node.first:node.first+1;
+            }
         }
         float nearest=std::min({exit,best,length}),hitThing=INFINITY,at;
         for(int index:s.things)
@@ -88,7 +171,7 @@ inline bool traceRay(const BakeMap &map,int sector,float x,float y,float z,const
         if(hitThing<INFINITY)return stop(BakeHit::thing,hitThing,-1,0);
         if(length<=exit&&length<=best)return true;
         if(exit<=best) {
-            if(direction[2]>0&&s.sky&&sky==SkyCeiling::escape)return true;
+            if(direction[2]>0&&sSky&&sky==SkyCeiling::escape)return true;
             return stop(direction[2]>0?BakeHit::ceiling:BakeHit::floor,std::max(exit,t),-1,0);
         }
         const BakeLine &line=map.lines[crossed];
@@ -98,7 +181,7 @@ inline bool traceRay(const BakeMap &map,int sector,float x,float y,float z,const
         float height=z+direction[2]*best;
         if(height<n.floor)return stop(BakeHit::wall,best,crossed,2);
         if(height>n.ceiling) {
-            if(!(s.sky&&n.sky))return stop(BakeHit::wall,best,crossed,1);
+            if(!(sSky&&skyOver(next)))return stop(BakeHit::wall,best,crossed,1);
             if(sky==SkyCeiling::escape)return true;
         }
         if(maskBlocks(line,along,height))return stop(BakeHit::wall,best,crossed,0);

@@ -82,37 +82,70 @@ static void magma(float *out, int frames, int rate, rng_t *r)
 /* Gusts lull down to calm, the band of air wanders low..high, and whistle
    is how much it sings through a gap. It sings only now and then, and
    softly: a tone that keeps coming back grates. */
-static void wind(float *out, int frames, int rate, rng_t *r, float calm, float low, float high, float whistling)
+/* Wind as strong as strength (0.1 a light air, 0.5 a breeze, 1 a gale): a
+   light air swells slowly, low and soft, and never sings; harder, the gusts
+   come quicker, the air rises in pitch and whistles more. A breeze drops
+   deepest between its gusts; past it the wind never lets up, the lulls
+   grow shallower again, and a low roar runs on under it all, swelling with
+   the gusts and buffeting fast, a few times a second. */
+static void wind(float *out, int frames, int rate, rng_t *r, float strength)
 {
-    svf_t air = svf_make(500, 1.2f, rate), whistle = svf_make(800, 15, rate);
-    drift_t gust = drift_make(r, calm, 1.0f, 2.0f, 6.0f, rate);
-    drift_t pitch = drift_make(r, low, high, 1.5f, 4.0f, rate);
+    float roar = fmaxf(0, 2 * (strength - 0.5f)), quick = 1 / (0.5f + strength);
+    float calm = strength <= 0.5f ? fminf(0.15f + 0.5f * (0.5f - strength), 0.4f) : 0.15f + 0.35f * roar;
+    float low = 300 * (0.6f + 0.8f * strength), high = 900 * (0.4f + 1.2f * strength);
+    float whistling = fminf(0.8f * strength * strength, 0.5f), hiss = 0.4f * (0.5f + strength);
+    svf_t air = svf_make(500, 1.2f, rate), whistle = svf_make(800, 15, rate), body = svf_make(120, 0.7f, rate);
+    drift_t gust = drift_make(r, calm, 1.0f, 2.0f * quick, 6.0f * quick, rate);
+    drift_t pitch = drift_make(r, low, high, 1.5f * quick, 4.0f * quick, rate);
     drift_t sing = drift_make(r, -1.6f, 1.0f, 4.0f, 10.0f, rate);
+    /* (Made only past a breeze, so a breeze's take stays as it was.) */
+    drift_t buffet = roar > 0 ? drift_make(r, 1 - 0.35f * roar, 1.0f, 0.12f, 0.45f, rate) : (drift_t){ 0 };
     for (int n = 0; n < frames; ++n)
     {
         float g = drift_next(&gust, r), p = drift_next(&pitch, r), s = fmaxf(drift_next(&sing, r), 0);
         if (n % 64 == 0) { svf_tune(&air, p, 1.2f, rate); svf_tune(&whistle, 2 * p, 15, rate); }
         float noise = rng_noise(r);
         svf_run(&air, noise); svf_run(&whistle, noise);
-        out[n] += g * (0.4f * air.band + 0.25f * air.low + whistling * s * g * whistle.band);
+        float v = g * (hiss * air.band + 0.25f * air.low + whistling * s * g * whistle.band);
+        if (roar > 0)
+        {
+            float b = drift_next(&buffet, r);
+            svf_run(&body, noise);
+            v = b * (v + 0.9f * roar * (0.6f + 0.4f * g) * body.low);
+        }
+        out[n] += v;
     }
 }
 
-/* Rain: the hiss of countless drops, noise in the upper band swelling a
-   little with the gusts, a soft wash under it, and over it the patter of
-   single drops ticking on stone, now and then a heavier drip. */
-static void rain(float *out, int frames, int rate, rng_t *r)
+/* Rain as hard as strength (0.1 a drizzle, 1 a downpour): the hiss of
+   countless drops, noise in the upper band swelling a little with the
+   gusts, a soft wash under it, and over it the patter of single drops
+   ticking on stone, now and then a heavier drip. The lighter, the duller
+   and thinner the hiss and the fewer the ticks; a drizzle is mostly soft
+   drops pattering apart, a drip off something now and then. */
+static void rain(float *out, int frames, int rate, rng_t *r, float strength)
 {
-    svf_t hiss = svf_make(2600, 0.7f, rate), wash = svf_make(700, 0.6f, rate);
+    svf_t hiss = svf_make(1800 + 800 * strength, 0.7f, rate), wash = svf_make(700, 0.6f, rate);
+    svf_t soft = svf_make(1400 + 600 * strength, 0.7f, rate);
     drift_t swell = drift_make(r, 0.7f, 1.0f, 2.0f, 6.0f, rate);
+    float splat = 0, splat_keep = expf(-1.0f / (0.002f * rate)), pattering = 0.3f * (1 - strength);
+    float splats = (30 + 150 * strength) / rate;
     for (int n = 0; n < frames; ++n)
     {
         float noise = rng_noise(r), s = drift_next(&swell, r);
         svf_run(&hiss, noise); svf_run(&wash, noise);
-        out[n] += s * (0.22f * hiss.band + 0.1f * wash.low);
+        float v = s * (0.22f * strength * hiss.band + 0.1f * strength * strength * wash.low);
+        if (pattering > 0)
+        {
+            if (rng_unit(r) < splats) splat += rng_range(r, 0.3f, 1.0f);
+            splat *= splat_keep;
+            svf_run(&soft, rng_noise(r) * splat);
+            v += pattering * soft.band;
+        }
+        out[n] += v;
     }
-    ticks(out, frames, rate, r, 60, 0.25f, 2000, 5000);
-    ticks(out, frames, rate, r, 4, 0.5f, 600, 1800);
+    ticks(out, frames, rate, r, 60 * strength, 0.25f, 2000, 5000);
+    ticks(out, frames, rate, r, 4 * (0.5f + 0.5f * strength), 0.5f * (0.4f + 0.6f * strength), 600, 1800);
 }
 
 /* Rain on a window pane, heard from inside: hundreds of drops a second,
@@ -121,9 +154,12 @@ static void rain(float *out, int frames, int rate, rng_t *r)
    low and soft, a little bright spray on top. Now and then a fatter drop
    plips out of it; under it all the faint trickle of water running down.
    The patter thickens and thins as the gusts throw it. No single loud
-   tick, no knock behind it: that is gravel, not rain. */
-static void glass_rain(float *out, int frames, int rate, rng_t *r)
+   tick, no knock behind it: that is gravel, not rain. In a drizzle
+   (strength 0.1) the drops tap apart, a few dozen a second, and hardly
+   any water runs; in a downpour (1) they blur. */
+static void glass_rain(float *out, int frames, int rate, rng_t *r, float strength)
 {
+    float fines = 600 * powf(strength, 1.3f), fats = 5 * (0.4f + 0.6f * strength);
     svf_t patter = svf_make(1800, 0.7f, rate), body = svf_make(650, 0.6f, rate);
     svf_t plip = svf_make(1300, 2.0f, rate), trickle = svf_make(1100, 1.2f, rate);
     drift_t gust = drift_make(r, 0.45f, 1.0f, 1.5f, 4.0f, rate), run = drift_make(r, 0.4f, 1.0f, 2.0f, 6.0f, rate);
@@ -131,8 +167,8 @@ static void glass_rain(float *out, int frames, int rate, rng_t *r)
     for (int n = 0; n < frames; ++n)
     {
         float g = drift_next(&gust, r);
-        if (rng_unit(r) < 600.0f * g / rate) fine += rng_range(r, 0.3f, 1.0f);
-        if (rng_unit(r) < 5.0f * g / rate)
+        if (rng_unit(r) < fines * g / rate) fine += rng_range(r, 0.3f, 1.0f);
+        if (rng_unit(r) < fats * g / rate)
         {
             fat += rng_range(r, 0.6f, 1.0f);
             svf_tune(&plip, rng_range(r, 1000, 1700), 2.0f, rate);
@@ -141,7 +177,7 @@ static void glass_rain(float *out, int frames, int rate, rng_t *r)
         float splat = rng_noise(r) * fine, drop = rng_noise(r) * fat;
         svf_run(&patter, splat); svf_run(&body, splat); svf_run(&plip, drop);
         svf_run(&trickle, rng_noise(r));
-        out[n] += 0.16f * patter.band + 0.22f * body.low + 0.2f * plip.band + 0.04f * drift_next(&run, r) * trickle.band;
+        out[n] += 0.16f * patter.band + 0.22f * body.low + 0.2f * plip.band + 0.04f * strength * drift_next(&run, r) * trickle.band;
     }
 }
 
@@ -159,7 +195,7 @@ static void room(float *out, int frames, int rate, rng_t *r)
     }
 }
 
-void Fire_Render(int kind, unsigned seed, int rate, float *out, int frames)
+void Fire_Render(int kind, unsigned seed, int rate, float *out, int frames, float strength)
 {
     rng_t r = rng_seed(seed);
     switch (kind)
@@ -167,9 +203,9 @@ void Fire_Render(int kind, unsigned seed, int rate, float *out, int frames)
     case AMBIENT_LAVA: lava(out, frames, rate, &r); break;
     case AMBIENT_FIRE: fire(out, frames, rate, &r); break;
     case AMBIENT_MAGMA: magma(out, frames, rate, &r); break;
-    case AMBIENT_WIND: wind(out, frames, rate, &r, 0.15f, 300, 900, 0.2f); break;
-    case AMBIENT_RAIN: rain(out, frames, rate, &r); break;
-    case AMBIENT_GLASS_RAIN: glass_rain(out, frames, rate, &r); break;
+    case AMBIENT_WIND: wind(out, frames, rate, &r, strength); break;
+    case AMBIENT_RAIN: rain(out, frames, rate, &r, strength); break;
+    case AMBIENT_GLASS_RAIN: glass_rain(out, frames, rate, &r, strength); break;
     case AMBIENT_ROOM: room(out, frames, rate, &r); break;
     }
 }

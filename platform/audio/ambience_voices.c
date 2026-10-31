@@ -26,6 +26,7 @@ typedef struct {
     float to_left, to_right, to_send, to_cutoff;  /* where it goes */
     float low[2];
     int started;
+    int step, to_step;   /* wind and rain: the strength's take it plays, and the one it is to */
 } voice_t;
 static voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS];
 static voice_t computer_activity[AMBIENCE_LAYERS], computer_body;
@@ -47,6 +48,7 @@ void AmbienceVoices_Set(const ambience_voice_t targets[AMBIENT_KINDS][AMBIENCE_L
             const ambience_voice_t *t = &targets[k][l];
             v->to_left = t->left; v->to_right = t->right; v->to_send = t->send;
             if (t->cutoff > 0) v->to_cutoff = t->cutoff;
+            v->to_step = t->step;
             if (k == AMBIENT_COMPUTER) target(&computer_activity[l], t, COMPUTER_ACTIVITY_SHARE * COMPUTER_PLAYBACK_GAIN);
         }
 }
@@ -143,12 +145,20 @@ static void bus_run(int n)
         for (int l = 0; l < AMBIENCE_LAYERS; ++l)
         {
             voice_t *v = &voices[k][l];
-            const made_sample_t *loop = MadeBank_Loop(k, l);
+            /* Wind and rain: a layer takes up another strength's take only
+               once it has faded out (ambience.c plays each where it is silent
+               as the strength passes; a jump in strength fades it out first). */
+            int stepped = Ambient_Stepped(k), swapping = stepped && v->step != v->to_step;
+            if (swapping && v->left + v->right + v->send < 1e-3f) { v->step = v->to_step; v->started = 0; swapping = 0; }
+            const made_sample_t *loop = stepped ? MadeBank_StepLoop(k, v->step) : MadeBank_Loop(k, l);
             if (!loop) continue;
             /* Each starts somewhere else in its loop; muffling starts where it should be. */
             start(v, loop, k * 7919 + l * 3571);
+            float to[3] = { v->to_left, v->to_right, v->to_send };
+            if (swapping) v->to_left = v->to_right = v->to_send = 0;
             voice_run(v, loop, filled, n, k == AMBIENT_COMPUTER ? 1 - computer_blend : 1,
                                         k == AMBIENT_COMPUTER ? 1 - next_blend : 1);
+            if (swapping) { v->to_left = to[0]; v->to_right = to[1]; v->to_send = to[2]; }
         }
     if (computer_blend + next_blend > 0)
     {

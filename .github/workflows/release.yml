@@ -106,7 +106,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           FREEDOOM_DIR="$PWD/freedoom" sh scripts/package-macos.sh build/release dist
-          app="dist/Play DOOM.app"
+          app="dist/Play DERP.app"
           if [ -n "$MACOS_CERTIFICATE_P12" ]; then
             keychain="$RUNNER_TEMP/signing.keychain-db"
             keychain_password=$(uuidgen)

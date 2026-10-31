@@ -88,6 +88,9 @@ typedef enum
     BT_WEAPONMASK	= (8+16+32),
     BT_WEAPONSHIFT	= 3,
 
+    // Jump (Phobos only): push off the floor.
+    BT_JUMP		= 64,
+
     // Pause the game.
     BTS_PAUSE		= 1,
     // Save the game at each console.
@@ -97,6 +100,11 @@ typedef enum
     //  occupy the second byte of buttons.    
     BTS_SAVEMASK	= (4+8+16),
     BTS_SAVESHIFT 	= 2,
+
+    // Something taken at the library's kiosk (p_library.h KIOSK_*), the
+    // order in the low six bits; checked before pause and save.
+    BTS_KIOSK		= 64,
+    BTS_KIOSKMASK	= 63,
   
 } buttoncode_t;
 

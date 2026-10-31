@@ -8,6 +8,8 @@ extern "C" {
 }
 
 namespace doom3d {
+// Not where the map's lamps stand in for many alike (Game_WorldWraps).
+static bool shootable() {return settings.shootableLights&&!Game_WorldWraps();}
 // A fixture breaks as one: every glowing tile of the surface hit (its
 // joined planes, or its wall piece), and nothing else; the merged lights of
 // the bake that it shared with other fixtures keep the tiles still lit
@@ -246,7 +248,7 @@ static void shotSurface(const char *name,bool flat,const Image &image,float u,fl
 // from the side's first vertex; reach: how many texels from the hit its glow
 // test looks (a projectile's width).
 void shotWall(const line_t &line,int side,int section,float along,float x,float y,float z,int reach) {
-    if(!settings.shootableLights||line.sidenum[side]<0)return;
+    if(!shootable()||line.sidenum[side]<0)return;
     const side_t &s=sides[line.sidenum[side]];
     int texture=section==0?s.midtexture:section==1?s.toptexture:s.bottomtexture;
     if(texture<=0)return;
@@ -269,7 +271,7 @@ void shotWall(const line_t &line,int side,int section,float along,float x,float 
 // A free-aimed hitscan shot stopping on a floor or ceiling (planeImpact):
 // it may break tiles of the planes joined to the one it hit.
 void shotFlat(int sector,bool ceiling,float x,float y,float z,int reach) {
-    if(!settings.shootableLights)return;
+    if(!shootable())return;
     int pic=ceiling?sectors[sector].ceilingpic:sectors[sector].floorpic;
     if(pic==skyflatnum)return;
     int lump=firstflat+flattranslation[pic];
@@ -339,7 +341,7 @@ static void carryShot(float x,float y,float z,float dx,float dy,float slope,floa
 // and 8 down to 16 up of its line, evenly spread so it mostly leaves the
 // line, and leaning up as rounds sent down only meet the floor.
 void shotThrough(const mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t fdx,fixed_t fdy,int damage) {
-    if(!settings.shootableLights||!settings.killShotsCarry||gamestate!=GS_LEVEL||!target||target->player||
+    if(!shootable()||!settings.killShotsCarry||gamestate!=GS_LEVEL||!target||target->player||
        !(target->flags&MF_SHOOTABLE)||target->health<=0||damage<target->health)return;
     float dx=units(fdx),dy=units(fdy),length=std::hypot(dx,dy);
     if(length<1)return;
@@ -352,7 +354,7 @@ void shotThrough(const mobj_t *target,fixed_t fx,fixed_t fy,fixed_t fz,fixed_t f
 // screen with a tile within radius that it can see, and lampless wall pieces
 // of lamps and screens it faces within radius. Liquids glow on.
 void blastLights(float x,float y,float z,float radius) {
-    if(!settings.shootableLights||!settings.emissive||gamestate!=GS_LEVEL)return;
+    if(!shootable()||!settings.emissive||gamestate!=GS_LEVEL)return;
     int sector=int(R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector-sectors);
     bool rays=bakeMap.sectors.size()==(size_t)numsectors;
     std::vector<std::pair<float,SurfaceLight>> reached; // Nearest first.
@@ -431,7 +433,7 @@ static void projectileBurst(const mobj_t &thing,const Flight &flight) {
     carryShot(x,y,z,dx,dy,flight.slope,ahead,reach);
 }
 void watchShotLights() {
-    if(!settings.shootableLights||!settings.emissive||gamestate!=GS_LEVEL) {flights.clear();return;}
+    if(!shootable()||!settings.emissive||gamestate!=GS_LEVEL) {flights.clear();return;}
     for(auto &entry:flights)entry.second.seen=false;
     for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
         bool missile=thing->flags&MF_MISSILE;

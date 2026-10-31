@@ -7,15 +7,21 @@
    - Leaks (while it rains): a few rooms beside the open sky have a crack in
      the ceiling, damp round it, rain dripping through (weather.cpp) onto a
      small puddle below.
+   - Water splashes (wetSplash): where a plunge threw water out of its pool
+     (puddles.cpp), the floor and walls it came down on lie wet. They stay.
+   - Drafts (drafts.cpp): the trails the wind lays in through the buildings
+     and rime round cold openings, passed on as they are.
    The shader finds them in the sector buffer after the sector entries:
-   per sector its first record, how many, a seed; then the records, two
+   per sector its first record, how many (the drafts' trails stored last
+   and counted apart: others + 4096 trails), a seed; then the records, two
    entries each (kind, three numbers; four more). */
 #include "internal.h"
+#include "../rooms.h"
 
 namespace doom3d {
 namespace {
 // Record kinds, as world/wear.glsl reads them.
-enum { WEAR_STREAK=1,WEAR_WET=3,WEAR_CRACK=4,WEAR_PUDDLE=5 };
+enum { WEAR_STREAK=1,WEAR_WET=3,WEAR_CRACK=4,WEAR_PUDDLE=5,WEAR_FROST=6,WEAR_ICE_CRACK=7,WEAR_SPLASH=8 };
 struct Record { int sector; std::array<float,4> a,b; };
 unsigned wearLevelSerial=~0u,wearPaneSerial=~0u;
 bool built=false;
@@ -27,6 +33,11 @@ struct Inside { int pane,frame,inner,key;float sill,ax,ay,bx,by,depth;bool metal
 std::vector<Inside> insides;
 std::vector<CeilingLeak> leaks;
 bool leaksFound=false;
+// Water splashes: (WEAR_SPLASH, center), (radius, seed, -, amount). Every
+// texel of a sector reads all its records, so they are few: one close to
+// another of its sector grows into it, and the oldest go first.
+std::vector<Record> splashes;
+constexpr size_t maxSplashes=48;
 
 bool metalWall(int texture) {
     if(texture<=0)return false;
@@ -141,7 +152,7 @@ void findLeaks() {
 }
 
 bool wearOn() {
-    return worldPending&&levelSerial==r_levelserial&&built&&(settings.windowStreaks||settings.weather);
+    return worldPending&&levelSerial==r_levelserial&&built&&(settings.windowStreaks||settings.weather||Game_Phobos()||!splashes.empty());
 }
 }
 
@@ -149,14 +160,28 @@ bool wearOn() {
 // again whenever the panes are found anew.
 void watchWear() {
     if(gamestate!=GS_LEVEL||levelSerial!=r_levelserial)return;
-    if(wearLevelSerial!=r_levelserial) {wearLevelSerial=r_levelserial;built=true;wearPaneSerial=~0u;}
+    if(wearLevelSerial!=r_levelserial) {wearLevelSerial=r_levelserial;built=true;wearPaneSerial=~0u;splashes.clear();}
     if(wearPaneSerial!=windowPaneSerial()) {wearPaneSerial=windowPaneSerial();buildStreaks();leaksFound=false;}
-    if(!leaksFound)findLeaks();
+    if(!leaksFound&&falling()!=WEATHER_NONE)findLeaks();   // only rain drips through them
 }
 
+void wetSplash(int sector,float x,float y,float z,float radius) {
+    if(sector<0||sector>=numsectors||levelSerial!=r_levelserial)return;
+    for(Record &r:splashes) {
+        if(r.sector!=sector||std::abs(r.a[3]-z)>radius)continue;
+        float apart=std::hypot(r.a[1]-x,r.a[2]-y);
+        if(apart>(r.b[0]+radius)*0.5f)continue;
+        r.b[0]=std::min(48.0f,std::max(r.b[0],apart+radius)*1.05f);
+        return;
+    }
+    if(splashes.size()>=maxSplashes)splashes.erase(splashes.begin());
+    uint32_t seed=hash32((uint32_t)std::lround(x*7+y*13+z*3));
+    splashes.push_back({sector,{(float)WEAR_SPLASH,x,y,z},{radius,(float)(seed&0xffff),0,1}});
+}
 // Whether rain blown in through a broken window has soaked the floor at
 // (x, y) in a sector: well inside the wet patch in front of the window.
 bool rainSoaked(int sector,float x,float y) {
+    if(!weatherKind(falling()).wets)return false;
     for(const Inside &in:insides) {
         if(sector!=in.frame&&sector!=in.inner)continue;
         float soak=paneSoak(in.pane);
@@ -172,24 +197,34 @@ bool rainSoaked(int sector,float x,float y) {
 // The leaks while it rains.
 const std::vector<CeilingLeak> &ceilingLeaks() {
     static const std::vector<CeilingLeak> none;
-    return settings.weather&&rainNow>0.01f&&levelSerial==r_levelserial?leaks:none;
+    return settings.weather&&weatherNow(WEATHER_RAIN)>0.01f&&levelSerial==r_levelserial?leaks:none;
 }
 
-float wearBase() {return wearOn()?(float)numsectors:0.0f;}
+// After the sector entries and the fog bank's (fog.cpp).
+float wearBase() {return wearOn()?(float)(numsectors+fogBankCount()):0.0f;}
 
 // The records this frame, after the sector entries: the streaks, and the
 // insides of broken windows as wet as they have soaked.
 void appendWear(std::vector<std::array<float,4>> &info) {
-    if(!wearOn()||info.size()!=(size_t)numsectors)return;
+    if(!wearOn()||info.size()!=(size_t)(numsectors+fogBankCount()))return;
     std::vector<const Record*> all;
     std::vector<Record> dynamic;
-    if(settings.windowStreaks)for(const Record &r:streaks)all.push_back(&r);
+    // On Phobos it has never rained: no streaks, no soaked sills.
+    bool rained=!Game_Phobos();
+    if(settings.windowStreaks&&rained)for(const Record &r:streaks)all.push_back(&r);
+    for(const Record &r:splashes)all.push_back(&r);
+    const WeatherKind &kind=weatherKind(falling());
     for(const Inside &in:insides) {
+        if(!rained||(!kind.settles&&!kind.wets))break;   // dry ice leaves the sill as it was
         float soak=paneSoak(in.pane);
         if(soak<0.01f)continue;
-        if(settings.windowStreaks)dynamic.push_back({in.inner,{(float)WEAR_STREAK,(float)in.key,in.sill,(in.metal?-1.0f:1.0f)*soak},{in.ax,in.ay,in.bx,in.by}});
-        // The wet spreads out from the sill as it soaks, dark from the start.
-        for(int s:{in.frame,in.inner})dynamic.push_back({s,{(float)WEAR_WET,in.depth*(0.25f+0.75f*soak),0,std::min(1.0f,0.5f+soak)},{in.ax,in.ay,in.bx,in.by}});
+        // Weather that settles runs down no wall: it lies white instead (wear.glsl).
+        bool settles=weatherKind(falling()).settles;
+        if(settings.windowStreaks&&!settles)dynamic.push_back({in.inner,{(float)WEAR_STREAK,(float)in.key,in.sill,(in.metal?-1.0f:1.0f)*soak},{in.ax,in.ay,in.bx,in.by}});
+        // The wet spreads out from the sill as it soaks, dark from the start;
+        // snow whitens it as it settles.
+        float amount=settles?soak:std::min(1.0f,0.5f+soak);
+        for(int s:{in.frame,in.inner})dynamic.push_back({s,{(float)WEAR_WET,in.depth*(0.25f+0.75f*soak),0,amount},{in.ax,in.ay,in.bx,in.by}});
     }
     // Each leak: the crack (center, reach) and the puddle under it (center, radius).
     for(const CeilingLeak &l:ceilingLeaks()) {
@@ -197,16 +232,56 @@ void appendWear(std::vector<std::array<float,4>> &info) {
         dynamic.push_back({l.sector,{(float)WEAR_CRACK,l.x,l.y,14+6*hashUnit(1,0,l.seed)},{seed,0,0,0}});
         dynamic.push_back({l.sector,{(float)WEAR_PUDDLE,l.x,l.y,7+4*hashUnit(2,0,l.seed)},{seed,0,0,1}});
     }
+    // Phobos: frost round each breach (decompression.cpp), on both sides of the opening.
+    std::vector<BreachFrost> frosted;breachFrost(frosted);
+    for(const BreachFrost &f:frosted)for(int s:f.sectors)
+        if(s>=0&&sectors[s].ceilingpic!=skyflatnum)dynamic.push_back({s,{(float)WEAR_FROST,40+40*f.frost,0,f.frost},{f.ax,f.ay,f.bx,f.by}});
+    for(const IceCrack &k:iceCracksNow())
+        dynamic.push_back({k.sector,{(float)WEAR_ICE_CRACK,k.x,k.y,k.reach},{(float)(k.seed&0xffff),0,0,0}});
+    // The drafts' trails and the rime round cold openings (drafts.cpp).
+    std::vector<WearMark> drafts;draftMarks(drafts);
+    for(const WearMark &m:drafts)if(m.sector>=0&&m.sector<numsectors)dynamic.push_back({m.sector,m.a,m.b});
+    // What snow and rain lay at doorways opened during play (blown_in.cpp).
+    std::vector<WearMark> doors;blownInMarks(doors);
+    for(const WearMark &m:doors)if(m.sector>=0&&m.sector<numsectors)dynamic.push_back({m.sector,m.a,m.b});
+    // The craters blasts and the like dug in it indoors (disturbances.cpp).
+    std::vector<WearMark> craters;disturbanceMarks(craters);
+    for(const WearMark &m:craters)if(m.sector>=0&&m.sector<numsectors)dynamic.push_back({m.sector,m.a,m.b});
     for(const Record &r:dynamic)all.push_back(&r);
-    std::vector<int> counts(numsectors,0);
-    for(const Record *r:all)if(r->sector>=0&&r->sector<numsectors)++counts[r->sector];
+    // Per sector the others first, the drafts' trails (kind 9) last and
+    // counted apart (count + 4096 trails): only the floor reads them.
+    std::stable_partition(all.begin(),all.end(),[](const Record *r){return r->a[0]!=9;});
+    std::vector<int> counts(numsectors,0),trails(numsectors,0);
+    for(const Record *r:all)if(r->sector>=0&&r->sector<numsectors)++(r->a[0]==9?trails:counts)[r->sector];
+    // How open to the wind the ground is: out under the sky the sector's own
+    // (air_push.cpp's gustShare); under a roof in the open air (a porch, a
+    // doorless hall) the open ground's it opens onto, so the yard and the
+    // porch are one ground, the same ripples and gusts across the roof's line.
+    static std::vector<float> groundOpen;
+    static unsigned groundSerial=~0u;
+    if(groundSerial!=r_levelserial||groundOpen.size()!=(size_t)numsectors) {
+        groundSerial=r_levelserial;
+        groundOpen.assign(numsectors,-1);
+        for(int s=0;s<numsectors;++s)if(underSky(s))groundOpen[s]=gustShare(s);
+        for(int pass=0;pass<4;++pass)
+            for(int n=0;n<numlines;++n) {
+                const line_t &line=lines[n];
+                if(!line.frontsector||!line.backsector)continue;
+                int f=int(line.frontsector-sectors),k=int(line.backsector-sectors);
+                for(auto [a,b]:{std::pair{f,k},std::pair{k,f}})
+                    if(groundOpen[a]<0&&groundOpen[b]>=0&&Rooms_Outside(a))groundOpen[a]=groundOpen[b];
+            }
+        for(float &o:groundOpen)o=std::max(o,0.0f);
+    }
     size_t base=info.size();
     info.resize(base+numsectors);
     size_t first=base+numsectors;
     std::vector<size_t> next(numsectors);
     for(int s=0;s<numsectors;++s) {
-        info[base+s]={(float)first,(float)counts[s],0,(float)(hash32((uint32_t)s*2654435761u)&0xffff)};
-        next[s]=first;first+=2*counts[s];
+        // w: seed (bits 0-15), how open to the wind in fifteenths (16-19), the open air (20, rooms.c).
+        info[base+s]={(float)first,(float)(std::min(counts[s],4095)+4096*trails[s]),poolIceCode(s),
+                      (float)((hash32((uint32_t)s*2654435761u)&0xffff)+65536*std::lround(groundOpen[s]*15)+(Rooms_Outside(s)?1048576:0))};
+        next[s]=first;first+=2*(counts[s]+trails[s]);
     }
     info.resize(first);
     for(const Record *r:all) {
@@ -215,5 +290,5 @@ void appendWear(std::vector<std::array<float,4>> &info) {
     }
 }
 
-void wearShutdown() {streaks.clear();insides.clear();leaks.clear();leaksFound=false;built=false;wearLevelSerial=wearPaneSerial=~0u;}
+void wearShutdown() {streaks.clear();insides.clear();leaks.clear();splashes.clear();leaksFound=false;built=false;wearLevelSerial=wearPaneSerial=~0u;}
 } // namespace doom3d

@@ -111,6 +111,8 @@ extern void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_
 // Renderer-only hitscan blood: x,y,z is the blood spot, dx,dy the shot direction,
 // slope its vertical rise per horizontal unit (to locate the hit on the sprite).
 extern void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, fixed_t slope, int damage);
+// Renderer only: the game's airborne blood just spawned, and whose it is.
+extern void (*R_BloodSpilled)(mobj_t *blood, mobj_t *bleeder);
 // Every damage event, before it is applied (renderer only: who hit what, with what).
 extern void (*R_DamageHit)(mobj_t *target, mobj_t *inflictor, mobj_t *source, int damage);
 // Renderer-only hitscan floor or ceiling impact (la_freeaim shots); true when
@@ -119,6 +121,12 @@ extern boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fi
 // Renderer-only: a hitscan shot passes through a two-sided line's opening at
 // x,y,z, travelling along dx,dy (window glass breaks).
 extern void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+// A body struck the glass on line hard enough to break it (Phobos, P_Strike): it shatters at
+// x, y, z, the body going dx, dy.
+extern void (*R_GlassStruck)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+// DERP: whether weather blowing in at a broken window reaches mo (the
+// renderer knows the panes and the wind); NULL: only the open sky does.
+extern int (*R_RainedIn)(mobj_t *mo);
 extern boolean r_uncapped;
 extern unsigned r_levelserial;
 extern fixed_t		viewx;

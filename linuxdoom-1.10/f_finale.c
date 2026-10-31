@@ -40,6 +40,7 @@ rcsid[] = "$Id: f_finale.c,v 1.5 1997/02/03 21:26:34 b1 Exp $";
 #include "dstrings.h"
 #include "d_deh.h"
 #include "sounds.h"
+#include "f_library.h"
 
 #include "doomstat.h"
 #include "r_state.h"
@@ -104,6 +105,7 @@ static char* F_MissionText (char* doom2, char* plutonia, char* tnt)
 //
 void F_StartFinale (void)
 {
+    F_StopLibraryEnding ();
     gameaction = ga_nothing;
     gamestate = GS_FINALE;
     viewactive = false;
@@ -216,6 +218,9 @@ boolean F_Responder (event_t *event)
 void F_Ticker (void)
 {
     int		i;
+
+    if (F_LibraryTicker ())
+	return;
     
     // check for skipping
     if ( (gamemode == commercial)
@@ -699,6 +704,7 @@ void F_BunnyScroll (void)
 	S_StartSound (NULL, sfx_pistol);
 	laststage = stage;
     }
+    // scp_7179_b is real
 	
     sprintf (name,"END%i",stage);
     V_DrawPatch ((SCREENWIDTH-13*8)/2, (SCREENHEIGHT-8*8)/2,0, W_CacheLumpName (name,PU_CACHE));
@@ -710,6 +716,8 @@ void F_BunnyScroll (void)
 //
 void F_Drawer (void)
 {
+    if (F_LibraryDrawer ())
+	return;
     if (finalestage == 2)
     {
 	F_CastDrawer ();

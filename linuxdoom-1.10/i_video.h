@@ -44,6 +44,9 @@ void I_ShutdownGraphics(void);
 void I_SetPalette (byte* palette);
 
 void I_UpdateNoBlit (void);
+
+// Caps Lock is on: always run.
+boolean I_CapsLock (void);
 void I_FinishUpdate (void);
 
 // Wait for vertical retrace or pause a bit.

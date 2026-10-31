@@ -196,7 +196,7 @@ bool bodyPose(const mobj_t &thing,float fraction,BodyPose &pose) {
     if(found==impulses.end())return false;
     bool any=false;
     for(const Impulse &p:found->second) {
-        float t=leveltime+fraction-1-p.start;
+        float t=(float)(leveltime-1-p.start)+fraction;
         if(t<0||t>p.duration)continue;
         float fade=1;
         if(p.death) {float a=p.duration*0.6f,s=std::clamp((t-a)/std::max(1.0f,p.duration-a),0.0f,1.0f);fade=1-s*s*(3-2*s);}
@@ -236,7 +236,7 @@ bool bodyPose(const mobj_t &thing,float fraction,BodyPose &pose) {
 // body bent that way looks from here; tipping the card itself would show it
 // is flat, so it tips only a sliver. Buckling legs drop rows too.
 void bodyQuads(std::vector<Vertex> &out,const BodyPose &pose,const Vertex &base,float x,float y,float feet,float rx,float ry,
-               float left,float right,int imageTop,int rows,float u0,float u1,const std::vector<byte> *holes) {
+               float left,float right,int imageTop,int rows,float u0,float u1,const std::vector<byte> *holes,int tint) {
     float fx=-ry,fy=rx;
     float side1=pose.lean[0]*rx+pose.lean[1]*ry,depth1=pose.lean[0]*fx+pose.lean[1]*fy;
     float side2=side1+pose.whip[0]*rx+pose.whip[1]*ry,depth2=depth1+pose.whip[0]*fx+pose.whip[1]*fy;
@@ -298,7 +298,7 @@ void bodyQuads(std::vector<Vertex> &out,const BodyPose &pose,const Vertex &base,
             float rowTop=runTop-(r-runStart);
             maskedRow(out,*holes,width,r,flip,[&](int edge,bool low) {
                 return corner(low?rowTop-1:rowTop,flip?right-edge:left+edge,runShift,(float)edge,(float)(r+(low?1:0)));
-            });
+            },tint);
         }
         runStart=-1;
     };

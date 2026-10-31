@@ -12,7 +12,7 @@ freedoom_dir=$3
 stage="$4/DERP-$platform"
 
 program=
-for candidate in "$build_dir/Release/doom.exe" "$build_dir/doom.exe" "$build_dir/doom"; do
+for candidate in "$build_dir/Release/Play DERP.exe" "$build_dir/Play DERP.exe" "$build_dir/play-derp"; do
     if [ -f "$candidate" ]; then
         program=$candidate
         break
@@ -39,7 +39,15 @@ if [ -z "$heretic" ]; then
     exit 1
 fi
 cp "$heretic" "$stage/"
+# Windows programs carry their icon; on Linux the window icon sits beside the game.
+if [ "$platform" = linux ]; then
+    cp "$(dirname -- "$program")/play-derp.png" "$stage/"
+fi
 cp "$freedoom_dir/freedoom1.wad" "$stage/default.wad"
+# Episode 0.5's map, generated at build time beside the game.
+if [ -f "$(dirname -- "$program")/library.wad" ]; then
+    cp "$(dirname -- "$program")/library.wad" "$stage/"
+fi
 cp "$project_dir/README.md" "$project_dir/PLAY.md" "$stage/"
 cp "$project_dir/LICENSE.TXT" "$stage/licenses/GPL-3.txt"
 cp "$project_dir/NOTICE.txt" "$stage/licenses/NOTICE.txt"

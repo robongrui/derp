@@ -1,4 +1,5 @@
 // Damp shores above liquids.
+#include "pool_ice.glsl"
 // Part of world.frag, which declares the resources these read.
 // Shorelines (FEATURE_DAMP_SHORES). Liquids wet what they touch: walls and banks
 // above the waterline turn darker up to a ragged line, read at texel
@@ -42,10 +43,19 @@ float dampness(float height,float across,vec2 wander,vec2 texel,float luma) {
 }
 // Walls read the edge just off their visible side, floors at their texel's
 // center. A floor at its liquid's height on the liquid's side of the edge is
-// the liquid itself and stays as it is.
-float shoreWet(vec3 world,vec3 normal,uint sector,float luma,out vec3 tint) {
-    tint=vec3(1);
+// the liquid itself and stays as it is. ice (Phobos, poolIce): the liquid's ice
+// and glow left; a pool freezing over frosts its rim along the same ragged line,
+// thin as the sheet forms and creeping up as the glow fades (world.frag whitens it).
+// Walls go by their texture's column u and its direction along the wall uDir: a column
+// from the derived normal (dot with the map position) is off by units at E1M1's
+// coordinates and scatters the line into speckle. Everything at the texel's center,
+// so the line steps in whole Doom pixels however a freezing pool's short reach
+// (below) magnifies it.
+float shoreWet(vec3 world,vec3 normal,float u,vec2 uDir,uint sector,float luma,out vec3 tint,out vec2 ice) {
+    tint=vec3(1);ice=vec2(0.0,1.0);
     bool wall=normal.z<=0.5;
+    float along=floor(u);
+    if(wall) world=vec3(world.xy+uDir*(along+0.5-u),floor(world.z)+0.5);
     vec2 at=wall?world.xy+normal.xy*0.25:floor(world.xy)+0.5;
     uint liquid;
     // Hot liquids (tint 0) leave no damp.
@@ -54,9 +64,10 @@ float shoreWet(vec3 world,vec3 normal,uint sector,float luma,out vec3 tint) {
     if(!wall&&d>0.0&&abs(sectorInfo[sector].y-water)<0.5) return 0.0;
     float height=(wall?world.z:sectorInfo[sector].y)-water;
     if(height<-0.5) return 0.0;
-    float along=floor(dot(world.xy,vec2(-normal.y,normal.x)));
     vec2 wander=wall?vec2(along,0):floor(world.xy),texel=wall?vec2(along,floor(world.z)):floor(world.xy);
-    return dampness(max(height,0.0),abs(d),wander,texel,luma);
+    ice=poolIce(liquid);
+    float reach=ice.x>0.0?max(ice.x*(0.25+1.25*(1.0-ice.y)),0.01):1.0;
+    return dampness(max(height,0.0)/reach,abs(d)/reach,wander,texel,luma);
 }
 // Glowing liquid edges (FEATURE_GLOW_EDGES). Vanilla walls take one texture,
 // so only walls a mapper gave an edge texture (NUKE24) show the strip of
@@ -66,7 +77,7 @@ float shoreWet(vec3 world,vec3 normal,uint sector,float luma,out vec3 tint) {
 // up from the liquid's surface, painted over the wall where the art is
 // liquid. Returns the paint (0 none) with the strip's color and glow.
 // Only walls standing at the shore itself, not behind a bank.
-float edgeStrip(vec3 world,vec3 normal,out vec3 paint,out float glow) {
+float edgeStrip(vec3 world,vec3 normal,float u,out vec3 paint,out float glow) {
     paint=vec3(0);glow=0.0;
     vec2 at=world.xy+normal.xy*0.25;
     uvec4 v=shoreCell(at);
@@ -77,10 +88,16 @@ float edgeStrip(vec3 world,vec3 normal,out vec3 paint,out float glow) {
     float height=world.z-water;
     int row=int(floor(height));
     if(rows==0||row<0||row>=rows) return 0.0;
-    int x=int(floor(dot(world.xy,vec2(-normal.y,normal.x))))&63;
+    int x=int(floor(u))&63;   // the wall's own column (see shoreWet)
     float index=texelFetch(causticPattern,ivec2(x,base+1+row),0).r;
     float amount=texelFetch(causticPattern,ivec2(x,base+1+rows+row),0).r;
     glow=texelFetch(causticPattern,ivec2(x,base+1+2*rows+row),0).r;
     paint=texelFetch(palette,ivec2(int(round(index*255.0)),0),0).rgb;
-    return amount;
+    // Its pool freezing over (Phobos): the strip is the slime itself, so it goes with the
+    // pool's glow, paint and light, gone as the ice turns white; the rim frost (shoreWet)
+    // takes the wall.
+    vec2 ice=poolIce(v.g|((v.b&63u)<<8));
+    float left=mix(1.0,ice.y,ice.x);
+    glow*=left;
+    return amount*left;
 }

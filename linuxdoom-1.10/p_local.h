@@ -89,6 +89,7 @@ void P_DropWeapon (player_t* player);
 //
 void	P_PlayerThink (player_t* player);
 boolean P_UseResponsiveMovement (void);
+double	P_DiagonalKeep (player_t* player);
 boolean P_DebugAllowed (void);
 boolean P_Flying (void);
 boolean P_Unseen (mobj_t* mo);
@@ -102,6 +103,9 @@ extern boolean freeaim;
 // With freeaim: a shot autoaims at a monster in front as in vanilla, and
 // follows tourpitch only with none.
 extern boolean classicaim;
+// The player's shots and missiles may follow the view: freeaim, and no demo
+// or netgame (those keep vanilla aiming).
+boolean P_LookAims (mobj_t* mo);
 // The next P_LineAttack is such a shot: it starts at the eye and also stops
 // on floors and ceilings. P_LineAttack clears it.
 extern boolean la_freeaim;
@@ -141,7 +145,7 @@ boolean	P_SetMobjState (mobj_t* mobj, statenum_t state);
 void 	P_MobjThinker (mobj_t* mobj);
 
 void	P_SpawnPuff (fixed_t x, fixed_t y, fixed_t z);
-void 	P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, int damage);
+mobj_t*	P_SpawnBlood (fixed_t x, fixed_t y, fixed_t z, int damage);
 mobj_t* P_SpawnMissile (mobj_t* source, mobj_t* dest, mobjtype_t type);
 void	P_SpawnPlayerMissile (mobj_t* source, mobjtype_t type);
 
@@ -229,6 +233,7 @@ extern fixed_t		tmceilingz;
 
 
 extern	line_t*		ceilingline;
+extern	line_t*		blockline;	// the blocking line that stopped the last move, if one did
 
 boolean P_CheckPosition (mobj_t *thing, fixed_t x, fixed_t y);
 boolean P_TryMove (mobj_t* thing, fixed_t x, fixed_t y);
