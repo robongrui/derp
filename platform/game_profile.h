@@ -329,6 +329,10 @@ int Game_LibraryFigures(game_figure *out, int most, double seconds);
    blood left out (images.cpp sleepingImage). */
 int Game_ThingAsleep(const struct mobj_s *thing);
 
+/* Every key for the console player (DOOM's cards, Heretic's keys): for
+   tools that open all the doors. */
+void Game_GiveAllKeys(void);
+
 /* The F4 panel's font: the WAD lump of character c ('!' to '_'), or -1,
    and how many pixels to add after each glyph (the art's own spacing). */
 int Game_FontLump(int c);

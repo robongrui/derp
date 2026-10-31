@@ -379,7 +379,12 @@ int main(int argc, char **argv)
 #else
     if (chdir(preferences))
 #endif
-    { SDL_free(preferences); SDL_Quit(); return 1; }
+    {
+        char message[4352];
+        snprintf(message, sizeof(message), "Could not open the game save folder:\n%s", preferences);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Game_Title(), message, NULL);
+        SDL_free(preferences); SDL_Quit(); return 1;
+    }
     SDL_free(preferences);
     if (argc == 1)
     {

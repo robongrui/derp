@@ -273,6 +273,11 @@ int Game_FontLump(int c)
 
 int Game_FontSpacing(void) { return -1; }
 
+void Game_GiveAllKeys(void)
+{
+    for (int k = 0; k < NUMKEYS; ++k) players[consoleplayer].keys[k] = true;
+}
+
 int Game_MenuSound(game_menu_sound sound)
 {
     switch (sound)

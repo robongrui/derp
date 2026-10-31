@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- SDL hands every path over as UTF-8 (the program folder, the save folder,
+     file picks, the command line); with UTF-8 as the program's code page the
+     plain fopen/_chdir/open calls take them as they are, even with letters
+     such as é or ü in the user name. Windows 10 1903 and newer. -->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>
