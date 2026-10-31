@@ -13,6 +13,7 @@
 #include "doomdef.h"
 #include "doomstat.h"
 #include "d_event.h"
+#include "i_system.h"
 #include "m_argv.h"
 #include "m_random.h"
 #include "r_main.h"
