@@ -92,6 +92,12 @@
 #define LIBRARY_KIOSK_WIDTH    48
 #define LIBRARY_KIOSK_DEPTH    24
 
+/* A mirror by the beds, on each landing's end wall past the foot of the bed
+   beside it; a new arrival starts in front of the west one. */
+#define LIBRARY_MIRROR_FROM    24    /* past the bed's foot */
+#define LIBRARY_MIRROR_WIDTH   56
+#define LIBRARY_MIRROR_STAND   88    /* where he starts, out from it */
+
 #define LIBRARY_TAG_BED        1     /* sector tags the game finds them by */
 #define LIBRARY_TAG_KIOSK      2
 

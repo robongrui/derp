@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "doomdef.h"
 #include "doomstat.h"
@@ -226,18 +225,33 @@ static void StartFloor (void)
 }
 
 
-// Where on floor 1 he starts: anywhere. In a demo (recorded, played or in
-// the scenarios) where the seed's own address is, so it plays the same again.
-// A played demo is known by its command line: DOOM sets demoplayback only
-// once the demo's level is loaded (G_DoPlayDemo, after G_InitNew).
+// Whether a demo runs: recorded, played or in the scenarios. A played demo
+// is known by its command line: DOOM sets demoplayback only once the demo's
+// level is loaded (G_DoPlayDemo, after G_InitNew).
+static boolean InDemo (void)
+{
+    return demoplayback || demorecording || M_CheckParm ("-playdemo") || M_CheckParm ("-timedemo");
+}
+
+
+// Where on floor 1 he starts: in front of the west landing's mirror, so the
+// first thing he sees is what he is now, the same as everyone here.
+static void Mirror (fixed_t* x, fixed_t* y, angle_t* way)
+{
+    *x = (LIBRARY_CORNICE + LIBRARY_MIRROR_STAND)*FRACUNIT;
+    *y = (LIBRARY_CORNICE + LIBRARY_BED_LENGTH + LIBRARY_MIRROR_FROM + LIBRARY_MIRROR_WIDTH/2)*FRACUNIT;
+    *way = ANG180;
+}
+
+
+// In a demo the seed's own gallery instead, where the scenarios have always
+// started, so they play the same again.
 static int StartGallery (void)
 {
     library_place	place;
     uint8_t*		address;
     uint8_t*		floor;
 
-    if (!demoplayback && !demorecording && !M_CheckParm ("-playdemo") && !M_CheckParm ("-timedemo"))
-	return (int)((unsigned)time (NULL) * 2654435761u >> 8) % format.galleries;
     address = malloc (2*format.length);
     if (!address)
 	return 0;
@@ -280,9 +294,11 @@ void P_LibraryLevel (void)
     L_FallersLevel ();
     L_KioskLevel ();
 
-    // The middle of his gallery's walkway, looking on round the ring.
     P_UnsetThingPosition (mo);
-    Walkway (StartGallery (), &mo->x, &mo->y, &mo->angle);
+    if (InDemo ())
+	Walkway (StartGallery (), &mo->x, &mo->y, &mo->angle);
+    else
+	Mirror (&mo->x, &mo->y, &mo->angle);
     P_SetThingPosition (mo);
     P_CheckPosition (mo, mo->x, mo->y);
     mo->floorz = tmfloorz;
