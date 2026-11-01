@@ -601,6 +601,16 @@ static float sinkInLiquid(const mobj_t *thing,int i,const Image &image,float x,f
     }
     return std::min(8.0f,image.height*0.35f);
 }
+// Many WAD frames hang a few pixels lower than their foot line (top
+// offset past the image height). The software renderer drew those rows
+// over the floor; the depth buffer hides them, so things on solid ground
+// stand on it instead: lifted by that overhang, at most 16 (larger ones
+// are drawn that way on purpose). Liquids keep their sinking above.
+static float floorOverhang(const mobj_t *thing,int i,const Image &image) {
+    if(thing->z>thing->floorz||(thing->flags&(MF_MISSILE|MF_SPAWNCEILING|MF_NOGRAVITY))||image.top>=image.height)return 0;
+    if((size_t)i<sectorMist.size()&&sectorMist[i].liquid&&!waterIceHolds(units(thing->x),units(thing->y)))return 0;
+    return std::min(16.0f,(float)(image.height-image.top));
+}
 // The glass mirror's view (glassMirrorActive) for the sprites drawn into it:
 // the mirrored eye, and the right of an ordinary camera there. The mirror
 // pass's own axes are reflected, which already flips its whole image left
@@ -737,7 +747,9 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
             float keep=1-death.fall.flatten;
             top=z+(image.top-death.fall.ground)*keep+death.fall.lift;bottom=z+(image.top-image.height-death.fall.ground)*keep+death.fall.lift;
         }
-        float sink=!ragdoll?sinkInLiquid(thing,i,image,x,y,camera,collar):dollDown?sinkInLiquid(thing,i,image,x,y,camera,collar,true):0;top-=sink;bottom-=sink;
+        float sink=!ragdoll?sinkInLiquid(thing,i,image,x,y,camera,collar):dollDown?sinkInLiquid(thing,i,image,x,y,camera,collar,true):0;
+        if(!ragdoll&&!death.fall.active&&sink==0)sink=-floorOverhang(thing,i,image);   // negative: lifted onto the floor
+        top-=sink;bottom-=sink;
         float u0=flipped(seen)?image.width:0,u1=flipped(seen)?0:image.width;
         unsigned m=mode|((mode&MODE_RELIT)&&flipped(seen)?MODE_FLIPPED:0);
         auto &vertices=out[asleep?sleepingKey(lump):spilled!=BLOOD_RED?bloodSpriteKey(lump,spilled):-1-lump];size_t first=vertices.size();
