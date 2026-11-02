@@ -415,6 +415,11 @@ R_PointToDist
 	
     dx = abs(x - viewx);
     dy = abs(y - viewy);
+
+    // The eye exactly on the point (a player start on a vertex, Freedoom's
+    // E2M1): FixedDiv(0,0) would index far past tantoangle.
+    if (!dx && !dy)
+	return 0;
 	
     if (dy>dx)
     {
