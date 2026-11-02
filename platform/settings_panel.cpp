@@ -254,6 +254,10 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                     check("uneven_walls","Uneven wall and ceiling tiles",&s.unevenWalls,
                         "The same for the plates, panels and bricks painted into walls and ceilings; walls split only into straight rows and joints.",
                         [](const Settings &d){return d.detail!=0;}),
+                    check("rebrick","Real-size bricks",&s.rebrick,
+                        "Walls painted with oversized bricks (DOOM's two-metre blocks) are laid anew with bricks half the size, "
+                        "cut from their own artwork: the same mortar and bevels, each brick's face from a different big brick. "
+                        "Only plain brick walls; anything with windows, lights or mixed bricks keeps its look."),
                     check("weapon_lighting","Relit weapon",&s.weaponLighting,
                         "The sheen and light painted into the weapon artwork are taken out, and the lights around you relight it: "
                         "their color, darker rounded edges, glowing rims against lights behind it, and highlights that slide over "

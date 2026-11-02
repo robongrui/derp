@@ -101,6 +101,7 @@ struct Settings {
     int variedHighlights=1; // Gloss highlights tighten on smooth artwork and spread on busy artwork, per palette ramp.
     int unevenTiles=1; // Tiles painted into floors each lie a little crooked, with a lit or shadowed lip where they meet.
     int unevenWalls=1; // The same for the tiles, plates and bricks painted into walls and ceilings.
+    int rebrick=1; // Oversized painted bricks (DOOM's 64 x 32) laid anew at half the size from their own artwork (scene3d/relaid_walls.cpp).
     int softLight=1; // Light seam blending and edge contact shading.
     int reflections=1; // Mirrored scene on water.
     int retroReflections=1; // Eighth resolution, palette colors, stepped wobble.

@@ -165,6 +165,12 @@ Image &frozenFlat(int lump,int grey,int glow);
 Image &frozenWall(int texture,int grey,int glow);
 const std::array<float,3> &averageColor(Image &image);
 const byte *playpal();   // the game's palette (768 bytes), copied once
+// relaid_walls.cpp: an oversized brick texture (w x h index, coverage pairs)
+// re-laid with bricks 1/split the size from its own artwork; empty when it is
+// no plain brick texture; why, when given, says what it found.
+std::vector<byte> rebrickedWall(int w,int h,const std::vector<byte> &pixels,int split,std::string *why=nullptr);
+// images.cpp: re-bricked wall textures load again once the switch changes (applySettings).
+void rebrickSwitched();
 std::array<float,3> paletteColor(const std::array<float,3> &color);
 const std::array<float,3> &brightestColor(Image &image);
 std::array<float,3> texelColor(Image &image);

@@ -123,6 +123,7 @@ static void acceleratedView(player_t *player) {
 }
 void applySettings() {
     fitGame(settings);
+    rebrickSwitched();
     R_AcceleratedView=settings.accelerated?acceleratedView:nullptr;
     R_BeforeTic=settings.accelerated?beforeTic:nullptr;
     R_MuzzleFlash=settings.accelerated?muzzleFlash:nullptr;

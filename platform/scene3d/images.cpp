@@ -347,6 +347,14 @@ static Image &speckledPanel(Image &image,const char *name,bool flat) {
     if(kind==DOOM_EMISSIVE_GLASS) {image.emissionWeight*=0.2f;image.leaded=!image.emission.empty();}
     return image;
 }
+// Wall textures with oversized bricks (rebrickedWall), loaded again when
+// Settings::rebrick changes.
+static std::unordered_set<int> rebrickable;
+static int rebrickLoaded=-1;
+void rebrickSwitched() {
+    if(rebrickLoaded>=0&&rebrickLoaded!=settings.rebrick)for(int index:rebrickable)images.erase(index);
+    rebrickLoaded=settings.rebrick;
+}
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
 Image &wallImage(int index) {
     auto found=images.find(index); if(found!=images.end()) return found->second;
@@ -361,6 +369,11 @@ Image &wallImage(int index) {
     // Masked walls (bars, fences) show what lies behind instead of tiles;
     // animated ones would change tiles every frame.
     int next;bool animated=P_PicAnimationNext(true,index,&next)>0;
+    // Oversized painted bricks laid anew at half the size (relaid_walls.cpp).
+    if(!glowing&&glass.empty()&&!animated) {
+        std::vector<byte> smaller=rebrickedWall(w,h,pixels,2);
+        if(!smaller.empty()) {rebrickable.insert(index);if(settings.rebrick)pixels.swap(smaller);}
+    }
     Image &image=speckledPanel(images.emplace(index,upload(w,h,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
         glass.empty()?nullptr:glass.data(),true)).first->second,name,false);
     if(image.leaded)return withLeadedRelief(withGlassFrame(image,frame));
@@ -586,5 +599,5 @@ std::array<float,3> texelColor(Image &image) {
     }
     return averageColor(image);
 }
-void imagesShutdown() {images.clear();cloudTexture=nullptr;}
+void imagesShutdown() {images.clear();rebrickable.clear();cloudTexture=nullptr;}
 } // namespace doom3d
