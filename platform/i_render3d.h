@@ -11,6 +11,9 @@ void I_Render3DShutdown(void);
 void I_Render3DStartFrame(void);
 void I_Render3DPresent(const unsigned *pixels, const unsigned *palette);
 void I_Render3DLook(float delta);
+/* The regular Options menu shares F4's saved vertical mouse inversion. */
+int I_Render3DMouseInverted(void);
+void I_Render3DToggleMouseInvert(void);
 void I_Render3DSettings(void);
 /* The in-game F4 panel (settings_menu.cpp), opened by I_Render3DSettings.
    It draws a 640x400 image that the renderer scales by whole pixels; clicks

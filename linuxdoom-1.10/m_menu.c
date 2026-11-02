@@ -41,6 +41,7 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 
 #include "i_system.h"
 #include "i_video.h"
+#include "../platform/i_controls.h"
 #include "z_zone.h"
 #include "v_video.h"
 #include "w_wad.h"
@@ -201,6 +202,7 @@ void M_QuitDOOM(int choice);
 
 void M_ChangeMessages(int choice);
 void M_ChangeSensitivity(int choice);
+void M_InvertMouse(int choice);
 void M_SfxVol(int choice);
 void M_MusicVol(int choice);
 void M_ChangeDetail(int choice);
@@ -368,6 +370,7 @@ enum
     option_empty1,
     mousesens,
     option_empty2,
+    invertmouse,
     soundvol,
     opt_end
 } options_e;
@@ -381,6 +384,7 @@ menuitem_t OptionsMenu[]=
     {-1,"",0},
     {2,"M_MSENS",	M_ChangeSensitivity,'m'},
     {-1,"",0},
+    {2,"", M_InvertMouse,'i'},
     {1,"M_SVOL",	M_Sound,'s'}
 };
 
@@ -1155,6 +1159,9 @@ void M_DrawOptions(void)
 	
     M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(scrnsize+1),
 		 9,screenSize);
+    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*invertmouse+1,"INVERT MOUSE");
+    M_WriteText(OptionsDef.x+150,OptionsDef.y+LINEHEIGHT*invertmouse+1,
+                I_MouseInverted()?"ON":"OFF");
 }
 
 void M_Options(int choice)
@@ -1321,6 +1328,12 @@ void M_ChangeSensitivity(int choice)
 	    mouseSensitivity++;
 	break;
     }
+}
+
+void M_InvertMouse(int choice)
+{
+    (void)choice;
+    I_ToggleMouseInvert();
 }
 
 

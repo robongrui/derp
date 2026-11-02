@@ -51,7 +51,9 @@ Use the arrow keys and Return to select menu items.
 | Quit | Command-Q |
 
 On keyboards with media function keys, hold **Fn** when using the F keys.
-Change sound volume and mouse sensitivity under **Options**.
+Change sound volume and mouse sensitivity under **Options**. **Invert mouse**
+switches inverted vertical mouse look between **On** and **Off** (default).
+It shares the setting in **F4 → Game → Controls** and is saved automatically.
 
 Movement accelerates and changes direction faster, with less glide after
 releasing the keys and reduced camera/weapon bob. Walking and running
@@ -110,7 +112,7 @@ takes a screenshot.
 - **Anti-aliasing (MSAA):** off by default, or 2x, 4x or 8x as far as the GPU offers; smooths the edges of walls, floors and ledges while texels and sprites stay crisp.
 - **Field of view:** 60–120 degrees, measured against the classic 4:3 view.
 - **Widescreen:** show more world at the sides rather than stretching it.
-- **Mouse look, crosshair and FPS display:** optional toggles. With mouse look, **Invert mouse look** (off by default) tilts the view down when you push the mouse forward, and **Classic aim** (off by default) lets bullets autoaim as in DOOM instead of going where you look.
+- **Mouse look, crosshair and FPS display:** optional toggles. With mouse look, **Invert mouse** (off by default) tilts the view down when you push the mouse forward, and **Classic aim** (off by default) lets bullets autoaim as in DOOM instead of going where you look.
 - **Retro scanlines** and **Doom palette colors:** the palette option quantizes the final image, including colored lighting, fog and bloom, to the WAD palette; off by default.
 
 **Textures**
