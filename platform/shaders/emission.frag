@@ -57,6 +57,7 @@ void main() {
     float hi=max(color.r,max(color.g,color.b)),lo=min(color.r,min(color.g,color.b));
     float neutral=1.0-saturate((hi-lo)/max(hi,0.001)*2.0);
     uint sector=(vMode>>MODE_SECTOR_SHIFT);
-    e*=shownThroughWeather(!sprite&&sector>0u&&sectorInfo[sector-1u].w>0.0);
+    // Nothing glowing stays black (it still hides the glow behind it): no weather to look through.
+    if(e>0.0) e*=shownThroughWeather(!sprite&&sector>0u&&sectorInfo[sector-1u].w>0.0);
     outColor=vec4(color.rgb*e*2.5*(1.0-0.6*neutral),1);
 }

@@ -43,7 +43,17 @@ void flushUploads() {
 void updatePaletteLUT(const unsigned *palette) {
     if(paletteLUT&&std::equal(palette,palette+256,paletteKey.begin()))return;
     std::copy(palette,palette+256,paletteKey.begin());
-    std::vector<unsigned> colors=paletteLUTColors(palette);
+    // Damage and pickup flashes step through the same few palettes, and each
+    // table takes millions of color tests: keep every one met (Doom has 14;
+    // a gamma change brings new ones, so the oldest go past a few dozen).
+    static std::vector<std::pair<std::array<unsigned,256>,std::vector<unsigned>>> tables;
+    auto found=std::find_if(tables.begin(),tables.end(),[&](const auto &t){return t.first==paletteKey;});
+    if(found==tables.end()) {
+        if(tables.size()>=32)tables.erase(tables.begin());
+        tables.push_back({paletteKey,paletteLUTColors(palette)});
+        found=tables.end()-1;
+    }
+    const std::vector<unsigned> &colors=found->second;
     if(!paletteLUT)paletteLUT=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,32,32,SDL_GPU_TEXTUREUSAGE_SAMPLER,
         SDL_GPU_SAMPLECOUNT_1,SDL_GPU_TEXTURETYPE_3D,32);
     if(!paletteLUT)I_Error((char*)"Could not allocate palette lookup");

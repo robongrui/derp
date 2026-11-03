@@ -171,6 +171,10 @@ void Reverb_SetRoom(reverb_t *r, const room_t *room)
     {
         tap_t *tap = &r->taps[i];
         echo_t target = echo(room, i, r->rate);
+        /* A room unchanged since the last measure: already there, or on the way. */
+        const echo_t *heading = !tap->fading ? &tap->from : tap->queued ? &tap->next : &tap->to;
+        if (!memcmp(heading, &target, sizeof target)) continue;
+        if (tap->fading && tap->queued && !memcmp(&tap->to, &target, sizeof target)) { tap->queued = 0; continue; }
         if (tap->fading) { tap->next = target; tap->queued = 1; }
         else
         {

@@ -116,6 +116,42 @@ static CachedBlockers *blockerSlot(const BlockerKey &key) {
     }
     return &blockerCache[key];
 }
+// The map's lines by 128-unit cell, built once a level (lines don't move), so
+// a light asks only the lines near it instead of the whole map.
+static std::vector<int> linesAround(float x,float y,float reach) {
+    constexpr float cell=128;
+    static std::vector<std::vector<int>> cells;
+    static std::vector<unsigned> seen;
+    static unsigned gridLevel=~0u,stamp=0;
+    static float originX,originY;
+    static int across,down;
+    if(gridLevel!=r_levelserial) {
+        gridLevel=r_levelserial;
+        float minX=1e30f,minY=1e30f,maxX=-1e30f,maxY=-1e30f;
+        for(int i=0;i<numvertexes;++i) {
+            float vx=units(vertexes[i].x),vy=units(vertexes[i].y);
+            minX=std::min(minX,vx);minY=std::min(minY,vy);maxX=std::max(maxX,vx);maxY=std::max(maxY,vy);
+        }
+        if(numvertexes==0)minX=minY=maxX=maxY=0;
+        originX=minX;originY=minY;
+        across=(int)((maxX-minX)/cell)+1;down=(int)((maxY-minY)/cell)+1;
+        cells.assign((size_t)across*down,{});seen.assign(numlines,0);stamp=0;
+        for(int i=0;i<numlines;++i) {
+            float ax=units(lines[i].v1->x),ay=units(lines[i].v1->y),bx=units(lines[i].v2->x),by=units(lines[i].v2->y);
+            int x0=(int)((std::min(ax,bx)-originX)/cell),x1=(int)((std::max(ax,bx)-originX)/cell);
+            int y0=(int)((std::min(ay,by)-originY)/cell),y1=(int)((std::max(ay,by)-originY)/cell);
+            for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx)cells[(size_t)cy*across+cx].push_back(i);
+        }
+    }
+    std::vector<int> near;
+    if(++stamp==0) {std::fill(seen.begin(),seen.end(),0);stamp=1;}
+    int x0=std::max(0,(int)std::floor((x-reach-originX)/cell)),x1=std::min(across-1,(int)std::floor((x+reach-originX)/cell));
+    int y0=std::max(0,(int)std::floor((y-reach-originY)/cell)),y1=std::min(down-1,(int)std::floor((y+reach-originY)/cell));
+    for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx)
+        for(int i:cells[(size_t)cy*across+cx])if(seen[i]!=stamp) {seen[i]=stamp;near.push_back(i);}
+    std::sort(near.begin(),near.end());   // in map order, as the whole-map scan met them
+    return near;
+}
 // Directionality: 0 lights every surface alike, 1 is full Lambert facing.
 // Unoccluded lights skip wall blockers, so shading them costs no ray tests.
 // baked: the part of this light already in the bake maps, which world surfaces
@@ -137,7 +173,8 @@ void appendLight(float x,float y,float z,float radius,float strength,const std::
         // They lie up to lamp*0.433 above or below the center and lamp*0.612 across.
         const sector_t *own=R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector;
         lamp=std::min(lamp,(std::min(z-floorZ(own),ceilZ(own)-z)-1)/0.433f);
-        for(int i=0;i<numlines&&lamp>0;++i) {
+        for(int i:linesAround(x,y,lamp*0.6124f+1)) {
+            if(lamp<=0) break;
             const line_t &line=lines[i];
             float ax=units(line.v1->x),ay=units(line.v1->y),bx=units(line.v2->x),by=units(line.v2->y),reach=lamp*0.6124f+1;
             if(std::max(ax,bx)<x-reach||std::min(ax,bx)>x+reach||std::max(ay,by)<y-reach||std::min(ay,by)>y+reach) continue;
@@ -162,7 +199,7 @@ void appendLight(float x,float y,float z,float radius,float strength,const std::
         return;
     }
     std::vector<int> around;
-    for(int i=0;i<numlines;++i) {
+    for(int i:linesAround(x,y,radius)) {
         const line_t &line=lines[i];
         float ax=units(line.v1->x),ay=units(line.v1->y),bx=units(line.v2->x),by=units(line.v2->y);
         if(std::max(ax,bx)<x-radius||std::min(ax,bx)>x+radius||
@@ -323,7 +360,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         // right (the player's radius is the lamp's offset) or facing into a
         // corner put it on or behind the wall, which then blocked the beam.
         float dx=lamp[0]-camera.eye[0],dy=lamp[1]-camera.eye[1],reach=std::sqrt(dx*dx+dy*dy),clear=1;
-        for(int i=0;i<numlines&&reach>0;++i) {
+        for(int i:reach>0?linesAround(camera.eye[0]+dx*0.5f,camera.eye[1]+dy*0.5f,reach*0.5f+5):std::vector<int>{}) {
             const line_t &line=lines[i];
             if(line.frontsector&&line.backsector&&line.frontsector!=line.backsector&&
                lamp[2]>std::max(floorZ(line.frontsector),floorZ(line.backsector))&&
