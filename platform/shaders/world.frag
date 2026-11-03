@@ -6,6 +6,10 @@
 // against it, so only the frontmost layer pays for lighting.
 #if defined(OPAQUE)||defined(CUTOUT)
 layout(early_fragment_tests) in;
+#elif !defined(COVERAGE)&&!defined(OVERLAY)
+// Sprites write depth only to pull soft ones toward the eye (MODE_SOFT), never
+// away: saying so keeps the early depth test, so a sprite behind a wall isn't lit.
+layout(depth_less) out float gl_FragDepth;
 #endif
 #include "common.glsl"
 layout(set=2,binding=0) uniform sampler2D image;
