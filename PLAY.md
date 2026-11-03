@@ -51,11 +51,51 @@ Use the arrow keys and Return to select menu items.
 | Quit | Command-Q |
 
 On keyboards with media function keys, hold **Fn** when using the F keys.
-Change sound volume and mouse sensitivity under **Options**.
+Change sound volume and mouse sensitivity under **Options**. Every action can
+be bound to two keys or mouse buttons and a gamepad button under
+**F4 → Controls → Bindings** (mouse buttons 4 and 5 and the wheel included).
+
+### Gamepads and the Steam Deck
+
+Plug in a gamepad (Xbox, PlayStation, Switch Pro, 8BitDo, the Steam Deck's own
+controls and most others) and play: no setup is needed. The left stick moves,
+as fast as it is tilted, and the right stick turns and looks like the mouse.
+
+| Action | Gamepad |
+| --- | --- |
+| Move | Left stick |
+| Turn and look | Right stick (held all the way over it turns faster) |
+| Fire | RT |
+| Use | X |
+| Flashlight | LT |
+| Jump (Phobos only) | A |
+| Next / previous weapon | RB / LB |
+| Center view | R3 |
+| Map | Back (in the map, LB/RB zoom) |
+| Menu | Start |
+| Settings (F4) | Hold Back, press Start |
+
+In the menus the d-pad or left stick moves, **A** picks and **B** goes back;
+**A** and **B** answer yes and no. Picking a save slot with the pad names the
+save after the map and the time, so **A** saves at once. In Heretic, A and B
+fly up and down, the d-pad's left and right walk the inventory, LT uses the
+artifact and Y the Tome of Power.
+
+**F4 → Controls** has the rest: turn and look speed, the stick dead zone, the
+turn boost, swapped sticks, gyro aim (DualSense, DualShock 4, Switch Pro, the
+Deck with Steam Input off; on, or only while R4 is held), and rumble. The
+rumble kicks with every shot, swells with the BFG, buzzes with the chainsaw,
+and lets you feel the hits you take and the falls you land; explosions and
+heavy steps near you rumble as loud as you hear them. Joysticks SDL knows no
+pad layout for work as DOOM's own digital joystick.
+
+On a **Steam Deck** the game starts fullscreen (`-window` keeps a window). Add
+it to Steam as a non-Steam game, with the WAD beside it or `-iwad` in its
+launch options, and pick Steam's **Gamepad** controller layout.
 
 Movement accelerates and changes direction faster, with less glide after
 releasing the keys and reduced camera/weapon bob. Walking and running
-retain their original top speeds. **F4 → Game → Controls → Movement** picks
+retain their original top speeds. **F4 → Game → Play → Movement** picks
 Normal, Normal plus (a running diagonal held for a moment builds up to DOOM's
 full strafe-running) or Classic; launching with `-classicmovement` also restores
 the original feel. Demo playback, recording and netgames always use the
@@ -88,8 +128,8 @@ Launch with `-flashlight` to start with the light on. `-flashlighttint 0` disabl
 the tint, `-flashlighttint 1` selects the default, and `-flashlighttint 2` makes it stronger.
 
 Press **F4** for the settings panel. It opens inside the game as a text-mode
-style panel over the paused, dimmed view. Its options are sorted into three
-groups, Game, Graphics and Sound, each with its own tabs; the description of
+style panel over the paused, dimmed view. Its options are sorted into four
+groups, Game, Controls, Graphics and Sound, each with its own tabs; the description of
 the highlighted option is shown at the bottom, options that only refine
 another one are greyed out while that one is off, and a small diamond marks
 each option you changed from its default.
@@ -110,7 +150,7 @@ takes a screenshot.
 - **Anti-aliasing (MSAA):** off by default, or 2x, 4x or 8x as far as the GPU offers; smooths the edges of walls, floors and ledges while texels and sprites stay crisp.
 - **Field of view:** 60–120 degrees, measured against the classic 4:3 view.
 - **Widescreen:** show more world at the sides rather than stretching it.
-- **Mouse look, crosshair and FPS display:** optional toggles. With mouse look, **Invert mouse look** (off by default) tilts the view down when you push the mouse forward, and **Classic aim** (off by default) lets bullets autoaim as in DOOM instead of going where you look.
+- **FPS display:** optional. **Free look**, **Invert look**, **Classic aim** (bullets autoaim as in DOOM instead of going where you look) and the crosshair are under **F4 → Controls → Aim**.
 - **Retro scanlines** and **Doom palette colors:** the palette option quantizes the final image, including colored lighting, fog and bloom, to the WAD palette; off by default.
 
 **Textures**

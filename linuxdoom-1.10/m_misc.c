@@ -171,24 +171,12 @@ M_ReadFile
 int		usemouse;
 int		usejoystick;
 
-extern int	key_right;
-extern int	key_left;
-extern int	key_up;
-extern int	key_down;
-
-extern int	key_strafeleft;
-extern int	key_straferight;
-
-extern int	key_fire;
-extern int	key_use;
-extern int	key_jump;
-extern int	key_boots;
-extern int	key_strafe;
-extern int	key_speed;
-
-extern int	mousebfire;
-extern int	mousebstrafe;
-extern int	mousebforward;
+// DERP: every action's keys, mouse buttons and pad button (g_binds.h).
+#define BIND(name, title, section, role, key, key2, pad) extern int key_##name, key2_##name, pad_##name;
+#define PRESS(name, title, section, key, pad) extern int pad_##name;
+#include "g_binds.h"
+#undef BIND
+#undef PRESS
 
 extern int	joybfire;
 extern int	joybstrafe;
@@ -247,19 +235,13 @@ default_t	defaults[] =
     
 
 #ifdef NORMALUNIX
-    {"key_right",&key_right, KEY_RIGHTARROW},
-    {"key_left",&key_left, KEY_LEFTARROW},
-    {"key_up",&key_up, KEY_UPARROW},
-    {"key_down",&key_down, KEY_DOWNARROW},
-    {"key_strafeleft",&key_strafeleft, ','},
-    {"key_straferight",&key_straferight, '.'},
-
-    {"key_fire",&key_fire, KEY_RCTRL},
-    {"key_use",&key_use, ' '},
-    {"key_jump",&key_jump, 'e'},
-    {"key_boots",&key_boots, 'g'},
-    {"key_strafe",&key_strafe, KEY_RALT},
-    {"key_speed",&key_speed, KEY_RSHIFT},
+// DERP: every action's keys, mouse buttons and pad button (g_binds.h).
+#define BIND(name, title, section, role, key, key2, pad) \
+    {"key_" #name,&key_##name, key}, {"key2_" #name,&key2_##name, key2}, {"pad_" #name,&pad_##name, pad},
+#define PRESS(name, title, section, key, pad) {"pad_" #name,&pad_##name, pad},
+#include "g_binds.h"
+#undef BIND
+#undef PRESS
 
 // UNIX hack, to be removed. 
 #ifdef SNDSERV
@@ -275,9 +257,6 @@ default_t	defaults[] =
 #endif
 
     {"use_mouse",&usemouse, 1},
-    {"mouseb_fire",&mousebfire,0},
-    {"mouseb_strafe",&mousebstrafe,1},
-    {"mouseb_forward",&mousebforward,2},
 
     {"use_joystick",&usejoystick, 0},
     {"joyb_fire",&joybfire,0},

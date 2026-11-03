@@ -1,4 +1,4 @@
-/* The F4 settings, in groups (Game, Graphics, Sound) of tabs and sections,
+/* The F4 settings, in groups (Game, Controls, Graphics, Sound) of tabs and sections,
  * as the in-game panel (settings_menu.cpp) shows them. This table is the one list of
  * options: each also names its graphics.cfg key, so adding an option here
  * (with its Settings member) is all it takes to show, load and save it. */
@@ -32,7 +32,8 @@ struct Option {
     float snap(double value) const {return (float)std::clamp(low+std::round((value-low)/step)*step,low,high);}
 };
 struct OptionSection { const char *title; std::vector<Option> options; };
-struct OptionTab { const char *title; std::vector<OptionSection> sections; };
+// bindings: the Bindings page (settings_menu.cpp lists the game's actions there, bindings.h), no options.
+struct OptionTab { const char *title; std::vector<OptionSection> sections; bool bindings=false; };
 struct OptionGroup { const char *title; std::vector<OptionTab> tabs; };
 
 // The options, bound to the members of s.

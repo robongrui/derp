@@ -10,6 +10,8 @@
 #include "m_argv.h"
 #include "v_video.h"
 #include "game_profile.h"
+#include "bindings.h"
+#include "i_gamepad.h"
 #include <SDL3/SDL.h>
 #ifdef DOOM_RENDER3D
 #include "i_render3d.h"
@@ -81,6 +83,11 @@ static int translate(SDL_Scancode key, SDL_Keycode typed)
             if (key == SDL_SCANCODE_PERIOD) return '.';
             if (key == SDL_SCANCODE_LEFTBRACKET) return '[';
             if (key == SDL_SCANCODE_RIGHTBRACKET) return ']';
+            if (key == SDL_SCANCODE_SEMICOLON) return ';';
+            if (key == SDL_SCANCODE_APOSTROPHE) return '\'';
+            if (key == SDL_SCANCODE_SLASH) return '/';
+            if (key == SDL_SCANCODE_BACKSLASH) return '\\';
+            if (key == SDL_SCANCODE_GRAVE) return '`';
             return 0;
     }
 }
@@ -99,6 +106,7 @@ static void post(evtype_t type, int a, int b, int c)
 #endif
     D_PostEvent(&event);
 }
+void I_PostInput(int type, int data1, int data2, int data3) { post((evtype_t)type, data1, data2, data3); }
 
 static void capture_mouse(boolean value)
 {
@@ -107,6 +115,62 @@ static void capture_mouse(boolean value)
         SDL_SetWindowRelativeMouseMode(window, value);
         captured = value;
     }
+}
+
+/* Lets go of every key, mouse button and pad button held, as if released. */
+static void release_all(void)
+{
+    for (int i = 0; i < SDL_SCANCODE_COUNT; ++i)
+        if (keys[i]) { post(ev_keyup, keys[i], 0, 0); keys[i] = 0; }
+    buttons = 0;
+    post(ev_mouse, 0, 0, 0);
+    I_GamepadReleaseAll();
+}
+
+void I_OpenSettingsPanel(void)
+{
+#ifdef DOOM_RENDER3D
+    if (!accel) return;
+    capture_mouse(false);
+    release_all();
+    I_Render3DSettings();
+#endif
+}
+
+/* The platform's own bound keys (bindings.h): what the keyboard and the
+   pad press alike. */
+int I_PlatformAction(int role)
+{
+    switch (role)
+    {
+    case GAME_ACTION_FULLSCREEN:
+        SDL_SetWindowFullscreen(window, !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN));
+        return 1;
+#ifdef DOOM_RENDER3D
+    case GAME_ACTION_FLASHLIGHT:
+        if (accel && I_Render3DIsAccelerated() && gamestate == GS_LEVEL && !menuactive && !paused)
+            I_Render3DToggleFlashlight();
+        return 1;
+    case GAME_ACTION_CENTER_VIEW:
+        if (accel && gamestate == GS_LEVEL && !menuactive && !paused) I_Render3DCenterView();
+        return 1;
+    case GAME_ACTION_STATS:
+        if (!accel || !I_Render3DIsAccelerated()) return 0;
+        I_Render3DCycleStats();
+        return 1;
+    case GAME_ACTION_SCREENSHOT:
+        if (!accel) return 0;
+        I_Render3DScreenshot();
+        return 1;
+#endif
+    }
+    return 0;
+}
+
+static int mouse_button(int button)
+{
+    return button == SDL_BUTTON_LEFT ? 0 : button == SDL_BUTTON_RIGHT ? 1 : button == SDL_BUTTON_MIDDLE ? 2
+         : button == SDL_BUTTON_X1 ? 3 : button == SDL_BUTTON_X2 ? 4 : -1;
 }
 
 #if !defined(__APPLE__) && !defined(_WIN32)
@@ -168,12 +232,15 @@ void I_InitGraphics(void)
         if (!texture) I_Error("Could not create the game image: %s", SDL_GetError());
         SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
     }
-    if (M_CheckParm("-fullscreen"))
+    /* On a Steam Deck the game fills the screen (-window keeps a window). */
+    if (M_CheckParm("-fullscreen") || (I_GamepadSteamDeck() && !M_CheckParm("-window") && !M_CheckParm("-rendercheck")))
         SDL_SetWindowFullscreen(window, true);
+    I_GamepadInit();
 }
 
 void I_ShutdownGraphics(void)
 {
+    I_GamepadShutdown();
 #ifdef DOOM_RENDER3D
     if (accel) { I_Render3DShutdown(); accel = false; }
 #endif
@@ -223,6 +290,8 @@ void I_StartTic(void)
     {
         if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
             I_Quit();
+        if (I_GamepadEvent(&event))
+            continue;
         if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP)
         {
 #ifdef DOOM_TEST_DRIVER
@@ -230,74 +299,63 @@ void I_StartTic(void)
             continue;
 #endif
             SDL_Scancode scan = event.key.scancode;
+            boolean pressed = event.type == SDL_EVENT_KEY_DOWN;
             if (scan < 0 || scan >= SDL_SCANCODE_COUNT)
                 continue;
+            if (pressed) I_GamepadOtherInput();
 #ifdef DOOM_RENDER3D
-            /* The in-game F4 panel takes the keyboard, key repeat included. */
-            if (accel && I_Render3DSettingsOpen() && scan != SDL_SCANCODE_F7)
+            /* The in-game F4 panel takes the keyboard, key repeat included;
+               on its Bindings page the next key pressed may be the one to bind. */
+            if (accel && I_Render3DSettingsOpen())
             {
-                if (event.type == SDL_EVENT_KEY_DOWN)
+                int code = translate(scan, event.key.key);
+                if (!pressed) continue;
+                if (I_Render3DSettingsCapturing())
+                {
+                    if (scan == SDL_SCANCODE_ESCAPE) I_Render3DSettingsKey(SDL_SCANCODE_ESCAPE, 0);
+                    else if (code && !event.key.repeat) I_Render3DSettingsBind(code);
+                }
+                else if (code && !event.key.repeat && Bind_Role(code, NULL) == GAME_ACTION_SCREENSHOT)
+                    I_Render3DScreenshot();
+                else
                     I_Render3DSettingsKey(labelled(scan, event.key.key), (event.key.mod & SDL_KMOD_SHIFT) != 0);
                 continue;
             }
 #endif
-            if (event.type == SDL_EVENT_KEY_DOWN && event.key.repeat)
+            if (pressed && event.key.repeat)
                 continue;
-            if (event.type == SDL_EVENT_KEY_DOWN &&
-                labelled(scan, event.key.key) == SDL_SCANCODE_Q && (event.key.mod & SDL_KMOD_GUI))
+            if (pressed && labelled(scan, event.key.key) == SDL_SCANCODE_Q && (event.key.mod & SDL_KMOD_GUI))
                 I_Quit();
-            if (scan == SDL_SCANCODE_F11)
-            {
-                if (event.type == SDL_EVENT_KEY_DOWN)
-                    SDL_SetWindowFullscreen(window, !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN));
-                continue;
-            }
 #ifdef DOOM_RENDER3D
-            if (accel && I_Render3DIsAccelerated() && scan == SDL_SCANCODE_F &&
-                gamestate == GS_LEVEL && !menuactive && !paused)
+            if (accel && scan == SDL_SCANCODE_F4)
             {
-                /* Also passed on, so cheats such as "idfly" can be typed. */
-                if (event.type == SDL_EVENT_KEY_DOWN) I_Render3DToggleFlashlight();
-            }
-            else if (accel && I_Render3DIsAccelerated() && scan == SDL_SCANCODE_GRAVE)
-            {
-                if (event.type == SDL_EVENT_KEY_DOWN) I_Render3DCycleStats();
-                continue;
-            }
-            else if (accel && (scan == SDL_SCANCODE_F4 || scan == SDL_SCANCODE_F7))
-            {
-                if (event.type == SDL_EVENT_KEY_DOWN)
-                {
-                    if (scan == SDL_SCANCODE_F7) I_Render3DScreenshot();
-                    else
-                    {
-                        capture_mouse(false);
-                        for (int i = 0; i < SDL_SCANCODE_COUNT; ++i)
-                            if (keys[i]) { post(ev_keyup, keys[i], 0, 0); keys[i] = 0; }
-                        buttons = 0; post(ev_mouse, 0, 0, 0);
-                        I_Render3DSettings();
-                    }
-                }
+                if (pressed) I_OpenSettingsPanel();
                 continue;
             }
 #endif
             /* A release lets go of what the press gave, though the menu
                may have opened or closed in between. */
-            int key = event.type == SDL_EVENT_KEY_UP && keys[scan] ? keys[scan]
-                    : translate(scan, event.key.key);
+            int key = !pressed && keys[scan] ? keys[scan] : translate(scan, event.key.key);
+            /* The platform's own bound keys (bindings.h) act here; the
+               flashlight's and the view's also go on, so cheats such as
+               "idfly" can be typed. */
+            game_action_role role = key ? Bind_Role(key, NULL) : GAME_ACTION_GAME;
+            if (role != GAME_ACTION_GAME && !keys[scan])
+            {
+                int handled = pressed ? I_PlatformAction(role) : 1;
+                if (handled && role != GAME_ACTION_FLASHLIGHT && role != GAME_ACTION_CENTER_VIEW && role != GAME_ACTION_GYRO)
+                    continue;
+            }
             if (key)
             {
-                keys[scan] = event.type == SDL_EVENT_KEY_DOWN ? key : 0;
-                post(event.type == SDL_EVENT_KEY_DOWN ? ev_keydown : ev_keyup, key, 0, 0);
+                keys[scan] = pressed ? key : 0;
+                post(pressed ? ev_keydown : ev_keyup, key, 0, 0);
             }
         }
         else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST)
         {
-            for (int i = 0; i < SDL_SCANCODE_COUNT; ++i)
-                if (keys[i]) { post(ev_keyup, keys[i], 0, 0); keys[i] = 0; }
-            buttons = 0;
+            release_all();
             capture_mouse(false);
-            post(ev_mouse, 0, 0, 0);
         }
         else if (event.type == SDL_EVENT_MOUSE_MOTION && captured)
         {
@@ -309,34 +367,78 @@ void I_StartTic(void)
             if (accel) I_Render3DLook(event.motion.yrel);
 #endif
         }
+        else
+        {
+            /* The pointer comes back from hiding under a pad's use. */
+            if (event.type == SDL_EVENT_MOUSE_MOTION && !SDL_CursorVisible())
+                SDL_ShowCursor();
+            int button = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP
+                       ? mouse_button(event.button.button) : -1;
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) I_GamepadOtherInput();
 #ifdef DOOM_RENDER3D
-        else if (accel && I_Render3DSettingsOpen() && event.type == SDL_EVENT_MOUSE_MOTION)
-            I_Render3DSettingsMouse(event.motion.x, event.motion.y, 0);
-        else if (accel && I_Render3DSettingsOpen() &&
-                 (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP))
-        {
-            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-                I_Render3DSettingsMouse(event.button.x, event.button.y,
-                                        event.button.button == SDL_BUTTON_RIGHT ? 3 : 1);
-        }
-        else if (accel && I_Render3DSettingsOpen() && event.type == SDL_EVENT_MOUSE_WHEEL)
-        {
-            if (event.wheel.y != 0)
-                I_Render3DSettingsKey(event.wheel.y > 0 ? SDL_SCANCODE_UP : SDL_SCANCODE_DOWN, 0);
-        }
+            if (accel && I_Render3DSettingsOpen())
+            {
+                if (event.type == SDL_EVENT_MOUSE_MOTION)
+                    I_Render3DSettingsMouse(event.motion.x, event.motion.y, 0);
+                else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+                {
+                    if (I_Render3DSettingsCapturing()) { if (button >= 0) I_Render3DSettingsBind(KEY_MOUSE1 + button); }
+                    else I_Render3DSettingsMouse(event.button.x, event.button.y,
+                                                 event.button.button == SDL_BUTTON_RIGHT ? 3 : 1);
+                }
+                else if (event.type == SDL_EVENT_MOUSE_WHEEL && event.wheel.y != 0)
+                {
+                    if (I_Render3DSettingsCapturing()) I_Render3DSettingsBind(event.wheel.y > 0 ? KEY_WHEELUP : KEY_WHEELDOWN);
+                    else I_Render3DSettingsKey(event.wheel.y > 0 ? SDL_SCANCODE_UP : SDL_SCANCODE_DOWN, 0);
+                }
+                continue;
+            }
 #endif
-        else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP)
-        {
-            int mask = event.button.button == SDL_BUTTON_LEFT ? 1
-                     : event.button.button == SDL_BUTTON_RIGHT ? 2
-                     : event.button.button == SDL_BUTTON_MIDDLE ? 4 : 0;
-            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) buttons |= mask;
-            else buttons &= ~mask;
-            post(ev_mouse, buttons, 0, 0);
+            if (button >= 0)
+            {
+                /* Buttons 1-5 reach the game as keys (G_Responder); one
+                   bound to the platform's own acts here instead. */
+                int mask = 1 << button;
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+                {
+                    game_action_role role = Bind_Role(KEY_MOUSE1 + button, NULL);
+                    if (role != GAME_ACTION_GAME && I_PlatformAction(role) && role != GAME_ACTION_FLASHLIGHT)
+                        continue;
+                    buttons |= mask;
+                }
+                else if (buttons & mask) buttons &= ~mask;
+                else continue;
+                post(ev_mouse, buttons, 0, 0);
+            }
+            else if (event.type == SDL_EVENT_MOUSE_WHEEL && captured)
+            {
+                /* A notch is a key pressed and let go at once (the weapon keys). */
+                int notches = event.wheel.integer_y;
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) notches = -notches;
+                for (; notches != 0; notches += notches > 0 ? -1 : 1)
+                {
+                    int code = notches > 0 ? KEY_WHEELUP : KEY_WHEELDOWN;
+                    game_action_role role = Bind_Role(code, NULL);
+                    if (role != GAME_ACTION_GAME) I_PlatformAction(role);
+                    else { post(ev_keydown, code, 0, 0); post(ev_keyup, code, 0, 0); }
+                }
+            }
         }
     }
     if (dx)
         post(ev_mouse, buttons, dx * 4, 0);
+    /* A pad's look stick turns like the mouse, at the renderer's moment too. */
+    int turn, view = !captured ? GAMEPAD_VIEW_OFF : GAMEPAD_VIEW_NOW;
+    float look;
+#ifdef DOOM_RENDER3D
+    if (captured && hold) view = GAMEPAD_VIEW_LATER;
+#endif
+    I_GamepadFrame(view, &turn, &look);
+    if (turn)
+        post(ev_mouse, buttons, turn, 0);
+#ifdef DOOM_RENDER3D
+    if (accel && look != 0) I_Render3DLook(look);
+#endif
 }
 
 #ifdef DOOM_RENDER3D
@@ -370,6 +472,13 @@ void I_LatchMouse(void)
         I_Render3DLook(dy);
     if (dx)
         post(ev_mouse, buttons, dx * 4, 0);
+    int turn;
+    float look;
+    I_GamepadFrame(GAMEPAD_VIEW_NOW, &turn, &look);
+    if (look != 0)
+        I_Render3DLook(look);
+    if (turn)
+        post(ev_mouse, buttons, turn, 0);
 }
 #endif
 

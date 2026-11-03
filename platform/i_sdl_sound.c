@@ -29,6 +29,7 @@
 #include "game_profile.h"
 #include "audio/sf2_synth.h"
 #include "audio/sound_options.h"
+#include "gamepad_rumble.h"
 #include <SDL3/SDL.h>
 
 #define OUTPUT_RATE 44100
@@ -246,6 +247,7 @@ void I_InitSound(void)
         uint32_t size = little32(data + 4);
         if (!size || size > (uint32_t)(length - 8)) continue;
         samples[i] = (sample_t){ data + 8, (int)size, (int)little16(data + 2) };
+        Rumble_Analyse(i, samples[i].data, samples[i].length, samples[i].rate);
     }
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
     { fprintf(stderr, "Audio unavailable: %s\n", SDL_GetError()); return; }
@@ -414,8 +416,19 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
     const mobj_t *listener = players[consoleplayer].mo;
     if (own && listener) air = Vacuum_Carry(listener->x, listener->y, 1, &air_hz);
     cutoff = SDL_min(cutoff, air_hz);
-    if (!stream || id < 1 || id >= NUMSFX || !samples[id].data) return 0;
+    if (id < 1 || id >= NUMSFX || !samples[id].data) return 0;
     float reach = reach_of(id);
+    /* A pad feels it as it reaches the player (gamepad_rumble.c): their own
+       whole, the rest by distance, less through walls. Sounds from nowhere
+       (the menus) aren't felt. */
+    if (placed || own)
+    {
+        float distance = placed ? listener_distance(x, y) : 0;
+        int mine = own || distance < 1;
+        float felt = mine ? 1 : distance_gain(distance / reach) * (cutoff < 1500 ? 0.6f : 1);
+        Rumble_Sound(id, mine ? 1 : felt * air, mine);
+    }
+    if (!stream) return 0;
     if (placed && falls_off()) level = snd_SfxVolume * distance_gain(listener_distance(x, y) / reach);
     int handle = start_sample(samples[id], level, separation, pitch, cutoff, placed ? there : 0, 1, air);
     SDL_LockAudioStream(stream);

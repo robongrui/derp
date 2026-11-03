@@ -4,10 +4,13 @@
 // MN_menu.c
 
 #include <ctype.h>
+#include <stdio.h>
+#include <time.h>
 #include "doomdef.h"
 #include "p_local.h"
 #include "r_local.h"
 #include "soundst.h"
+#include "i_video.h"
 
 // Macros
 
@@ -902,6 +905,22 @@ static boolean SCSaveGame(int option)
 	{
 		FileMenuKeySteal = true;
 		strcpy(oldSlotText, SlotText[option]);
+		// DERP: picked with a gamepad, an empty slot gets the map and the
+		// time of day, so A saves without typing.
+		if(!SlotStatus[option] && I_GamepadUsedLast())
+		{
+			time_t now = time(NULL);
+			struct tm *local = localtime(&now);
+			if(local)
+			{
+				snprintf(SlotText[option], SLOTTEXTLEN, "E%dM%d %02d:%02d",
+					gameepisode, gamemap, local->tm_hour, local->tm_min);
+			}
+			else
+			{
+				snprintf(SlotText[option], SLOTTEXTLEN, "E%dM%d", gameepisode, gamemap);
+			}
+		}
 		ptr = SlotText[option];
 		while(*ptr)
 		{
@@ -1079,6 +1098,28 @@ static boolean SCInfo(int option)
 //
 //---------------------------------------------------------------------------
 
+//---------------------------------------------------------------------------
+//
+// FUNC MN_PadMode
+//
+// DERP: what a gamepad's buttons do now: 0 play, 1 the menus, 2 a yes/no
+// question, 3 typing a save's name (game_profile.h's GAME_PAD_*).
+//
+//---------------------------------------------------------------------------
+
+int MN_PadMode(void)
+{
+	if(FileMenuKeySteal)
+	{
+		return 3;
+	}
+	if(askforquit)
+	{
+		return 2;
+	}
+	return MenuActive || InfoType ? 1 : 0;
+}
+
 boolean MN_Responder(event_t *event)
 {
 	int key;
@@ -1099,6 +1140,12 @@ boolean MN_Responder(event_t *event)
 		return(false);
 	}
 	key = event->data1;
+	// DERP: mouse and pad buttons as keys (bind_keys.h) are the game's; the
+	// pad works the menus with the keys they know (i_sdl_gamepad.c).
+	if(key >= KEY_MOUSE1)
+	{
+		return(false);
+	}
 	if(InfoType)
 	{
 		if(shareware)

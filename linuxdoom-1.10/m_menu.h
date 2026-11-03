@@ -38,6 +38,10 @@
 // Does all the real work of the menu interaction.
 boolean M_Responder (event_t *ev);
 
+// DERP: what a gamepad's buttons do now: 0 play, 1 the menus, 2 a yes/no
+// question, 3 typing a save's name (game_profile.h's GAME_PAD_*).
+int M_PadMode (void);
+
 
 // Called by main loop,
 // only used for menu (skull cursor) animation.

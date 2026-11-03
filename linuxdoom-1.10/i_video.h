@@ -47,6 +47,11 @@ void I_UpdateNoBlit (void);
 
 // Caps Lock is on: always run.
 boolean I_CapsLock (void);
+// DERP: a gamepad's movement stick, -1 to 1 forward and to the right, while
+// it plays (false with no pad in use); and whether a pad was the last thing
+// the player used (a save picked with it gets a name made up for it).
+boolean I_GamepadMove (float* forward, float* side);
+boolean I_GamepadUsedLast (void);
 void I_FinishUpdate (void);
 
 // Wait for vertical retrace or pause a bit.

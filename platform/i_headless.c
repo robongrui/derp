@@ -16,6 +16,8 @@ void I_ShutdownGraphics(void) { }
 void I_StartFrame(void) { }
 void I_StartTic(void) { }
 boolean I_CapsLock(void) { return false; }
+boolean I_GamepadMove(float *forward, float *side) { *forward = *side = 0; return false; }
+boolean I_GamepadUsedLast(void) { return false; }
 void I_UpdateNoBlit(void) { }
 void I_FinishUpdate(void) { }
 void I_SetPalette(byte *palette) { (void)palette; }

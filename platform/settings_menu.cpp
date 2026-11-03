@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 extern "C" {
@@ -21,13 +22,15 @@ extern boolean paused;
 #include "scene3d.h"
 #include "settings_panel.h"
 #include "game_profile.h"
+#include "bindings.h"
 #include "small_font.h"
 
 using namespace doom3d;
 
 namespace {
-// One row of the current tab: a section heading (option null) or an option.
-struct Line { const OptionSection *section; Option *option; };
+// One row of the current tab: a section heading (option null, action -1), an
+// option, or on the Bindings page one of the game's actions.
+struct Line { const OptionSection *section; Option *option; int action=-1; };
 
 struct Panel {
     bool open=false,wasPaused=false;
@@ -37,12 +40,21 @@ struct Panel {
     int group=0,tab=0,selected=0,scroll=0;
     std::vector<int> groupTab;                // the tab last shown in each group
     std::vector<std::pair<int,int>> groupSpans,tabSpans; // left and right pixel of each group's title and tab's bar
+    // The Bindings page: its section headings, the slot picked (0 and 1 keys
+    // and mouse buttons, 2 the pad), whether it waits for an input to bind, and
+    // what the last change did ("Taken from Use").
+    std::vector<OptionSection> bindingSections;
+    int slot=0;
+    bool capturing=false;
+    std::string note;
 } panel;
 
 // The image is a grid of 8x16 character cells, 80 columns by 25 rows.
 const int width=DOOM_SETTINGS_WIDTH,height=DOOM_SETTINGS_HEIGHT,cellWidth=8,cellHeight=16;
 const int groupRow=0,tabRow=1,listRow=3,visibleLines=16,descriptionRow=20,descriptionLines=4,helpRow=24;
 const int leftColumn=2,rightColumn=78,sliderColumns=20,valueColumns=6;
+// The Bindings page's three slots, by the column each ends at: key, key or mouse, pad.
+const int slotRight[3]={50,64,78},slotColumns=13;
 
 // Colors as 0xAARRGGBB, the byte order of the B8G8R8A8 texture.
 const unsigned backdrop=0xc8080808,separator=0xff3a3a3a,text=0xffe6e6e6,heading=0xffe8b040,dim=0xff686868,
@@ -114,10 +126,35 @@ std::string valueText(const Option &option) {
 
 std::vector<OptionTab> &groupTabs() { return panel.groups[(size_t)panel.group].tabs; }
 
+bool bindingsTab() { return groupTabs()[(size_t)panel.tab].bindings; }
+bool selectable(const Line &line) { return line.option||line.action>=0; }
+
+// The Bindings page lists the game's actions under their sections.
+void listActions() {
+    int count;
+    const game_action *actions=Game_Actions(&count);
+    panel.bindingSections.clear();
+    for(int i=0;i<count;++i)
+        if(panel.bindingSections.empty()||strcmp(panel.bindingSections.back().title,actions[i].section))
+            panel.bindingSections.push_back({actions[i].section,{}});
+    const char *current=nullptr;
+    size_t section=0;
+    for(int i=0;i<count;++i) {
+        if(!current||strcmp(current,actions[i].section)) {
+            if(current)++section;
+            current=actions[i].section;
+            panel.lines.push_back({&panel.bindingSections[section],nullptr});
+        }
+        panel.lines.push_back({&panel.bindingSections[section],nullptr,i});
+    }
+}
+
 void selectTab(int tab) {
     int count=(int)groupTabs().size();
     panel.tab=panel.groupTab[(size_t)panel.group]=(tab%count+count)%count;
     panel.lines.clear();
+    panel.capturing=false;panel.note.clear();
+    if(bindingsTab())listActions();
     for(OptionSection &section:groupTabs()[(size_t)panel.tab].sections) {
         panel.lines.push_back({&section,nullptr});
         for(Option &option:section.options)panel.lines.push_back({&section,&option});
@@ -151,7 +188,7 @@ void keepSelectionVisible() {
 void moveSelection(int direction) {
     int count=(int)panel.lines.size();
     do panel.selected=((panel.selected+direction)%count+count)%count;
-    while(!panel.lines[(size_t)panel.selected].option);
+    while(!selectable(panel.lines[(size_t)panel.selected]));
     keepSelectionVisible();
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));
 }
@@ -194,7 +231,64 @@ void changeOption(int direction) {
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
 }
 
+// The Bindings page: the selected action, its slot moved left or right past
+// the ones that can't change, and binding, clearing and resetting it. A
+// binding changes the game's config at once, not when the panel closes.
+const game_action &selectedAction() {
+    int count;
+    return Game_Actions(&count)[panel.lines[(size_t)panel.selected].action];
+}
+void moveSlot(int direction) {
+    const game_action &action=selectedAction();
+    for(int step=1;step<=3;++step) {
+        int slot=((panel.slot+direction*step)%3+3)%3;
+        if(action.slot[slot]) {panel.slot=slot;S_StartSound(NULL,Game_MenuSound(GAME_MENU_MOVE));return;}
+    }
+}
+// A selected row keeps a slot it has.
+void fitSlot() {
+    const game_action &action=selectedAction();
+    if(action.slot[panel.slot])return;
+    for(int slot=0;slot<3;++slot)if(action.slot[slot]) {panel.slot=slot;return;}
+}
+void startCapture() {
+    if(!selectedAction().slot[panel.slot]) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
+    panel.capturing=true;panel.note.clear();
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
+}
+void bind(int code) {
+    int count,taken;
+    const game_action *actions=Game_Actions(&count);
+    int action=panel.lines[(size_t)panel.selected].action;
+    if(!Bind_Set(action,panel.slot,code,&taken)) {
+        panel.note=(panel.slot==2)!=(code>=KEY_PAD)
+            ?(panel.slot==2?"Pad buttons only in this column; keys and mouse buttons in the other two.":"Keys and mouse buttons only here; pad buttons go in the Pad column.")
+            :"That one is kept for the menus (Esc, the F-keys, Tab, Start).";
+        S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));
+        return;
+    }
+    panel.capturing=false;
+    panel.note=taken>=0?std::string("Taken from ")+actions[taken].title+".":"";
+    Bind_Save();
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
+}
+void clearBinding() {
+    const game_action &action=selectedAction();
+    if(!action.slot[panel.slot]||*action.slot[panel.slot]==KEY_NONE) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
+    *action.slot[panel.slot]=KEY_NONE;
+    panel.note.clear();Bind_Save();
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
+}
+void resetBinding() {
+    int action=panel.lines[(size_t)panel.selected].action;
+    if(Bind_IsDefault(action,panel.slot)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
+    Bind_Reset(action,panel.slot);
+    panel.note.clear();Bind_Save();
+    S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
+}
+
 void closePanel() {
+    panel.capturing=false;
     // A new Gameplay (Normal, Authored, Phobos) takes a map built for it: the game restarts the map if it plays differently.
     bool modeChanged=panel.draft.mode!=settings.mode;
     settings=panel.draft;
@@ -245,8 +339,31 @@ void I_Render3DSettingsMenu(void) {
 
 int I_Render3DSettingsOpen(void) { return panel.open; }
 
+int I_Render3DSettingsCapturing(void) { return panel.open&&panel.capturing; }
+
+void I_Render3DSettingsBind(int code) { if(I_Render3DSettingsCapturing())bind(code); }
+
 void I_Render3DSettingsKey(int scancode,int shift) {
     if(!panel.open)return;
+    if(panel.capturing) {
+        if(scancode==SDL_SCANCODE_ESCAPE) {panel.capturing=false;S_StartSound(NULL,Game_MenuSound(GAME_MENU_CLOSE));}
+        return;
+    }
+    if(bindingsTab()) {
+        bool done=true;
+        switch(scancode) {
+        case SDL_SCANCODE_UP: moveSelection(-1); fitSlot(); panel.note.clear(); break;
+        case SDL_SCANCODE_DOWN: moveSelection(1); fitSlot(); panel.note.clear(); break;
+        case SDL_SCANCODE_LEFT: moveSlot(-1); break;
+        case SDL_SCANCODE_RIGHT: moveSlot(1); break;
+        case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: case SDL_SCANCODE_SPACE: startCapture(); break;
+        case SDL_SCANCODE_DELETE: clearBinding(); break;
+        case SDL_SCANCODE_BACKSPACE: resetBinding(); break;
+        case SDL_SCANCODE_R: Bind_ResetAll(); Bind_Save(); panel.note="Every binding back to its default."; S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE)); break;
+        default: done=false; break;
+        }
+        if(done)return;
+    }
     switch(scancode) {
     case SDL_SCANCODE_UP: moveSelection(-1); break;
     case SDL_SCANCODE_DOWN: moveSelection(1); break;
@@ -289,8 +406,20 @@ void I_Render3DSettingsClick(int x,int y,int button) {
         return;
     }
     int index=panel.scroll+row-listRow;
-    if(row<listRow||row>=listRow+visibleLines||index>=(int)panel.lines.size()||!panel.lines[(size_t)index].option)return;
+    if(panel.capturing||row<listRow||row>=listRow+visibleLines||index>=(int)panel.lines.size()||!selectable(panel.lines[(size_t)index]))return;
+    if(index!=panel.selected)panel.note.clear();
     panel.selected=index;
+    if(bindingsTab()) {
+        // A click on a slot picks it: left binds it, right clears it.
+        fitSlot();
+        if(button==0)return;
+        for(int slot=0;slot<3;++slot)
+            if(x>=(slotRight[slot]-slotColumns)*cellWidth&&x<slotRight[slot]*cellWidth&&selectedAction().slot[slot]) {
+                panel.slot=slot;
+                if(button==1)startCapture();else clearBinding();
+            }
+        return;
+    }
     if(button==0)return; // Hovering highlights the option.
     Option &option=selectedOption();
     if(option.kind==OptionKind::Slider&&button==1&&x>=sliderLeft()-cellWidth) {
@@ -334,10 +463,50 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
     }
     drawSeparator(tabRow+1);
 
+    int actionCount;
+    const game_action *actions=Game_Actions(&actionCount);
     for(int i=0;i<visibleLines&&panel.scroll+i<(int)panel.lines.size();++i) {
         const Line &line=panel.lines[(size_t)(panel.scroll+i)];
         int row=listRow+i;
-        if(!line.option) {drawText(line.section->title,leftColumn,row,heading);continue;}
+        if(!selectable(line)) {
+            drawText(line.section->title,leftColumn,row,heading);
+            if(bindingsTab()) {
+                static const char *const columns[3]={"Key","Key or mouse","Pad"};
+                for(int slot=0;slot<3;++slot)drawTextRight(columns[slot],slotRight[slot],row,dim);
+            }
+            continue;
+        }
+        if(line.action>=0) {
+            // An action: its title and three slots, the one picked framed in
+            // the selection, waiting for an input while it binds.
+            const game_action &action=actions[line.action];
+            bool selected=panel.scroll+i==panel.selected;
+            if(selected)fill((leftColumn+1)*cellWidth,rowY(row),(rightColumn-leftColumn)*cellWidth,cellHeight,selectionBar);
+            drawText(action.title,leftColumn+2,row,selected?bright:text);
+            bool changed=false;
+            for(int slot=0;slot<3;++slot) {
+                char name[32];
+                unsigned color=selected?bright:text;
+                if(!action.slot[slot]) {
+                    if(slot!=0||action.fixed==KEY_NONE)continue;
+                    Bind_Name(action.fixed,name,sizeof(name));
+                    color=dim;
+                } else {
+                    Bind_Name(*action.slot[slot],name,sizeof(name));
+                    if(*action.slot[slot]==KEY_NONE)color=dim;
+                    changed|=!Bind_IsDefault(line.action,slot);
+                }
+                if(selected&&slot==panel.slot) {
+                    int left=(slotRight[slot]-slotColumns)*cellWidth+cellWidth/2;
+                    fill(left,rowY(row)+1,slotColumns*cellWidth-cellWidth/2,cellHeight-2,tabBar);
+                    if(panel.capturing) {snprintf(name,sizeof(name),"Press...");color=heading;}
+                    else color=bright;
+                }
+                drawTextRight(name,slotRight[slot],row,color);
+            }
+            if(changed)drawChangedMark(row,true);
+            continue;
+        }
         const Option &option=*line.option;
         bool selected=panel.scroll+i==panel.selected,enabled=option.isEnabled(panel.draft);
         if(selected)fill((leftColumn+1)*cellWidth,rowY(row),(rightColumn-leftColumn)*cellWidth,cellHeight,selectionBar);
@@ -352,10 +521,27 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
     if(panel.scroll+visibleLines<(int)panel.lines.size())drawArrow(listRow+visibleLines-1,false);
     drawSeparator(descriptionRow-1);
 
-    const Option &option=selectedOption();
-    std::vector<std::string> lines=wrap(option.tip?option.tip:"",(rightColumn-leftColumn)*cellWidth,descriptionLines);
-    for(size_t i=0;i<lines.size();++i)drawText(lines[i],leftColumn,descriptionRow+(int)i,description);
-    std::string help="Arrows select, change   Tab page   PgDn group   Backspace reset   R reset all   Esc done";
+    std::string tip,help;
+    if(bindingsTab()) {
+        const game_action &action=actions[panel.lines[(size_t)panel.selected].action];
+        if(panel.capturing)
+            tip=panel.slot==2?"Press the pad button for "+std::string(action.title)+". Start cancels."
+                             :"Press the key or mouse button for "+std::string(action.title)+". Esc cancels.";
+        else {
+            tip=panel.note;
+            if(!tip.empty())tip+=" ";
+            if(action.role==GAME_ACTION_PRESS)tip+="The keyboard key stays as it is; the pad's button presses it. ";
+            tip+="Enter or A: bind the picked slot, then press the key, mouse button or pad button. Delete or X: clear it. "
+                 "Backspace or Y: its default. R: every default.";
+        }
+        help="Arrows pick   Enter bind   Del clear   Backspace default   R all defaults   Tab page   Esc done";
+    } else {
+        const Option &option=selectedOption();
+        tip=option.tip?option.tip:"";
+        help="Arrows select, change   Tab page   PgDn group   Backspace reset   R reset all   Esc done";
+    }
+    std::vector<std::string> lines=wrap(tip,(rightColumn-leftColumn)*cellWidth,descriptionLines);
+    for(size_t i=0;i<lines.size();++i)drawText(lines[i],leftColumn,descriptionRow+(int)i,panel.capturing?heading:description);
     drawTextAt(help,(width-textWidth(help))/2,helpRow,dim);
     // The renderer repeats the border texels beyond the image, so they stay plain backdrop.
     fill(0,0,width,1,backdrop);fill(0,height-1,width,1,backdrop);

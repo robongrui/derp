@@ -17,6 +17,63 @@ const char *Game_ConfigDefaults(void)
            "sfx_volume 10\nmusic_volume 7\nsnd_channels 8\n";
 }
 
+/* The bindings: g_binds.h's variables, as F4's Bindings page lists them. */
+#define BIND(name, title, section, role, key, key2, pad) extern int key_##name, key2_##name, pad_##name;
+#define PRESS(name, title, section, key, pad) extern int pad_##name;
+#include "g_binds.h"
+#undef BIND
+#undef PRESS
+static const game_action actions[] = {
+#define BIND(name, title, section, role, key, key2, pad) \
+    {title, section, {&key_##name, &key2_##name, &pad_##name}, {key, key2, pad}, GAME_ACTION_##role, KEY_NONE},
+#define PRESS(name, title, section, key, pad) \
+    {title, section, {NULL, NULL, &pad_##name}, {KEY_NONE, KEY_NONE, pad}, GAME_ACTION_PRESS, key},
+#include "g_binds.h"
+#undef BIND
+#undef PRESS
+};
+const game_action *Game_Actions(int *count)
+{
+    *count = (int)(sizeof(actions) / sizeof(actions[0]));
+    return actions;
+}
+
+int MN_PadMode(void);
+extern boolean automapactive;
+game_pad_mode Game_PadMode(void)
+{
+    int menu = MN_PadMode();
+    if (menu) return (game_pad_mode)menu;
+    return gamestate == GS_LEVEL && automapactive ? GAME_PAD_AUTOMAP : GAME_PAD_PLAY;
+}
+
+/* The player's own weapons, pain, landing and death; the gauntlets' sounds
+   come every few tics while they run, so their holds join into one buzz. */
+int Game_SoundRumble(int id, game_rumble *r)
+{
+    static const struct { int id; game_rumble rumble; } tuned[] = {
+        {sfx_stfhit,  {0.45f, 0.30f, 0.30f, 0, 0.03f, 0.12f}},
+        {sfx_stfpow,  {0.70f, 0.45f, 0.45f, 0, 0.05f, 0.20f}},
+        {sfx_gldhit,  {0.25f, 0.35f, 0.40f, 0, 0.02f, 0.08f}},
+        {sfx_bowsht,  {0.55f, 0.35f, 0.65f, 0, 0.04f, 0.20f}},
+        {sfx_blssht,  {0.40f, 0.40f, 0.50f, 0, 0.03f, 0.12f}},
+        {sfx_hrnsht,  {0.10f, 0.40f, 0.25f, 0, 0.02f, 0.05f}},
+        {sfx_phosht,  {0.90f, 0.40f, 0.85f, 0.02f, 0.10f, 0.35f}},
+        {sfx_lobsht,  {0.50f, 0.25f, 0.45f, 0, 0.04f, 0.18f}},
+        {sfx_gntuse,  {0.15f, 0.35f, 0, 0, 0.13f, 0.04f}},
+        {sfx_gntful,  {0.30f, 0.65f, 0.25f, 0, 0.13f, 0.04f}},
+        {sfx_gnthit,  {0.55f, 0.90f, 0.45f, 0, 0.13f, 0.05f}},
+        {sfx_plroof,  {0.60f, 0.15f, 0, 0, 0.03f, 0.25f}},
+        {sfx_plrpai,  {0.85f, 0.55f, 0, 0, 0.05f, 0.55f}},
+        {sfx_plrdth,  {1.00f, 0.45f, 0, 0, 0.20f, 1.60f}},
+        {sfx_plrwdth, {1.00f, 0.45f, 0, 0, 0.20f, 1.60f}},
+        {sfx_plrcdth, {1.00f, 0.60f, 0, 0, 0.25f, 1.80f}},
+    };
+    for (unsigned i = 0; i < sizeof(tuned) / sizeof(tuned[0]); ++i)
+        if (tuned[i].id == id) { *r = tuned[i].rumble; return 1; }
+    return 0;
+}
+
 int Game_ThinkerIsMobj(const struct thinker_s *thinker)
 {
     return thinker->function == (think_t)P_MobjThinker;

@@ -357,6 +357,17 @@ boolean I_CapsLock (void)
     return false;
 }
 
+// DERP's gamepads: none on this backend.
+boolean I_GamepadMove (float* forward, float* side)
+{
+    *forward = *side = 0;
+    return false;
+}
+boolean I_GamepadUsedLast (void)
+{
+    return false;
+}
+
 //
 // I_FinishUpdate
 //

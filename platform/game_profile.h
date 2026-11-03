@@ -22,6 +22,40 @@ int Game_WadKind(void);
    playing keys stay where they sit on the keyboard. */
 int Game_TakesText(void);
 
+/* The actions the player binds keys, mouse buttons and a pad button to
+   (g_binds.h; F4's Bindings page, platform/bindings.c). slot[0] and slot[1]
+   hold keyboard keys or mouse buttons, slot[2] a pad button (bind_keys.h);
+   a null slot can't be changed. role says who acts on it: the game reads
+   its own (GAME_ACTION_GAME) from its key-down table, the platform acts on
+   the others. A GAME_ACTION_PRESS is a fixed keyboard key (fixed, such as
+   the automap's Tab) that the platform presses for the pad button. */
+typedef enum {
+    GAME_ACTION_GAME, GAME_ACTION_FLASHLIGHT, GAME_ACTION_SCREENSHOT, GAME_ACTION_STATS,
+    GAME_ACTION_FULLSCREEN, GAME_ACTION_CENTER_VIEW, GAME_ACTION_GYRO, GAME_ACTION_PRESS
+} game_action_role;
+typedef struct {
+    const char *title, *section;
+    int *slot[3];
+    int defaults[3];
+    game_action_role role;
+    int fixed;
+} game_action;
+const game_action *Game_Actions(int *count);
+/* What a gamepad's buttons do right now (i_sdl_gamepad.c): play, or work
+   the game's menus, a yes/no question, the name being typed for a save, or
+   the automap. */
+typedef enum {
+    GAME_PAD_PLAY, GAME_PAD_MENU, GAME_PAD_ASK, GAME_PAD_TYPING, GAME_PAD_AUTOMAP
+} game_pad_mode;
+game_pad_mode Game_PadMode(void);
+/* A rumble picked by hand for one of the player's own sounds (their guns,
+   pain, landing, death): the motors' strengths 0-1 (low, high, the trigger
+   under the fire finger), and how it rises, holds and fades, in seconds.
+   0: none for that sound; the rumble is then derived from the sound
+   (gamepad_rumble.c). */
+typedef struct { float low, high, trigger, attack, hold, decay; } game_rumble;
+int Game_SoundRumble(int id, game_rumble *rumble);
+
 /* Whether a thinker is a map object (an mobj_t). */
 int Game_ThinkerIsMobj(const struct thinker_s *thinker);
 

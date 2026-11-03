@@ -33,6 +33,8 @@ int Game_ThinkerIsMobj(const thinker_t *thinker) { return thinker == &monster.th
 int Game_WeaponHeft(int weapon) { (void)weapon; return 2; }
 float Game_SoundCarry(int id) { (void)id; return 1; }
 void Game_SfxLoaded(int id, void *data) { (void)id; (void)data; }
+void Rumble_Analyse(int id, const unsigned char *samples, int length, int rate) { (void)id; (void)samples; (void)length; (void)rate; }
+void Rumble_Sound(int id, float gain, int own) { (void)id; (void)gain; (void)own; }
 void Game_TraceShots(game_shot_traced traced) { (void)traced; }
 game_surface Game_FlatSurface(const char *name) { return name[0] == 'W' ? GAME_SURFACE_LIQUID : GAME_SURFACE_STONE; }
 game_liquid Game_LiquidFlat(const char *name) { (void)name; return GAME_LIQUID_WATER; }

@@ -6,6 +6,9 @@
 void I_ShutdownGraphics(void);
 void I_UpdateNoBlit(void);
 boolean I_CapsLock(void);
+/* A gamepad's movement stick and whether a pad was used last (DOOM's i_video.h). */
+boolean I_GamepadMove(float *forward, float *side);
+boolean I_GamepadUsedLast(void);
 void I_FinishUpdate(void);
 void I_ReadScreen(byte *scr);
 #endif

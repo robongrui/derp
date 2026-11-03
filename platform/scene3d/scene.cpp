@@ -6,6 +6,7 @@
 extern "C" {
 #include "../audio/sound_options.h"
 }
+#include "../i_gamepad.h"
 #include "../settings_panel.h"
 
 namespace doom3d {
@@ -142,6 +143,10 @@ void applySettings() {
     Game_SetWeather(settings.weather);
     Game_SetPhobosRules(settings.phobosPlayer,settings.phobosEnemies,settings.phobosAir,settings.phobosRecoil);
     quickconfirm=settings.quickConfirm!=0;
+    gamepad_options pad={settings.padLookX,settings.padLookY,settings.padDeadzone,settings.gyroSpeed,
+                         settings.padBoost,settings.padSouthpaw,settings.gyro,
+                         settings.rumble,settings.triggerRumble,settings.worldRumble};
+    I_GamepadOptions(&pad);
     if(!settings.accelerated) clearFlashPulses();
     r_uncapped=settings.accelerated;
     if(!settings.look) pitch=0;
@@ -736,6 +741,12 @@ void I_Render3DLook(float delta) {
     }
 }
 void I_Render3DToggleFlashlight(void) {if(settings.accelerated&&Game_HasEffect(GAME_EFFECT_FLASHLIGHT))flashlightOn=!flashlightOn;}
+void I_Render3DCenterView(void) {
+    if(demoplayback)return;
+    float gameLook;
+    if(Game_LookPitch(&gameLook))Game_Look(-gameLook);
+    else pitch=0;
+}
 void I_Render3DScreenshot(void) {screenshotPending=true;}
 void I_Render3DCycleStats(void) {if(settings.accelerated){settings.fps=(settings.fps+1)%4;saveSettings();}}
 const I_Render3DFrameProfile *I_Render3DLastFrame(void) {return &profile.frame;}

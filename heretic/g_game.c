@@ -110,16 +110,12 @@ byte            *savebuffer, *save_p;
 //
 // controls (have defaults)
 //
-int             key_right, key_left, key_up, key_down;
-int             key_strafeleft, key_straferight;
-int             key_fire, key_use, key_strafe, key_speed;
-int                             key_flyup, key_flydown, key_flycenter;
-int                             key_lookup, key_lookdown, key_lookcenter;
-int                             key_invleft, key_invright, key_useartifact;
-
-int             mousebfire;
-int             mousebstrafe;
-int             mousebforward;
+// DERP: every action's keys, mouse buttons and pad button (g_binds.h).
+#define BIND(name, title, section, role, key, key2, pad) int key_##name, key2_##name, pad_##name;
+#define PRESS(name, title, section, key, pad) int pad_##name;
+#include "g_binds.h"
+#undef BIND
+#undef PRESS
 
 int             joybfire;
 int             joybstrafe;
@@ -135,15 +131,38 @@ fixed_t         sidemove[2] = {0x18, 0x28};
 fixed_t         angleturn[3] = {640, 1280, 320};     // + slow turn
 #define SLOWTURNTICS    6
 
-#define NUMKEYS 256
+// DERP: the keyboard's keys, then the mouse buttons and the pad's (bind_keys.h).
+#define NUMKEYS BIND_KEYCOUNT
 boolean         gamekeydown[NUMKEYS];
 int             turnheld;                   // for accelerative turning
 int                              lookheld;
 
+// DERP: whether an action's key, mouse button or pad button is held, and
+// whether a key event is one of an action's.
+static boolean G_Held(int key)
+{
+	return key >= 0 && key < NUMKEYS && gamekeydown[key];
+}
+static boolean G_MouseHeld(int key)
+{
+	return key >= KEY_MOUSE1 && key <= KEY_MOUSE5 && gamekeydown[key];
+}
+#define HELD(a)         (G_Held(key_##a) || G_Held(key2_##a) || G_Held(pad_##a))
+#define MOUSEHELD(a)    (G_MouseHeld(key_##a) || G_MouseHeld(key2_##a))
+#define BOUND(k, a)     ((k) == key_##a || (k) == key2_##a || (k) == pad_##a)
+// An action's keys let go, as if released.
+#define RELEASE(a)      (G_Release(key_##a), G_Release(key2_##a), G_Release(pad_##a))
+static void G_Release(int key)
+{
+	if(key >= 0 && key < NUMKEYS)
+	{
+		gamekeydown[key] = false;
+	}
+}
 
-boolean         mousearray[4];
-boolean         *mousebuttons = &mousearray[1];
-	// allow [-1]
+// DERP: the next (1) or previous (-1) weapon key pressed since the last ticcmd.
+static int weaponstep;
+
 int             mousex, mousey;             // mouse values are used once
 static int      mouseturns[BACKUPTICS];     // the mouse's part of each ticcmd's turn
 int             dclicktime, dclickstate, dclicks;
@@ -198,6 +217,60 @@ extern  int             isCyberPresent;     // is CyberMan present?
 boolean usearti = true;
 void I_ReadCyberCmd (ticcmd_t *cmd);
 
+// DERP: whether the key for weapon slot i (0: staff, 6: firemace) is held.
+static boolean G_WeaponHeld(int i)
+{
+	switch(i)
+	{
+		case 0: return HELD(weapon1);
+		case 1: return HELD(weapon2);
+		case 2: return HELD(weapon3);
+		case 3: return HELD(weapon4);
+		case 4: return HELD(weapon5);
+		case 5: return HELD(weapon6);
+		case 6: return HELD(weapon7);
+	}
+	return false;
+}
+
+// DERP: the weapon the next (step 1) or previous (-1) weapon key picks: the
+// next along the slots that the player has and has ammo for, or -1.
+static int G_NextWeapon(int step)
+{
+	static const weapontype_t order[] = {wp_staff, wp_gauntlets, wp_goldwand,
+		wp_crossbow, wp_blaster, wp_skullrod, wp_phoenixrod, wp_mace};
+	const int count = sizeof(order)/sizeof(order[0]);
+	player_t *player = &players[consoleplayer];
+	weapontype_t current = player->pendingweapon != wp_nochange
+		? player->pendingweapon : player->readyweapon;
+	int i, at = 0;
+
+	for(i = 0; i < count; i++)
+	{
+		if(order[i] == current)
+		{
+			at = i;
+		}
+	}
+	for(i = 1; i < count; i++)
+	{
+		weapontype_t w = order[((at+step*i)%count+count)%count];
+		ammotype_t ammo = wpnlev1info[w].ammo;
+		if(!player->weaponowned[w] || (ammo != am_noammo && !player->ammo[ammo]))
+		{
+			continue;
+		}
+		// The staff's key gives the gauntlets unless they are out.
+		if(w == wp_staff && player->weaponowned[wp_gauntlets]
+			&& player->readyweapon != wp_gauntlets)
+		{
+			continue;
+		}
+		return w;
+	}
+	return -1;
+}
+
 void G_BuildTiccmd (ticcmd_t *cmd)
 {
 	int             i;
@@ -229,10 +302,8 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 
 //printf ("cons: %i\n",cmd->consistancy);
 
-	strafe = gamekeydown[key_strafe] || mousebuttons[mousebstrafe]
-		|| joybuttons[joybstrafe];
-	speed = gamekeydown[key_speed] || joybuttons[joybspeed]
-		|| joybuttons[joybspeed];
+	strafe = HELD(strafe) || joybuttons[joybstrafe];
+	speed = HELD(speed) || joybuttons[joybspeed];
 
 	// DERP: Caps Lock on = always run; the run key then walks.
 	{
@@ -258,7 +329,7 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 // use two stage accelerative turning on the keyboard and joystick
 //
 	if (joyxmove < 0 || joyxmove > 0
-	|| gamekeydown[key_right] || gamekeydown[key_left])
+	|| HELD(right) || HELD(left))
 		turnheld += ticdup;
 	else
 		turnheld = 0;
@@ -267,7 +338,7 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 	else
 		tspeed = speed;
 
-	if(gamekeydown[key_lookdown] || gamekeydown[key_lookup])
+	if(HELD(lookdown) || HELD(lookup))
 	{
 		lookheld += ticdup;
 	}
@@ -289,9 +360,9 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 //
 	if(strafe)
 	{
-		if (gamekeydown[key_right])
+		if (HELD(right))
 			side += sidemove[speed];
-		if (gamekeydown[key_left])
+		if (HELD(left))
 			side -= sidemove[speed];
 		if (joyxmove > 0)
 			side += sidemove[speed];
@@ -300,9 +371,9 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 	}
 	else
 	{
-		if (gamekeydown[key_right])
+		if (HELD(right))
 			cmd->angleturn -= angleturn[tspeed];
-		if (gamekeydown[key_left])
+		if (HELD(left))
 			cmd->angleturn += angleturn[tspeed];
 		if (joyxmove > 0)
 			cmd->angleturn -= angleturn[tspeed];
@@ -310,35 +381,35 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 			cmd->angleturn += angleturn[tspeed];
 	}
 
-	if (gamekeydown[key_up])
+	if (HELD(up))
 		forward += forwardmove[speed];
-	if (gamekeydown[key_down])
+	if (HELD(down))
 		forward -= forwardmove[speed];
 	if (joyymove < 0)
 		forward += forwardmove[speed];
 	if (joyymove > 0)
 		forward -= forwardmove[speed];
-	if (gamekeydown[key_straferight])
+	if (HELD(straferight))
 		side += sidemove[speed];
-	if (gamekeydown[key_strafeleft])
+	if (HELD(strafeleft))
 		side -= sidemove[speed];
 
 	// Look up/down/center keys
-	if(gamekeydown[key_lookup])
+	if(HELD(lookup))
 	{
 		look = lspeed;
 	}
-	if(gamekeydown[key_lookdown])
+	if(HELD(lookdown))
 	{
 		look = -lspeed;
 	}
 #ifdef __WATCOMC__
-	if(gamekeydown[key_lookcenter] && !useexterndriver)
+	if(HELD(lookcenter) && !useexterndriver)
 	{
 		look = TOCENTER;
 	}
 #else
-	if(gamekeydown[key_lookcenter])
+	if(HELD(lookcenter))
 	{
 		look = TOCENTER;
 	}
@@ -522,15 +593,15 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 #endif
 
 	// Fly up/down/drop keys
-	if(gamekeydown[key_flyup])
+	if(HELD(flyup))
 	{
 		flyheight = 5; // note that the actual flyheight will be twice this
 	}
-	if(gamekeydown[key_flydown])
+	if(HELD(flydown))
 	{
 		flyheight = -5;
 	}
-	if(gamekeydown[key_flycenter])
+	if(HELD(flycenter))
 	{
 		flyheight = TOCENTER;
 #ifdef __WATCOMC__
@@ -544,13 +615,13 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 	}
 
 	// Use artifact key
-	if(gamekeydown[key_useartifact])
+	if(HELD(useartifact))
 	{
-		if(gamekeydown[key_speed] && !noartiskip)
+		if(HELD(speed) && !noartiskip)
 		{
 			if(players[consoleplayer].inventory[inv_ptr].type != arti_none)
 			{
-				gamekeydown[key_useartifact] = false;
+				RELEASE(useartifact);
 				cmd->arti = 0xff; // skip artifact code
 			}
 		}
@@ -571,10 +642,10 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 			}
 		}
 	}
-	if(gamekeydown[127] && !cmd->arti
+	if(HELD(tome) && !cmd->arti
 		&& !players[consoleplayer].powers[pw_weaponlevel2])
 	{
-		gamekeydown[127] = false;
+		RELEASE(tome);
 		cmd->arti = arti_tomeofpower;
 	}
 
@@ -583,11 +654,10 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 //
 	cmd->chatchar = CT_dequeueChatChar();
 
-	if (gamekeydown[key_fire] || mousebuttons[mousebfire]
-		|| joybuttons[joybfire])
+	if (HELD(fire) || joybuttons[joybfire])
 		cmd->buttons |= BT_ATTACK;
 
-	if (gamekeydown[key_use] || joybuttons[joybuse] )
+	if (HELD(use) || joybuttons[joybuse] )
 	{
 		cmd->buttons |= BT_USE;
 		dclicks = 0;                    // clear double clicks if hit use button
@@ -595,28 +665,40 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 
 	for(i = 0; i < NUMWEAPONS-2; i++)
 	{
-		if(gamekeydown['1'+i])
+		if(G_WeaponHeld(i))
 		{
 			cmd->buttons |= BT_CHANGE;
 			cmd->buttons |= i<<BT_WEAPONSHIFT;
 			break;
 		}
 	}
-
-//
-// mouse
-//
-	if (mousebuttons[mousebforward])
+	if(weaponstep && !(cmd->buttons&BT_CHANGE))
 	{
-		forward += forwardmove[speed];
+		int weapon = G_NextWeapon(weaponstep);
+		if(weapon >= 0)
+		{
+			cmd->buttons |= BT_CHANGE|weapon<<BT_WEAPONSHIFT;
+		}
+	}
+	weaponstep = 0;
+
+	// DERP: a gamepad's stick moves as far as it is tilted, at full tilt
+	// as fast as running.
+	{
+		float padforward, padside;
+		if(I_GamepadMove(&padforward, &padside))
+		{
+			forward += (int)(padforward*forwardmove[1]);
+			side += (int)(padside*sidemove[1]);
+		}
 	}
 
 //
-// forward double click
+// forward double click (a mouse button bound to Forward)
 //
-	if (mousebuttons[mousebforward] != dclickstate && dclicktime > 1 )
+	if (MOUSEHELD(up) != dclickstate && dclicktime > 1 )
 	{
-		dclickstate = mousebuttons[mousebforward];
+		dclickstate = MOUSEHELD(up);
 		if (dclickstate)
 			dclicks++;
 		if (dclicks == 2)
@@ -640,7 +722,7 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 //
 // strafe double click
 //
-	bstrafe = mousebuttons[mousebstrafe]
+	bstrafe = MOUSEHELD(strafe)
 || joybuttons[joybstrafe];
 	if (bstrafe != dclickstate2 && dclicktime2 > 1 )
 	{
@@ -740,8 +822,7 @@ void G_MouseTurn(int *last, int *pending)
 	*pending = 0;
 	if(player->playerstate != PST_LIVE || !player->mo
 		|| player->mo->reactiontime || (player->mo->flags&MF_JUSTATTACKED)
-		|| gamekeydown[key_strafe] || mousebuttons[mousebstrafe]
-		|| joybuttons[joybstrafe])
+		|| HELD(strafe) || joybuttons[joybstrafe])
 	{
 		return;
 	}
@@ -797,7 +878,7 @@ void G_DoLoadLevel (void)
 	joyxmove = joyymove = 0;
 	mousex = mousey = 0;
 	sendpause = sendsave = paused = false;
-	memset (mousebuttons, 0, sizeof(mousebuttons));
+	weaponstep = 0;
 	memset (joybuttons, 0, sizeof(joybuttons));
 }
 
@@ -815,10 +896,11 @@ void G_DoLoadLevel (void)
 boolean G_Responder(event_t *ev)
 {
 	player_t *plr;
+	int i;
 	extern boolean MenuActive;
 
 	plr = &players[consoleplayer];
-	if(ev->type == ev_keyup && ev->data1 == key_useartifact)
+	if(ev->type == ev_keyup && BOUND(ev->data1, useartifact))
 	{ // flag to denote that it's okay to use an artifact
 		if(!inventory)
 		{
@@ -862,7 +944,7 @@ boolean G_Responder(event_t *ev)
 	switch(ev->type)
 	{
 		case ev_keydown:
-			if(ev->data1 == key_invleft)
+			if(BOUND(ev->data1, invleft))
 			{
 				inventoryTics = 5*35;
 				if(!inventory)
@@ -885,7 +967,7 @@ boolean G_Responder(event_t *ev)
 				}
 				return(true);
 			}
-			if(ev->data1 == key_invright)
+			if(BOUND(ev->data1, invright))
 			{
 				inventoryTics = 5*35;
 				if(!inventory)
@@ -915,23 +997,33 @@ boolean G_Responder(event_t *ev)
 				sendpause = true;
 				return(true);
 			}
-			if(ev->data1 < NUMKEYS)
+			if(BOUND(ev->data1, nextweapon))
+			{
+				weaponstep = 1;
+			}
+			if(BOUND(ev->data1, prevweapon))
+			{
+				weaponstep = -1;
+			}
+			if(ev->data1 >= 0 && ev->data1 < NUMKEYS)
 			{
 				gamekeydown[ev->data1] = true;
 			}
 			return(true); // eat key down events
 
 		case ev_keyup:
-			if(ev->data1 < NUMKEYS)
+			if(ev->data1 >= 0 && ev->data1 < NUMKEYS)
 			{
 				gamekeydown[ev->data1] = false;
 			}
 			return(false); // always let key up events filter down
 
 		case ev_mouse:
-			mousebuttons[0] = ev->data1&1;
-			mousebuttons[1] = ev->data1&2;
-			mousebuttons[2] = ev->data1&4;
+			// DERP: the mouse buttons are keys (bind_keys.h).
+			for(i = 0; i < 5; i++)
+			{
+				gamekeydown[KEY_MOUSE1+i] = (ev->data1>>i)&1;
+			}
 			// Uncapped frames post one mouse event each, several per tic:
 			// sum them until G_BuildTiccmd uses and clears the motion.
 			mousex += ev->data2*(mouseSensitivity+5)/10;

@@ -342,16 +342,12 @@ void M_ForceUppercase(char *text)
 int     usemouse;
 int     usejoystick;
 
-extern  int     key_right, key_left, key_up, key_down;
-extern  int     key_strafeleft, key_straferight;
-extern  int     key_fire, key_use, key_strafe, key_speed;
-extern	int		key_flyup, key_flydown, key_flycenter;
-extern	int		key_lookup, key_lookdown, key_lookcenter;
-extern	int		key_invleft, key_invright, key_useartifact;
-
-extern  int         mousebfire;
-extern  int         mousebstrafe;
-extern  int         mousebforward;
+// DERP: every action's keys, mouse buttons and pad button (g_binds.h).
+#define BIND(name, title, section, role, key, key2, pad) extern int key_##name, key2_##name, pad_##name;
+#define PRESS(name, title, section, key, pad) extern int pad_##name;
+#include "g_binds.h"
+#undef BIND
+#undef PRESS
 
 extern  int         joybfire;
 extern  int         joybstrafe;
@@ -438,34 +434,18 @@ default_t defaults[] =
 #endif
 
 // DERP: Raven's NeXT table, with DERP's DOOM layout for moving (WASD, use on
-// space, fire on Ctrl). Without it only the DOS build bound any keys.
+// space, fire on Ctrl), a second key or mouse button and a pad button for
+// every action (g_binds.h). Without it only the DOS build bound any keys.
 #ifndef __WATCOMC__
-	{ "key_right", &key_right, KEY_RIGHTARROW },
-	{ "key_left", &key_left, KEY_LEFTARROW },
-	{ "key_up", &key_up, 'w' },
-	{ "key_down", &key_down, 's' },
-	{ "key_strafeleft", &key_strafeleft, 'a' },
-	{ "key_straferight", &key_straferight, 'd' },
-	{ "key_flyup", &key_flyup, 'u' },
-	{ "key_flydown", &key_flydown, 'j' },
-	{ "key_flycenter", &key_flycenter, 'k' },
-	{ "key_lookup", &key_lookup, 'm' },
-	{ "key_lookdown", &key_lookdown, 'b' },
-	{ "key_lookcenter", &key_lookcenter, 'n' },
-	{ "key_invleft", &key_invleft, '[' },
-	{ "key_invright", &key_invright, ']' },
-	{ "key_useartifact", &key_useartifact, 13 },
-
-	{ "key_fire", &key_fire, KEY_RCTRL, 1 },
-	{ "key_use", &key_use, ' ', 1 },
-	{ "key_strafe", &key_strafe, KEY_RALT, 1 },
-	{ "key_speed", &key_speed, KEY_RSHIFT, 1 },
+#define BIND(name, title, section, role, key, key2, pad) \
+	{ "key_" #name, &key_##name, key }, { "key2_" #name, &key2_##name, key2 }, { "pad_" #name, &pad_##name, pad },
+#define PRESS(name, title, section, key, pad) { "pad_" #name, &pad_##name, pad },
+#include "g_binds.h"
+#undef BIND
+#undef PRESS
 #endif
 
 	{ "use_mouse", &usemouse, 1 },
-	{ "mouseb_fire", &mousebfire, 0 },
-	{ "mouseb_strafe", &mousebstrafe, 1 },
-	{ "mouseb_forward", &mousebforward, 2 },
 
 	{ "use_joystick", &usejoystick, 0 },
 	{ "joyb_fire", &joybfire, 0 },

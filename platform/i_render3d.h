@@ -22,6 +22,10 @@ void I_Render3DSettingsMenu(void);
 int I_Render3DSettingsOpen(void);
 void I_Render3DSettingsKey(int scancode, int shift);
 void I_Render3DSettingsClick(int x, int y, int button);
+/* The Bindings page waits for a key, mouse button or pad button to bind
+   (bind_keys.h's codes); Esc or the pad's Start cancels. */
+int I_Render3DSettingsCapturing(void);
+void I_Render3DSettingsBind(int code);
 void I_Render3DSettingsDraw(unsigned *pixels);
 /* A library book open (scene3d/book_view.cpp): its page drawn in the panel's
    image while F4's panel is closed. */
@@ -33,6 +37,8 @@ void I_Render3DSettingsMouse(float x, float y, int button);
 void I_Render3DLoadingDraw(unsigned *pixels, const char *title, const char *stage, float fraction);
 void I_Render3DScreenshot(void);
 void I_Render3DToggleFlashlight(void);
+/* The view level again (a pad's Center view). */
+void I_Render3DCenterView(void);
 /* The key left of 1: steps F4's "Show FPS" on (off, window title, FPS, full) and saves it. */
 void I_Render3DCycleStats(void);
 int I_Render3DIsAccelerated(void);

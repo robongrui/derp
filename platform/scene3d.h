@@ -87,6 +87,13 @@ struct Settings {
     int classicAim=0; // With mouse look: bullets autoaim at a monster in front as in DOOM, following the view only with none.
     int movement=0; // 0 DERP's tighter tuning, 1 DOOM's own (acceleration, friction, faster diagonals), 2 tuned plus held running diagonals easing into DOOM's strafe-running.
     int quickConfirm=1; // Quicksave and quickload ask before overwriting or loading.
+    // Gamepads (i_sdl_gamepad.c): look speed across and up and down, the sticks' dead zone,
+    // the turn boost at full tilt, the sticks swapped (southpaw), gyro aim (0 off, 1 on,
+    // 2 while the gyro button is held) and its speed.
+    float padLookX=1, padLookY=1, padDeadzone=0.15f, gyroSpeed=1;
+    int padBoost=1, padSouthpaw=0, gyro=0;
+    // Rumble (gamepad_rumble.c): 0 off, 1 low, 2 full; the trigger motors; rumble from what is heard around.
+    int rumble=2, triggerRumble=1, worldRumble=1;
     float msaa=0; // Geometry edge anti-aliasing: 0 off, then 2x, 4x and 8x MSAA (capped by gpuMaxSamples).
     // Walls and floors: 0 crisp pixels, 1 smooth (bilinear), 2 sharp bilinear
     // (flat texels, edges blended over sharpSoftness texels plus a pixel).

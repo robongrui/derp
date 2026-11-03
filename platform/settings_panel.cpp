@@ -155,7 +155,7 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "everything loose with it, you included. Gentle: a quarter of the push; things drift toward the "
                         "opening. Off: the air still rushes out, but pushes nothing.",
                         [](const Settings &d){return hasPhobos(d)&&d.mode==2;})}}}},
-            {"Controls",{
+            {"Play",{
                 {"Movement",{
                     // The key from when it was a switch: old configs' 0 and 1 still read.
                     choice("classic_movement","Movement",&s.movement,{"Normal","Normal plus","Classic"},{0,2,1},
@@ -164,18 +164,62 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "strafe-running. Classic: DOOM's own movement; you speed up and slow down gradually, slide a little "
                         "when you let go, and move faster diagonally at once. Demos and netgames always move as in DOOM.",
                         hasTunedMovement)}},
+                {"Saving",{
+                    check("quick_confirm","Confirm quicksave and quickload",&s.quickConfirm,
+                        "Ask before a quicksave overwrites its slot or a quickload replaces the game in progress. Off: the keys act at once.")}}}}}},
+        {"Controls",{
+            {"Aim",{
                 {"View",{
-                    check("look","Mouse look",&s.look,"Mouse look tilts the camera, and your bullets go where you look."),
-                    check("invert_look","Invert mouse look",&s.invertLook,"Moving the mouse forward tilts the view down, like a flight stick.",
+                    check("look","Free look",&s.look,"The mouse and a gamepad's look stick tilt the camera up and down, and your bullets go where you look."),
+                    check("invert_look","Invert look",&s.invertLook,"Moving the mouse forward or pushing the look stick up tilts the view down, like a flight stick.",
                         [](const Settings &d){return d.look!=0;}),
                     check("classic_aim","Classic aim",&s.classicAim,
                         "Bullets aim themselves at a monster in front of you, as in DOOM, and hit it in the middle; with none in front "
                         "they follow the view. Off: they go exactly where you look, so you can miss, and where you hit is where the "
-                        "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way.",hasFreeAim),
-                    check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view.")}},
-                {"Saving",{
-                    check("quick_confirm","Confirm quicksave and quickload",&s.quickConfirm,
-                        "Ask before a quicksave overwrites its slot or a quickload replaces the game in progress. Off: the keys act at once.")}}}}}},
+                        "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way. Playing with a gamepad, "
+                        "on is the easier aim.",hasFreeAim),
+                    check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view.")}}}},
+            {"Gamepad",{
+                {"Sticks",{
+                    slider("pad_look_x","Turn speed",&s.padLookX,0.25,3,0.25,
+                        "How fast the look stick turns you at full tilt: at 100% a turn around in under a second, with the boost below. "
+                        "The stick answers gently near the middle, so small corrections stay fine.",nullptr,
+                        {"25%","50%","75%","100%","125%","150%","175%","200%","225%","250%","275%","300%"}),
+                    slider("pad_look_y","Look up and down speed",&s.padLookY,0.25,3,0.25,
+                        "How fast the look stick tilts the view at full tilt. Needs free look.",
+                        [](const Settings &d){return d.look!=0;},
+                        {"25%","50%","75%","100%","125%","150%","175%","200%","225%","250%","275%","300%"}),
+                    slider("pad_deadzone","Dead zone",&s.padDeadzone,0.05,0.4,0.05,
+                        "How far a stick has to move before it does anything. Raise it if you drift with the stick let go; worn "
+                        "sticks need more.",nullptr,{"5%","10%","15%","20%","25%","30%","35%","40%"}),
+                    check("pad_boost","Turn boost",&s.padBoost,
+                        "Held all the way over for a moment, the look stick turns faster and faster, up to 1.75 times, so turning "
+                        "around doesn't take a second of holding."),
+                    check("pad_southpaw","Sticks swapped",&s.padSouthpaw,"The left stick looks and the right one moves.")}},
+                {"Gyro",{
+                    choice("gyro","Gyro aim",&s.gyro,{"Off","On","While held"},{0,1,2},
+                        "Turning and tilting the pad turns and tilts the view, on pads that feel it (DualSense, DualShock 4, Switch "
+                        "Pro, the Steam Deck when Steam Input is off). While held: only while the gyro button is held (Bindings: "
+                        "R4 on the Deck), so you can set the pad down and pick it up again. With Steam Input on, Steam's own gyro "
+                        "settings work instead, as a mouse."),
+                    slider("gyro_speed","Gyro speed",&s.gyroSpeed,0.25,3,0.25,
+                        "How far the view turns for a turn of the pad: at 100% exactly as far.",
+                        [](const Settings &d){return d.gyro!=0;},
+                        {"25%","50%","75%","100%","125%","150%","175%","200%","225%","250%","275%","300%"})}}}},
+            {"Rumble",{
+                {"Rumble",{
+                    choice("rumble","Rumble",&s.rumble,{"Off","Low","Full"},{0,1,2},
+                        "A pad rumbles with what you do and what you hear: every shot kicks, the super shotgun slams, the BFG swells "
+                        "as it charges, the chainsaw buzzes while it runs, and you feel the hits you take and the falls you land. "
+                        "Explosions, a Cyberdemon's steps and doors slamming next to you rumble as loud as you hear them, felt from "
+                        "the bass of their own sounds. Not in demos."),
+                    check("trigger_rumble","Trigger rumble",&s.triggerRumble,
+                        "On pads with motors in the triggers (Xbox One and Series), each shot also cracks under the right trigger.",
+                        [](const Settings &d){return d.rumble!=0;}),
+                    check("world_rumble","Rumble from around you",&s.worldRumble,
+                        "Explosions, big monsters' steps and doors near you rumble too. Off: only your own guns, hits and falls.",
+                        [](const Settings &d){return d.rumble!=0;})}}}},
+            {"Bindings",{},true}}},
         {"Graphics",{
             {"Display",{
                 {"Renderer",{

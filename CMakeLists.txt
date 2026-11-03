@@ -403,7 +403,9 @@ if(DOOM_BUILD_SDL)
         platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c platform/audio/vacuum.c
         platform/audio/ringing.c platform/audio/head_knock.c platform/audio/falling_air.c platform/audio/library_steps.c
         platform/audio/library_acoustics.c)
-    add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c
+    # Gamepads, joysticks, their rumble and the bindings of every key, mouse button and pad button.
+    set(DOOM_INPUT_SOURCES platform/i_sdl_gamepad.c platform/gamepad_curves.c platform/gamepad_rumble.c platform/bindings.c)
+    add_executable(doom MACOSX_BUNDLE platform/sdl_main.c platform/i_sdl_video.c ${DOOM_INPUT_SOURCES}
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
     target_link_libraries(doom PRIVATE doom_game SDL3::SDL3 doom_music)
@@ -497,7 +499,7 @@ if(DOOM_BUILD_SDL)
         endif()
     endif()
     # The Heretic program: derp-heretic -iwad heretic.wad
-    add_executable(derp-heretic platform/sdl_main.c platform/i_sdl_video.c
+    add_executable(derp-heretic platform/sdl_main.c platform/i_sdl_video.c ${DOOM_INPUT_SOURCES}
         platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
         platform/i_portable_system.c platform/wad_probe.c)
     target_link_libraries(derp-heretic PRIVATE heretic_game SDL3::SDL3 doom_music)
@@ -532,7 +534,7 @@ if(DOOM_BUILD_SDL)
         endif()
         add_test(NAME movement-audio-routing COMMAND doom-movement-audio-tests)
         function(doom_add_smoke target game renderer)
-            add_executable(${target} ${ARGN} platform/i_sdl_video.c
+            add_executable(${target} ${ARGN} platform/i_sdl_video.c ${DOOM_INPUT_SOURCES}
                 platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}
                 platform/i_portable_system.c)
             target_compile_definitions(${target} PRIVATE DOOM_TEST_DRIVER)
@@ -678,6 +680,13 @@ if(BUILD_TESTING)
     add_test(NAME computer-room-presence COMMAND doom-computer-presence-tests)
     add_executable(doom-wad-probe-tests tests/wad_probe.c platform/wad_probe.c)
     add_test(NAME wad-loader-probe COMMAND doom-wad-probe-tests)
+    add_executable(doom-controls-tests tests/controls.c platform/bindings.c platform/gamepad_curves.c)
+    target_include_directories(doom-controls-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
+    target_link_libraries(doom-controls-tests PRIVATE doom_options)
+    if(NOT WIN32)
+        target_link_libraries(doom-controls-tests PRIVATE m)
+    endif()
+    add_test(NAME controls-sticks-bindings COMMAND doom-controls-tests)
     add_executable(doom-derp-info-tests tests/derp_info.c)
     target_link_libraries(doom-derp-info-tests PRIVATE doom_headless_platform)
     add_test(NAME derpinfo-reader COMMAND doom-derp-info-tests)

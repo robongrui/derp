@@ -282,6 +282,8 @@ typedef enum
 
 #define KEY_LALT	KEY_RALT
 
+// DERP: mouse buttons, the wheel and gamepad buttons as keys.
+#include "../platform/bind_keys.h"
 
 
 // DOOM basic types (boolean),

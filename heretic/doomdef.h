@@ -77,6 +77,8 @@ extern byte *destview, *destscreen;	// PC direct to screen pointers
 
 #define	KEY_LALT			KEY_RALT
 
+// DERP: mouse buttons, the wheel and gamepad buttons as keys.
+#include "../platform/bind_keys.h"
 
 
 
