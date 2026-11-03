@@ -198,11 +198,12 @@ void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector,const
     unsigned alpha=(unsigned)std::lround(shine*255);
     for(size_t n=first;n<out.size();++n)out[n].lampTint=(out[n].lampTint&0xFFFFFFu)|alpha<<24;
 }
-static void surfaceLight(const SurfaceLightKey &key,int sector,float x,float y,float z,const Image &image,int facing,float radius=224,float extent=0) {
+static void surfaceLight(const SurfaceLightKey &key,int sector,float x,float y,float z,const Image &image,int facing,float radius=224,float extent=0,
+                         float crowd=1) {
     if(!settings.emissive || image.emissionWeight==0 || tileDark(key)) return;
     // Lamps too dim to light stay listed (strength 0), and so do lamps
     // switched off: shots still find them.
-    SurfaceLight light={key,x,y,z,radius,1.65f*image.emissionWeight*lampLevel(sector),image.emissionColor,facing,extent};
+    SurfaceLight light={key,x,y,z,radius,1.65f*image.emissionWeight*lampLevel(sector)*crowd,image.emissionColor,facing,extent};
     if(lampFlickers(sector,image)) {light.flickerSector=sector;light.shine=lampShine(sector);}
     surfaceLights.push_back(light);
 }
@@ -295,6 +296,78 @@ void collectSurfaceLights() {
                     bakedLightsActive?1.0f:0,{std::min(p.extent,p.radius),n[0],n[1],0});
     }
 }
+// How much glowing wall is round a point, as glowing area (texels that glow, in square units) within
+// about 384 units, from the map as it starts. A lamp strip or a fire wall's few lines is a fixture and
+// lights in full; SIGIL lines whole rooms with fire and red rock (FIREWALA, ROCKRED1), and every 256-unit
+// cell of it was a lamp of its own, flooding the room in red. Past glowCrowdRef the wall lights dim by
+// the square root, so a room of glow lights about as a room twice its glow would, not N times; the
+// walls' own glow, drawn on them, stays.
+constexpr float glowCrowdCell=64,glowCrowdRadius=384,glowCrowdRef=32000;
+static std::vector<float> glowCrowd;
+static unsigned glowCrowdLevel=~0u;
+static float glowCrowdX,glowCrowdY;
+static int glowCrowdW,glowCrowdH;
+static void buildGlowCrowding() {
+    glowCrowdLevel=r_levelserial;
+    float minX=1e30f,minY=1e30f,maxX=-1e30f,maxY=-1e30f;
+    for(int i=0;i<numvertexes;++i) {
+        float vx=units(vertexes[i].x),vy=units(vertexes[i].y);
+        minX=std::min(minX,vx);minY=std::min(minY,vy);maxX=std::max(maxX,vx);maxY=std::max(maxY,vy);
+    }
+    if(numvertexes==0)minX=minY=maxX=maxY=0;
+    glowCrowdX=minX;glowCrowdY=minY;
+    glowCrowdW=(int)((maxX-minX)/glowCrowdCell)+2;glowCrowdH=(int)((maxY-minY)/glowCrowdCell)+2;
+    std::vector<float> area((size_t)glowCrowdW*glowCrowdH,0);
+    auto add=[&](const line_t &line,int tex,float height) {
+        if(tex<=0||height<=0)return;
+        const Image &image=wallImage(tex);
+        if(image.emissionWeight<=0)return;
+        float ax=units(line.v1->x),ay=units(line.v1->y),bx=units(line.v2->x),by=units(line.v2->y),len=std::hypot(bx-ax,by-ay);
+        int steps=std::max(1,(int)std::ceil(len/32));
+        float each=image.emissionCoverage*len*height/steps;
+        for(int k=0;k<steps;++k) {
+            float t=(k+0.5f)/steps;
+            int cx=(int)((ax+(bx-ax)*t-glowCrowdX)/glowCrowdCell),cy=(int)((ay+(by-ay)*t-glowCrowdY)/glowCrowdCell);
+            area[(size_t)cy*glowCrowdW+cx]+=each;
+        }
+    };
+    for(int i=0;i<numlines;++i)for(int side=0;side<2;++side) {
+        const line_t &line=lines[i];
+        if(line.sidenum[side]<0)continue;
+        const side_t &s=sides[line.sidenum[side]];
+        const sector_t *front=s.sector,*back=line.sidenum[side^1]>=0?sides[line.sidenum[side^1]].sector:nullptr;
+        float floor=units(front->floorheight),ceiling=units(front->ceilingheight);
+        if(!back) {add(line,s.midtexture,ceiling-floor);continue;}
+        float backFloor=units(back->floorheight),backCeiling=units(back->ceilingheight);
+        if(!(front->ceilingpic==skyflatnum&&back->ceilingpic==skyflatnum))add(line,s.toptexture,ceiling-backCeiling);
+        add(line,s.bottomtexture,backFloor-floor);
+        if(s.midtexture>0)add(line,s.midtexture,std::min((float)wallImage(s.midtexture).height,std::min(ceiling,backCeiling)-std::max(floor,backFloor)));
+    }
+    // A tent round each cell, out to glowCrowdRadius, in x and then y.
+    int reach=(int)(glowCrowdRadius/glowCrowdCell);
+    std::vector<float> across(area.size(),0);glowCrowd.assign(area.size(),0);
+    for(int y=0;y<glowCrowdH;++y)for(int x=0;x<glowCrowdW;++x) {
+        float sum=0;
+        for(int d=-reach;d<=reach;++d)if(x+d>=0&&x+d<glowCrowdW)sum+=area[(size_t)y*glowCrowdW+x+d]*(1-std::abs(d)/(reach+1.0f));
+        across[(size_t)y*glowCrowdW+x]=sum;
+    }
+    for(int y=0;y<glowCrowdH;++y)for(int x=0;x<glowCrowdW;++x) {
+        float sum=0;
+        for(int d=-reach;d<=reach;++d)if(y+d>=0&&y+d<glowCrowdH)sum+=across[(size_t)(y+d)*glowCrowdW+x]*(1-std::abs(d)/(reach+1.0f));
+        glowCrowd[(size_t)y*glowCrowdW+x]=sum;
+    }
+}
+// The strength a wall tile's light keeps where glow crowds (1: a fixture, in full).
+static float glowCrowding(float x,float y) {
+    if(glowCrowdLevel!=r_levelserial)buildGlowCrowding();
+    float fx=(x-glowCrowdX)/glowCrowdCell-0.5f,fy=(y-glowCrowdY)/glowCrowdCell-0.5f;
+    int x0=std::clamp((int)std::floor(fx),0,glowCrowdW-1),y0=std::clamp((int)std::floor(fy),0,glowCrowdH-1);
+    int x1=std::min(x0+1,glowCrowdW-1),y1=std::min(y0+1,glowCrowdH-1);
+    float tx=std::clamp(fx-x0,0.0f,1.0f),ty=std::clamp(fy-y0,0.0f,1.0f);
+    auto cell=[&](int cx,int cy){return glowCrowd[(size_t)cy*glowCrowdW+cx];};
+    float crowd=(cell(x0,y0)*(1-tx)+cell(x1,y0)*tx)*(1-ty)+(cell(x0,y1)*(1-tx)+cell(x1,y1)*tx)*ty;
+    return crowd>glowCrowdRef?std::sqrt(glowCrowdRef/crowd):1.0f;
+}
 void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float top,int tex,float anchor,int span) {
     if(!settings.emissive||tex<=0||top<=bottom)return;
     int grey=0;float glow=1;
@@ -315,8 +388,9 @@ void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float t
             // Each sample stands for the rows of tiles it skips, within the wall piece.
             float z=anchor-image.emissionV-tileV*image.height;
             float extent=std::max(0.0f,std::min({image.height*stepV*0.5f,top-z,z-bottom}));
+            float x=a.x+(b.x-a.x)*t+nx*DOOM_PANEL_OFFSET,y=a.y+(b.y-a.y)*t+ny*DOOM_PANEL_OFFSET;
             surfaceLight({1,(int)(&line-lines),side,tileU,tileV,span},int(sides[line.sidenum[side]].sector-sectors),
-                a.x+(b.x-a.x)*t+nx*DOOM_PANEL_OFFSET,a.y+(b.y-a.y)*t+ny*DOOM_PANEL_OFFSET,z,image,facing,224,extent);
+                x,y,z,image,facing,224,extent,glowCrowding(x,y));
         }
     }
 }

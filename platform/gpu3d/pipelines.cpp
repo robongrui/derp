@@ -181,7 +181,12 @@ void allocateTargets(int w,int h) {
     int bw=std::max(1,w/2),bh=std::max(1,h/2);
     emissionTexture=createTexture(glow,bw,bh,target);
     bloomScratch=createTexture(glow,bw,bh,target);
-    bloomTexture=createTexture(glow,bw,bh,target);
+    // The bloom with its mip levels down to one texel: how much the whole view glows (present.frag).
+    SDL_GPUTextureCreateInfo bloomInfo={};
+    bloomInfo.type=SDL_GPU_TEXTURETYPE_2D;bloomInfo.format=glow;bloomInfo.usage=target;
+    bloomInfo.width=(Uint32)bw;bloomInfo.height=(Uint32)bh;bloomInfo.layer_count_or_depth=1;bloomInfo.sample_count=SDL_GPU_SAMPLECOUNT_1;
+    bloomInfo.num_levels=1;for(int side=std::max(bw,bh);side>1;side/=2)++bloomInfo.num_levels;
+    bloomTexture=SDL_CreateGPUTexture(device,&bloomInfo);
     emissionDepth=createTexture(depthFormat,bw,bh,SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
     if(!emissionTexture||!bloomScratch||!bloomTexture||!emissionDepth) I_Error((char*)"Could not allocate bloom targets");
 }

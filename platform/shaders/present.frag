@@ -86,6 +86,12 @@ void main() {
         float coverage=all(greaterThanEqual(uv,vec2(0)))&&all(lessThanEqual(uv,vec2(1)))?textureLod(hud,uv,0.0).a:0.0;
         // Screen-like additive glow retains detail without clipping to white.
         vec3 glow=textureLod(bloom,vUV,0.0).rgb*(1.0-coverage)*0.8;
+        // Where much of the view glows (SIGIL's rooms walled in fire and red rock) the bloom gives way, as
+        // the eye does, or it floods the view in one colour; lamps and screens in a room never come near.
+        // From the bloom's last mip level, the whole view's average.
+        vec3 mean=textureLod(bloom,vec2(0.5),float(textureQueryLevels(bloom)-1)).rgb;
+        float most=max(mean.r,max(mean.g,mean.b));
+        if(most>0.08) glow*=pow(0.08/most,0.75);
         color.rgb=1.0-(1.0-color.rgb)*exp(-glow);
     }
     if(c.phobos.z>0.0) color.rgb=visorFrost(color.rgb);
