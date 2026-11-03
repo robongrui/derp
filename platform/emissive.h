@@ -5,7 +5,8 @@
 
 enum doom_emissive_kind { DOOM_EMISSIVE_NONE, DOOM_EMISSIVE_LAMP,
     DOOM_EMISSIVE_PANEL, DOOM_EMISSIVE_LAVA, DOOM_EMISSIVE_SLIME, DOOM_EMISSIVE_MAGMA,
-    DOOM_EMISSIVE_GLASS /* backlit stained glass: every coloured pane, softly */ };
+    DOOM_EMISSIVE_GLASS /* backlit stained glass: every coloured pane, softly */,
+    DOOM_EMISSIVE_DIFFUSE /* pale ceiling panels lit from behind: a dim, broad glow */ };
 /* Lists end with NULL; a trailing '*' marks a prefix, otherwise the name must match exactly. */
 static inline int doom_emissive_match(const char *name, const char *const *list)
 {
@@ -33,6 +34,10 @@ static inline int doom_emissive_kind(const char *name, int flat)
         "DOORYEL*","KCMRK*","TCMRK*","KSW_LOCK","KSW_OPEN","KSW_COM*","BSTONE3","SILVER2",
         "TCGRDB",0};
     static const char *const panelFlats[]={"CONS1_*",0};
+    /* Doom 1 E2's warehouse ceiling grid (E2M2's crate rooms): its pale tan
+       panels read as diffusers; the software renderer shows those rooms
+       bright, and nothing else there lights them. */
+    static const char *const diffuseFlats[]={"CEIL3_4",0};
     static const char *const panelWalls[]={"COMP*","AQCOMP*","TEKWALL*","PLANET*","SILVER3",
         "EXITSIGN","EIXTSIGN","EXITSTON","PNK4EXIT",0};
     /* Legacy of Rust ships unlit variants such as COMP1OFF and LITE4OFF. */
@@ -44,6 +49,7 @@ static inline int doom_emissive_kind(const char *name, int flat)
         return DOOM_EMISSIVE_SLIME;
     if (doom_emissive_match(name,flat?lampFlats:lampWalls)) return DOOM_EMISSIVE_LAMP;
     if (doom_emissive_match(name,flat?panelFlats:panelWalls)) return DOOM_EMISSIVE_PANEL;
+    if (flat && doom_emissive_match(name,diffuseFlats)) return DOOM_EMISSIVE_DIFFUSE;
     return DOOM_EMISSIVE_NONE;
 }
 /* Machinery that throws electric sparks when shot, glowing or not: computer
@@ -81,6 +87,11 @@ static inline unsigned char doom_emissive_pixel(int kind, const unsigned char *r
         if (hi-lo<32) return 0;
         int value=(hi-40)*200/160;
         return (unsigned char)(value<0?0:value>200?200:value);
+    } else if (kind==DOOM_EMISSIVE_DIFFUSE) {
+        /* Only the panels' pale faces, at half strength; the frame stays shaded. */
+        if (hi<=165) return 0;
+        int value=(hi-165)*128/26;
+        return (unsigned char)(value>128?128:value);
     } else if (kind==DOOM_EMISSIVE_PANEL) {
         if (hi-lo<40) return 0;
         if (!(g>r*1.4 && g>b*1.2) && !(b>r*1.4 && b>g*1.2) &&

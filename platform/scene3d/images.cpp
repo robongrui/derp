@@ -340,11 +340,13 @@ static bool livingMonsterLump(int lump) {
 // TEKWALL4 room went red from its few red LEDs. Stained glass glows over
 // most of its area but is a window, not a lamp: it lights the room softly,
 // most of its color reaching the floor as projected light (glass_light.cpp).
+// Diffuser ceiling panels (CEIL3_4) light at half weight.
 static Image &speckledPanel(Image &image,const char *name,bool flat) {
     int kind=Game_GlowKind(name,flat);
     if(image.emissionCoverage>0&&image.emissionCoverage<0.006f&&kind==DOOM_EMISSIVE_PANEL)
         image.emissionWeight=image.emissionCoverage*8.0f;
     if(kind==DOOM_EMISSIVE_GLASS) {image.emissionWeight*=0.2f;image.leaded=!image.emission.empty();}
+    if(kind==DOOM_EMISSIVE_DIFFUSE)image.emissionWeight*=0.5f;   // diffuser panels: a dim, broad light
     return image;
 }
 // Wall textures with oversized bricks (rebrickedWall), loaded again when
