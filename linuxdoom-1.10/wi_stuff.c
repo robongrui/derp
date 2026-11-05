@@ -1460,7 +1460,8 @@ void WI_drawStats(void)
     V_DrawPatch(SP_TIMEX, SP_TIMEY, FB, time);
     WI_drawTime(SCREENWIDTH/2 - SP_TIMEX, SP_TIMEY, cnt_time);
 
-    if (wbs->epsd < 3)
+    // SIGIL's episode 5 brings par times (its DEHACKED); the fourth has none.
+    if (wbs->epsd < 3 || (wbs->epsd == 4 && wbs->partime > 0))
     {
 	V_DrawPatch(SCREENWIDTH/2 + SP_TIMEX, SP_TIMEY, FB, par);
 	WI_drawTime(SCREENWIDTH - SP_TIMEX, SP_TIMEY, cnt_par);
@@ -1552,6 +1553,9 @@ void WI_loadData(void)
     {
       if (wbs->epsd == 3)
 	strcpy(name,"INTERPIC");
+      // SIGIL (episode 5): its own background, no map of levels.
+      if (wbs->epsd == 4)
+	strcpy(name, W_CheckNumForName("SIGILINT") >= 0 ? "SIGILINT" : "INTERPIC");
     }
 
     // background
@@ -1588,6 +1592,9 @@ void WI_loadData(void)
 	for (i=0 ; i<NUMMAPS ; i++)
 	{
 	    sprintf(name, "WILV%d%d", wbs->epsd, i);
+	    // An episode 5 without its level names borrows the first's.
+	    if (W_CheckNumForName(name) < 0)
+		sprintf(name, "WILV0%d", i);
 	    lnames[i] = W_CacheLumpName(name, PU_STATIC);
 	}
 
@@ -1803,7 +1810,7 @@ void WI_initVariables(wbstartstruct_t* wbstartstruct)
     if (gamemode != commercial)
     {
       if ( gamemode == retail )
-	RNGCHECK(wbs->epsd, 0, 3);
+	RNGCHECK(wbs->epsd, 0, 4);
       else
 	RNGCHECK(wbs->epsd, 0, 2);
     }

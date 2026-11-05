@@ -93,6 +93,26 @@ void	F_CastTicker (void);
 boolean F_CastResponder (event_t *ev);
 void	F_CastDrawer (void);
 
+// SIGIL's (episode 5) ending text is in its WAD (E5TEXT), without the
+// line breaks' carriage returns; none at all without it.
+static char* F_LumpText (const char* name)
+{
+    static char	text[1024];
+    int		lump = W_CheckNumForName (name);
+    const char*	data;
+    int		length, i, n = 0;
+
+    if (lump < 0)
+	return "";
+    data = W_CacheLumpNum (lump, PU_CACHE);
+    length = W_LumpLength (lump);
+    for (i = 0; i < length && n < (int)sizeof text - 1; i++)
+	if (data[i] != '\r')
+	    text[n++] = data[i];
+    text[n] = 0;
+    return text;
+}
+
 // Final DOOM's missions have their own texts for the DOOM II slots.
 static char* F_MissionText (char* doom2, char* plutonia, char* tnt)
 {
@@ -141,6 +161,10 @@ void F_StartFinale (void)
 	  case 4:
 	    finaleflat = DEH_String ("MFLR8_3");
 	    finaletext = DEH_String (e4text);
+	    break;
+	  case 5:
+	    finaleflat = "FLOOR7_2";
+	    finaletext = F_LumpText ("E5TEXT");
 	    break;
 	  default:
 	    // Ouch.
@@ -748,6 +772,10 @@ void F_Drawer (void)
 	  case 4:
 	    V_DrawPatch (0,0,0,
 			 W_CacheLumpName("ENDPIC",PU_CACHE));
+	    break;
+	  case 5:	// SIGIL's own end picture, else the credits
+	    V_DrawPatch (0,0,0,
+			 W_CacheLumpName(W_CheckNumForName("SIGILEND") >= 0 ? "SIGILEND" : "CREDIT",PU_CACHE));
 	    break;
 	}
     }

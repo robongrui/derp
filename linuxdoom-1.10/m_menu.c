@@ -299,6 +299,7 @@ enum
     ep2,
     ep3,
     ep4,
+    ep5,
     ep_end
 } episodes_e;
 
@@ -311,7 +312,8 @@ menuitem_t EpisodeMenu[]=
     {1,"M_EPI1", M_Episode,'k'},
     {1,"M_EPI2", M_Episode,'t'},
     {1,"M_EPI3", M_Episode,'i'},
-    {1,"M_EPI4", M_Episode,'t'}
+    {1,"M_EPI4", M_Episode,'t'},
+    {1,"M_EPI5", M_Episode,'s'}	// SIGIL, when it is loaded (M_Init)
 };
 
 menu_t  EpiDef =
@@ -2252,9 +2254,12 @@ void M_Init (void)
       case registered:
 	// We need to remove the fourth episode.
 	EpiDef.numitems--;
-	break;
+	// fall through: and the fifth.
       case retail:
-	// We are fine.
+	// The fifth, SIGIL, only when it is loaded.
+	if (gamemode != retail || W_CheckNumForName("E5M1") < 0
+	    || W_CheckNumForName("M_EPI5") < 0)
+	    EpiDef.numitems--;
       default:
 	break;
     }

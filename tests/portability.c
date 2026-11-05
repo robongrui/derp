@@ -531,7 +531,7 @@ static int volumetric_fog(void)
     return 0;
 }
 
-extern int maxammo[NUMAMMO], clipammo[NUMAMMO], pars[4][10], cpars[32];
+extern int maxammo[NUMAMMO], clipammo[NUMAMMO], pars[6][10], cpars[32];
 extern cheatseq_t cheat_god, cheat_clev;
 void A_Look();
 

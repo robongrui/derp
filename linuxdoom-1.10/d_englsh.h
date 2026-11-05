@@ -180,6 +180,17 @@
 #define HUSTR_E4M8	"E4M8: Unto The Cruel"
 #define HUSTR_E4M9	"E4M9: Fear"
 
+// SIGIL, episode 5
+#define HUSTR_E5M1	"E5M1: Baphomet's Demesne"
+#define HUSTR_E5M2	"E5M2: Sheol"
+#define HUSTR_E5M3	"E5M3: Cages of the Damned"
+#define HUSTR_E5M4	"E5M4: Paths of Wretchedness"
+#define HUSTR_E5M5	"E5M5: Abaddon's Void"
+#define HUSTR_E5M6	"E5M6: Unspeakable Persecution"
+#define HUSTR_E5M7	"E5M7: Nightmare Underworld"
+#define HUSTR_E5M8	"E5M8: Halls of Perdition"
+#define HUSTR_E5M9	"E5M9: Realm of Iblis"
+
 #define HUSTR_1	"level 1: entryway"
 #define HUSTR_2	"level 2: underhalls"
 #define HUSTR_3	"level 3: the gantlet"

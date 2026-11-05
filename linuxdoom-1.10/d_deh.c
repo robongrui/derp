@@ -44,7 +44,7 @@ boolean	deh_species_infighting = false;
 
 extern int	maxammo[NUMAMMO];
 extern int	clipammo[NUMAMMO];
-extern int	pars[4][10];
+extern int	pars[6][10];
 extern int	cpars[32];
 extern cheatseq_t cheat_mus, cheat_choppers, cheat_god, cheat_ammo;
 extern cheatseq_t cheat_ammonokey, cheat_noclip, cheat_commercial_noclip;
@@ -314,6 +314,15 @@ static const struct { const char* name; const char* text; } bex_strings[] =
     BEX(HUSTR_E4M7),
     BEX(HUSTR_E4M8),
     BEX(HUSTR_E4M9),
+    BEX(HUSTR_E5M1),
+    BEX(HUSTR_E5M2),
+    BEX(HUSTR_E5M3),
+    BEX(HUSTR_E5M4),
+    BEX(HUSTR_E5M5),
+    BEX(HUSTR_E5M6),
+    BEX(HUSTR_E5M7),
+    BEX(HUSTR_E5M8),
+    BEX(HUSTR_E5M9),
     BEX(HUSTR_1),
     BEX(HUSTR_2),
     BEX(HUSTR_3),
@@ -1161,7 +1170,7 @@ static void DEH_Pars (patch_t* patch, char* line)
     }
     if (count == 3)
     {
-	if (numbers[0] >= 1 && numbers[0] <= 3 && numbers[1] >= 1 && numbers[1] <= 9)
+	if (numbers[0] >= 1 && numbers[0] <= 5 && numbers[1] >= 1 && numbers[1] <= 9)
 	    pars[numbers[0]][numbers[1]] = numbers[2];
     }
     else if (count == 2)

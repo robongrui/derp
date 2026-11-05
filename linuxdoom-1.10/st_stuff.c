@@ -637,9 +637,15 @@ ST_Responder (event_t* ev)
 	}
 	else
 	{
+	  char	lump[9];
+
 	  musnum = mus_e1m1 + (buf[0]-'1')*9 + (buf[1]-'1');
+	  snprintf (lump, sizeof lump, "D_E%cM%c", buf[0], buf[1]);
 	  
-	  if (((buf[0]-'1')*9 + buf[1]-'1') > 31)
+	  // SIGIL's episode 5, when its music is loaded.
+	  if (buf[0] == '5' && buf[1] >= '1' && buf[1] <= '9' && W_CheckNumForName (lump) >= 0)
+	    S_ChangeMusic(mus_e5m1 + buf[1]-'1', 1);
+	  else if (((buf[0]-'1')*9 + buf[1]-'1') > 31)
 	    plyr->message = DEH_String (STSTR_NOMUS);
 	  else
 	    S_ChangeMusic(musnum, 1);
