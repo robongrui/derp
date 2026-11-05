@@ -1,8 +1,9 @@
 /* Heat and air. Lava rumbles low and heaves up heavy bubbles - welling
  * noise, not a tone, which would sound like a beam - that burst and
  * sizzle; a fire wall roars and crackles, a loud pop now and then; cracked
- * magma rock only ticks over a faint rumble. Wind under the sky gusts and
- * sometimes whistles; rain hisses and patters, and taps on the windows. */
+ * magma rock only ticks over a faint rumble. A breach on Phobos gusts and
+ * sometimes whistles (the wind itself is wind_voice.c); rain hisses and
+ * patters, and taps on the windows. */
 #include <math.h>
 #include "ambient_synth.h"
 #include "synth_kit.h"

@@ -29,6 +29,10 @@ typedef struct { int due; float x, y, z, level; } ambience_strike_t;
    the alternative mix divides its budget between body and activity. */
 void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], float level, int walls, int distance,
                      ambience_strike_t *strike, ambience_voice_t *computer_body);
+/* Where the wind is heard this tic, and how hard it blows, for the wind's own
+   voice (wind_voice.h); the last Ambience_Update's. A breach on Phobos is not
+   wind: it plays the wind kind's loop among the voices. */
+void Ambience_WindField(ambience_voice_t *field, float *strength);
 /* Glowing fixtures shot out around (x, y, z): their hum, buzz or chatter
    stops for the rest of the level. */
 void Ambience_Silence(float x, float y, float z, float radius);
@@ -44,7 +48,7 @@ void Ambience_Rain(float amount);
 /* How thick it snows, 0-1: the wind out under the sky is softer and duller. */
 void Ambience_Snow(float amount);
 /* How hard the wind blows, 0 still air to 1 a gale (0.5 a breeze, as it
-   blows until told otherwise): its take and how loud it is heard. */
+   blows until told otherwise): which wind is heard and how loud. */
 void Ambience_Wind(float amount);
 /* The drafts' wind where the listener stands indoors, 0-1 against the wind outside. */
 void Ambience_Draft(float amount);

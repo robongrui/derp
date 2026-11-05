@@ -7,9 +7,9 @@
    (bakeWetness, slanting the flatter the harder it blows), the openings
    facing it are pressed by it (weatherPressOn) and the drafts run with it
    (drafts.cpp), the far sky's rain and snow slant by it (sky.frag), and
-   the wind is heard as hard as it blows (I_AmbienceWind). On top of the
-   steady wind roll its gusts (windGust), which only what flies feels
-   (air_push.cpp) and the wind's sound swells with.
+   the wind is heard as hard as it blows (I_AmbienceWind), its gusts in the
+   sound its own (audio/wind_speed.c). On top of the steady wind roll its
+   gusts (windGust), which only what flies feels (air_push.cpp).
    Render-only, with its own random numbers. */
 #include "internal.h"
 extern "C" {
@@ -44,10 +44,7 @@ void windTick(float) {
     float x,y;
     windHeading(x,y);
     windNow[0]=x*windSpeed;windNow[1]=y*windSpeed;
-    // Heard swelling and easing as the gusts roll past the player.
-    float swell=0;
-    if(const mobj_t *mo=players[displayplayer].mo)swell=0.6f*windGustRate(units(mo->x),units(mo->y),levelSeconds());
-    I_AmbienceWind(std::clamp(windAmount()*(1+swell),0.0f,1.0f));
+    I_AmbienceWind(windAmount());
 }
 // How much of its press on an opening the wind has: full from the breezes
 // the hash picks up (90 units a second), less in a lighter air, none in
@@ -73,7 +70,7 @@ float windGust(float x,float y,float t) {
     return 56*a*a*(0.65f*std::sin((along-windSpeed*t)/220)+0.35f*std::sin((along-windSpeed*t)/97+1.7f));
 }
 // How much faster than the steady wind the gusts blow at (x, y) now, as a
-// share of it (the wind's sound swells with it, windTick).
+// share of it.
 float windGustRate(float x,float y,float t) {
     if(windSpeed<1)return 0;
     return std::clamp((windGust(x,y,t+0.05f)-windGust(x,y,t))/0.05f/windSpeed,-1.0f,1.0f);

@@ -268,7 +268,8 @@ if(DOOM_BUILD_SDL)
     # Without -rate, each effect uses the same native rate as its game bank.
     add_executable(doom-sfx-render tests/sfx_render.c platform/audio/impact_synth.c platform/audio/spark_synth.c
         platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
-        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/resample.c platform/audio/reverb.c)
+        platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/resample.c platform/audio/reverb.c
+        platform/audio/wind_voice.c platform/audio/wind_speed.c platform/audio/wind_still.c platform/audio/wind_breeze.c platform/audio/wind_gale.c)
     target_include_directories(doom-sfx-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/platform")
     if(NOT WIN32)
         target_link_libraries(doom-sfx-render PRIVATE m)
@@ -397,7 +398,7 @@ if(DOOM_BUILD_SDL)
     # and the made-up sounds: impacts and the ambience read from the map's textures. The room map
     # (rooms.c) is for the renderer and the sound alike, so every program builds it here.
     set(DOOM_AUDIO_SOURCES platform/rooms.c platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c platform/audio/beyond.c platform/audio/relief.c platform/audio/flyby.c
-        platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/acoustic_graph.c platform/audio/steps.c platform/audio/frozen.c
+        platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/wind_voice.c platform/audio/wind_speed.c platform/audio/wind_still.c platform/audio/wind_breeze.c platform/audio/wind_gale.c platform/audio/acoustic_graph.c platform/audio/steps.c platform/audio/frozen.c
         platform/audio/impact_synth.c platform/audio/spark_synth.c platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
         platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/computer_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c
         platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c platform/audio/vacuum.c
@@ -668,7 +669,7 @@ if(BUILD_TESTING)
         platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
         platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/ambient_synth.c platform/audio/machine_synth.c
         platform/audio/liquid_synth.c platform/audio/fire_synth.c platform/audio/computer_synth.c platform/audio/hidden_synth.c
-        platform/audio/ambience_voices.c platform/audio/resample.c)
+        platform/audio/ambience_voices.c platform/audio/wind_voice.c platform/audio/wind_speed.c platform/audio/wind_still.c platform/audio/wind_breeze.c platform/audio/wind_gale.c platform/audio/resample.c)
     add_executable(doom-computer-presence-tests tests/computer_presence.c platform/audio/ambience.c)
     target_include_directories(doom-computer-presence-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
     target_link_libraries(doom-computer-presence-tests PRIVATE doom_options)

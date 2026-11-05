@@ -8,6 +8,7 @@
 #include "ambience_voices.h"
 #include "made_bank.h"
 #include "resample.h"
+#include "wind_voice.h"
 
 #define GLIDE_SECONDS 0.05f
 #define MUFFLE_GLIDE_SECONDS 0.08f
@@ -75,14 +76,17 @@ void AmbienceVoices_Clear(void)
         }
     for (int l = 0; l < AMBIENCE_LAYERS; ++l) silence(&computer_activity[l]);
     silence(&computer_body);
+    WindVoice_Clear();
 }
 
 /* The ambience is mixed at the loops' own rate, then the sum - left, right
    and reverb send - is read up to the output rate once, the way the chosen
    effect playback reads a sample. Four times fewer samples per voice, and a
-   sinc reading three channels instead of every voice's. */
+   sinc reading three channels instead of every voice's. The wind has three of
+   its own, always read clean. */
 #define BUS 2048
-static float bus[3][BUS];
+#define BUS_CHANNELS 6
+static float bus[BUS_CHANNELS][BUS];
 static int filled;
 static double read_at = RESAMPLE_REACH;
 
@@ -138,7 +142,8 @@ static void start(voice_t *v, const made_sample_t *loop, int offset)
 /* Every voice for n more samples at the end of the bus. */
 static void bus_run(int n)
 {
-    for (int c = 0; c < 3; ++c) memset(bus[c] + filled, 0, (size_t)n * sizeof(float));
+    for (int c = 0; c < BUS_CHANNELS; ++c) memset(bus[c] + filled, 0, (size_t)n * sizeof(float));
+    WindVoice_Run(bus[3] + filled, bus[4] + filled, bus[5] + filled, n);
     float next_blend = alternative_computers ? fminf(1, computer_blend + n / (COMPUTER_FADE_SECONDS * MADE_RATE))
                                             : fmaxf(0, computer_blend - n / (COMPUTER_FADE_SECONDS * MADE_RATE));
     for (int k = 0; k < AMBIENT_KINDS; ++k)
@@ -194,6 +199,7 @@ void AmbienceVoices_Mix(float *stereo, float *send, int frames, int rate, int re
         /* Mixed far enough ahead for the reading's reach past the last frame. */
         int need = (int)(read_at + count * ratio) + RESAMPLE_REACH + 2;
         if (need > filled) bus_run(need - filled);
+        int wind = WindVoice_Sounding();
         for (int i = 0; i < count; ++i)
         {
             double at = read_at + i * ratio;
@@ -201,13 +207,17 @@ void AmbienceVoices_Mix(float *stereo, float *send, int frames, int rate, int re
             stereo[2 * (done + i)] += scale * Resample_AtFloat(bus[0], filled, at, resampling);
             stereo[2 * (done + i) + 1] += scale * Resample_AtFloat(bus[1], filled, at, resampling);
             send[done + i] += scale * Resample_AtFloat(bus[2], filled, at, resampling);
+            if (!wind) continue;
+            stereo[2 * (done + i)] += scale * Resample_AtFloat(bus[3], filled, at, RESAMPLE_CLEAN);
+            stereo[2 * (done + i) + 1] += scale * Resample_AtFloat(bus[4], filled, at, RESAMPLE_CLEAN);
+            send[done + i] += scale * Resample_AtFloat(bus[5], filled, at, RESAMPLE_CLEAN);
         }
         read_at += count * ratio;
         /* Keep only what the next readings reach back to. */
         int drop = (int)read_at - RESAMPLE_REACH - 1;
         if (drop > 0)
         {
-            for (int c = 0; c < 3; ++c) memmove(bus[c], bus[c] + drop, (size_t)(filled - drop) * sizeof(float));
+            for (int c = 0; c < BUS_CHANNELS; ++c) memmove(bus[c], bus[c] + drop, (size_t)(filled - drop) * sizeof(float));
             filled -= drop; read_at -= drop;
         }
         done += count;

@@ -25,6 +25,7 @@
 #include "audio/ringing.h"
 #include "audio/head_knock.h"
 #include "audio/falling_air.h"
+#include "audio/wind_voice.h"
 #include "audio/library_acoustics.h"
 #include "game_profile.h"
 #include "audio/sf2_synth.h"
@@ -286,9 +287,13 @@ void I_UpdateSound(void)
         ambience_strike_t strike;
         float level = ambience ? ambience_amount * AMBIENCE_LEVEL * SDL_clamp(snd_SfxVolume, 0, 15) / 15.0f : 0;
         Ambience_Update(voices, level, muffle_walls, muffle_distance, &strike, &computer_body);
+        ambience_voice_t wind;
+        float blowing;
+        Ambience_WindField(&wind, &blowing);
         SDL_LockAudioStream(stream);
         AmbienceVoices_Set(voices);
         AmbienceVoices_SetComputerBody(&computer_body);
+        WindVoice_Set(&wind, blowing);
         SDL_UnlockAudioStream(stream);
         if (strike.due) play_at(MadeBank_Strike(gametic), strike.x, strike.y, strike.z, strike.level, 1);
         step_event_t steps[8];

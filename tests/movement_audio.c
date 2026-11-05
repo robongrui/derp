@@ -62,6 +62,8 @@ const made_sample_t *MadeBank_Hidden(int kind, int variant) { (void)kind; (void)
 void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], float level, int walls, int distance,
                      ambience_strike_t *strike, ambience_voice_t *body)
 { (void)level; (void)walls; (void)distance; memset(voices, 0, sizeof(ambience_voice_t) * AMBIENT_KINDS * AMBIENCE_LAYERS); memset(strike, 0, sizeof(*strike)); memset(body, 0, sizeof(*body)); }
+void Ambience_WindField(ambience_voice_t *field, float *strength) { (void)field; *strength = 0; }
+void WindVoice_Set(const ambience_voice_t *field, float strength) { (void)field; (void)strength; }
 void AmbienceVoices_Set(const ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS]) { (void)voices; }
 void AmbienceVoices_SetComputerBody(const ambience_voice_t *body) { (void)body; }
 void AmbienceVoices_AlternativeComputer(int enabled) { (void)enabled; }

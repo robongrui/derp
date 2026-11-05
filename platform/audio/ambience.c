@@ -39,6 +39,7 @@ static float raining; /* how hard it rains (Ambience_Rain) */
 static float winding = 0.5f; /* how hard the wind blows (Ambience_Wind) */
 static float snowing; /* how thick it snows (Ambience_Snow) */
 static float drafting; /* the drafts' wind where the listener stands indoors (Ambience_Draft) */
+static ambience_voice_t wind_field; /* where the wind is heard (Ambience_WindField) */
 #define DRAFT_AIR 0.5f    /* the wind of a draft as strong as the wind outside, against the open air's */
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
@@ -97,6 +98,7 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
     memset(voices, 0, sizeof(ambience_voice_t) * AMBIENT_KINDS * AMBIENCE_LAYERS);
     if (computer_body) *computer_body = (ambience_voice_t){0};
     strike->due = 0;
+    wind_field = (ambience_voice_t){ 0 };
     const mobj_t *listener = players[consoleplayer].mo;
     if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numsectors) return;
     if (ambience_built != r_levelserial) Ambience_Build();
@@ -132,7 +134,9 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
            roars as the usual wind. */
         float strength = k == AMBIENT_RAIN || k == AMBIENT_GLASS_RAIN ? raining
                        : k == AMBIENT_WIND && !breach ? winding : Ambient_UsualStrength(k);
-        float amount = Ambient_Loudness(k, strength);
+        /* The wind's own voice sets how loud each strength is. */
+        int wind = k == AMBIENT_WIND && !breach;
+        float amount = wind ? strength > 0 : Ambient_Loudness(k, strength);
         if (amount < 1e-3f) continue;
         float open = k == AMBIENT_WIND ? open_air : k == AMBIENT_RAIN ? open_rain : 0;
         if (open > 1e-3f)
@@ -233,7 +237,8 @@ void Ambience_Update(ambience_voice_t voices[AMBIENT_KINDS][AMBIENCE_LAYERS], fl
             voices[k][l] = (ambience_voice_t){ gain * fminf(1, (254 - sep) / 127), gain * fminf(1, sep / 127),
                                                0.8f * gain, expf(dull[l] / sum2[l]) };
         }
-        if (Ambient_Stepped(k)) step_between(voices[k], strength);
+        if (wind) { wind_field = voices[k][0]; voices[k][0] = (ambience_voice_t){ 0 }; }
+        else if (Ambient_Stepped(k)) step_between(voices[k], strength);
     }
     /* The room tone runs all the time, very quietly; whatever else is heard
        covers it, so silence bottoms out instead of a sound waking up. */
@@ -259,5 +264,6 @@ void Ambience_Glaze(int line, int whole) { Acoustic_Glass(line, whole); }
 void Ambience_ShowGlass(int shown) { Acoustic_ShowGlass(shown); }
 void Ambience_Rain(float amount) { raining = amount < 0 ? 0 : amount > 1 ? 1 : amount; }
 void Ambience_Snow(float amount) { snowing = amount < 0 ? 0 : amount > 1 ? 1 : amount; }
+void Ambience_WindField(ambience_voice_t *field, float *strength) { *field = wind_field; *strength = winding; }
 void Ambience_Wind(float amount) { winding = amount < 0 ? 0 : amount > 1 ? 1 : amount; }
 void Ambience_Draft(float amount) { drafting = amount > 0 ? amount < 1 ? amount : 1 : 0; }

@@ -19,7 +19,7 @@ enum {
     AMBIENT_LAVA,        /* a low rumble, heavy bubbles bursting, a sizzle */
     AMBIENT_FIRE,        /* fire walls: a roar and crackling */
     AMBIENT_MAGMA,       /* cracked hot rock: faint ticks over a rumble */
-    AMBIENT_WIND,        /* under the sky: gusts, a whistle */
+    AMBIENT_WIND,        /* a breach on Phobos: gusts, a whistle (the wind itself: wind_voice.h) */
     AMBIENT_RAIN,        /* under the sky while it rains: a hiss of drops, a patter, drips */
     AMBIENT_GLASS_RAIN,  /* window panes while it rains: drops tapping the glass, a trickle */
     AMBIENT_ROOM,        /* the room tone: faint dark air, when nothing else is heard */

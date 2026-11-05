@@ -59,6 +59,8 @@
 #include "audio/impact_synth.h"
 #include "audio/resample.h"
 #include "audio/reverb.h"
+#include "audio/wind_engines.h"
+#include "audio/wind_voice.h"
 
 #define RATE 44100
 #define SFX_GAIN 0.75f		/* i_sdl_sound.c's */
@@ -311,10 +313,42 @@ static float *light_pattern (int pattern, int tics)
     return light;
 }
 
+/* The wind is made live, on its own clean bus: run its voice as the mixer
+   would, past the ease into its strength. */
+static void render_wind (const sample_t *pistol, const char *name, int room, float level, const char *out)
+{
+    long frames = (long)AMBIENT_SECONDS * RATE;
+    int length = AMBIENT_SECONDS * WIND_RATE, settle = 12 * WIND_RATE;
+    float blowing = strength >= 0 ? strength : Ambient_UsualStrength (AMBIENT_WIND);
+    float *stereo = calloc ((size_t)frames * 2, sizeof(float)), *send = calloc ((size_t)frames, sizeof(float));
+    float *wind = calloc ((size_t)(length + settle) * 3, sizeof(float));
+    if (!stereo || !send || !wind) fail ("Out of memory%s", "");
+    ambience_voice_t field = { SFX_GAIN * level, SFX_GAIN * level, SFX_GAIN * sqrtf (level), 20000, 0 };
+    WindVoice_Set (&field, blowing);
+    float *left = wind, *right = left + length + settle, *reverb = right + length + settle;
+    WindVoice_Run (left, right, reverb, settle);
+    memset (wind, 0, (size_t)(length + settle) * 3 * sizeof(float));
+    WindVoice_Run (left, right, reverb, length);
+    for (long n = 0; n < frames; ++n)
+    {
+	double at = n * (double)WIND_RATE / RATE;
+	stereo[2 * n] += Resample_AtFloat (left, length, at, RESAMPLE_CLEAN);
+	stereo[2 * n + 1] += Resample_AtFloat (right, length, at, RESAMPLE_CLEAN);
+	send[n] += Resample_AtFloat (reverb, length, at, RESAMPLE_CLEAN);
+    }
+    voice_t gun = { *pistol, (long)(AMBIENT_SHOT * RATE), frames, SFX_GAIN, SFX_GAIN };
+    if (gun_on) mix (&gun, stereo, send, frames);
+    char stepped[64];
+    snprintf (stepped, sizeof stepped, "%s-%03d", name, (int)lrintf (100 * blowing));
+    finish (stereo, send, frames, room, stepped, out);
+    free (wind);
+}
+
 /* Ten seconds of an ambient kind through the mixer, one shot at six. */
 static void render_ambient (const sample_t *pistol, int kind, int pattern, const char *name,
 			    int room, int rate, float level, const char *out)
 {
+    if (kind == AMBIENT_WIND) { render_wind (pistol, name, room, level, out); return; }
     long frames = (long)AMBIENT_SECONDS * RATE;
     float *stereo = calloc ((size_t)frames * 2, sizeof(float)), *send = calloc ((size_t)frames, sizeof(float));
     int length = AMBIENT_SECONDS * rate, tics = AMBIENT_SECONDS * TIC_RATE;

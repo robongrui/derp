@@ -23,6 +23,8 @@ static inline float rng_unit(rng_t *r)
 }
 static inline float rng_range(rng_t *r, float lo, float hi) { return lo + (hi - lo) * rng_unit(r); }
 static inline float rng_noise(rng_t *r) { return 2 * rng_unit(r) - 1; }
+/* Near enough a unit Gaussian. */
+static inline float rng_gauss(rng_t *r) { return 0.866f * (rng_noise(r) + rng_noise(r) + rng_noise(r) + rng_noise(r)); }
 
 /* A state-variable filter (Simper's trapezoidal form): band, low and high at once. */
 typedef struct { float a1, a2, a3, k, ic1, ic2, low, band, high; } svf_t;
