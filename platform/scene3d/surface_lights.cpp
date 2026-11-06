@@ -241,12 +241,12 @@ void collectFlatLights() {
     for(int i=0;i<numsectors;++i) for(int ceiling=0;ceiling<2;++ceiling) {
         const sector_t &sector=sectors[i];int flat=ceiling?sector.ceilingpic:sector.floorpic;
         if(flat==skyflatnum)continue;
-        int lump=firstflat+flattranslation[flat],grey=0,glow=8;
-        // Phobos: a pool icing over glows from its stilled frame, then its frozen one as the
-        // glow dies; the lights no longer dance with the liquid's frames.
+        // Its own frame, not the one showing: a liquid's frames differ in how much of them glows,
+        // and the room jumped with each, 9% every 8 tics in E1M1's nukage. Its drawn glow still crossfades.
+        int lump=firstflat+flat,grey=0,glow=8;
+        // Phobos: a pool icing over glows from its stilled frame, then its frozen one as the glow dies.
         bool frozen=!ceiling&&frozenLook(i,grey,glow),still=!ceiling&&!frozen&&poolIce(i).ice>0;
-        const Image &image=frozen?frozenFlat(firstflat+flat,grey,glow):still?stillFlat(firstflat+flat):lumpImage(lump,true);
-        if(frozen||still)lump=firstflat+flat;
+        const Image &image=frozen?frozenFlat(lump,grey,glow):still?stillFlat(lump):lumpImage(lump,true);
         if(image.emissionWeight==0)continue;
         float z=sectorHeight(&sector,ceiling)+(ceiling?-8:8);
         for(const auto &sample:flatSamples(i,lump,image))
