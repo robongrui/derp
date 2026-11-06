@@ -393,6 +393,10 @@ FrameView prepareFrame(int w,int h) {
     float referenceAspect=(4.0f/3)*(scaledviewwidth/320.0f)/(viewheight/200.0f);
     camera.projection[1]=referenceAspect/tan(settings.fov*doomPi/360);
     camera.projection[0]=camera.projection[1]/(worldW/std::max(1.0f,worldH));
+    // Doom drew 320x200 for a 4:3 screen, so its pixels stood 1.2 times taller than wide and the
+    // art was made for that. The HUD gets this from its 4:3 box; the world gets it here, in height
+    // alone, so the view keeps its width and a texel covers the same pixel the status bar does.
+    camera.projection[1]*=1.2f;
     camera.fx2[0]=worldH/200;
     float fraction=1;
     if(worldPending) {
