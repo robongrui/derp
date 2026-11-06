@@ -398,7 +398,7 @@ if(DOOM_BUILD_SDL)
     # and the made-up sounds: impacts and the ambience read from the map's textures. The room map
     # (rooms.c) is for the renderer and the sound alike, so every program builds it here.
     set(DOOM_AUDIO_SOURCES platform/rooms.c platform/audio/map.c platform/audio/occlusion.c platform/audio/resample.c platform/audio/reverb.c platform/audio/room.c platform/audio/beyond.c platform/audio/relief.c platform/audio/flyby.c
-        platform/audio/treble.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/wind_voice.c platform/audio/wind_speed.c platform/audio/wind_still.c platform/audio/wind_breeze.c platform/audio/wind_gale.c platform/audio/acoustic_graph.c platform/audio/steps.c platform/audio/frozen.c
+        platform/audio/treble.c platform/audio/hrtf.c platform/audio/made_bank.c platform/audio/ambience.c platform/audio/ambience_map.c platform/audio/ambience_voices.c platform/audio/wind_voice.c platform/audio/wind_speed.c platform/audio/wind_still.c platform/audio/wind_breeze.c platform/audio/wind_gale.c platform/audio/acoustic_graph.c platform/audio/steps.c platform/audio/frozen.c
         platform/audio/impact_synth.c platform/audio/spark_synth.c platform/audio/glass_synth.c platform/audio/fracture_synth.c platform/audio/step_synth.c
         platform/audio/ambient_synth.c platform/audio/machine_synth.c platform/audio/computer_synth.c platform/audio/liquid_synth.c platform/audio/fire_synth.c
         platform/audio/flyby_synth.c platform/audio/gore_synth.c platform/audio/hidden_synth.c platform/audio/hidden.c platform/audio/vacuum.c
@@ -525,7 +525,7 @@ if(DOOM_BUILD_SDL)
         add_dependencies(derp-heretic-bundle doom derp-heretic)
     endif()
     if(BUILD_TESTING)
-        add_executable(doom-movement-audio-tests tests/movement_audio.c
+        add_executable(doom-movement-audio-tests tests/movement_audio.c platform/audio/hrtf.c
             platform/audio/resample.c platform/audio/treble.c platform/audio/step_synth.c platform/audio/frozen.c)
         target_include_directories(doom-movement-audio-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10"
             "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
@@ -534,6 +534,13 @@ if(DOOM_BUILD_SDL)
             target_link_libraries(doom-movement-audio-tests PRIVATE m)
         endif()
         add_test(NAME movement-audio-routing COMMAND doom-movement-audio-tests)
+        add_executable(doom-hrtf-tests tests/hrtf_audio.c platform/audio/hrtf.c)
+        target_include_directories(doom-hrtf-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")
+        target_link_libraries(doom-hrtf-tests PRIVATE doom_options)
+        if(NOT WIN32)
+            target_link_libraries(doom-hrtf-tests PRIVATE m)
+        endif()
+        add_test(NAME hrtf-directions COMMAND doom-hrtf-tests)
         function(doom_add_smoke target game renderer)
             add_executable(${target} ${ARGN} platform/i_sdl_video.c ${DOOM_INPUT_SOURCES}
                 platform/i_sdl_sound.c platform/i_music.c platform/audio/mixer_music.c platform/i_singleplayer.c ${DOOM_AUDIO_SOURCES}

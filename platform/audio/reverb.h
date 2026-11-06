@@ -14,6 +14,8 @@ void Reverb_Free(reverb_t *reverb);
 void Reverb_Clear(reverb_t *reverb);
 /* The room to move toward; echoes crossfade and the tail glides there. */
 void Reverb_SetRoom(reverb_t *reverb, const room_t *room);
+/* On headphones an echo from one side also reaches the far ear later. From the next room measured on. */
+void Reverb_SetEars(reverb_t *reverb, int headphones);
 /* Adds the reverb of a mono send to interleaved stereo, scaled by amount. */
 void Reverb_Process(reverb_t *reverb, const float *send, float *stereo, int frames, float amount);
 #endif

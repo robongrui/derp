@@ -25,6 +25,9 @@
 #include "reverb.h"
 
 #define HISTORY 32768   /* longer than the farthest echo, at up to 48 kHz */
+/* On headphones, how much later an echo from one side reaches the far ear. */
+#define EAR_LAG_SECONDS 0.0006f
+#define EAR_LAG_MAX 64
 #define LINES 8
 #define LINE_MAX 4096
 #define FADE_SECONDS 0.04f
@@ -78,12 +81,12 @@ static const float smear_pan[SMEARS] = {-0.3f, 0.25f, -0.15f, 0.35f, -0.2f};
 
 /* An echo as heard: each copy's gain per side, and how much treble its
    walls take (a one-pole lowpass, the tail's per-bounce cutoff). */
-typedef struct { int delay, copies; float left[COPIES], right[COPIES], keep; } echo_t;
+typedef struct { int delay, copies; float left[COPIES], right[COPIES], keep; int lag[2][COPIES], lagging; } echo_t;
 typedef struct { echo_t from, to, next; int fading, queued; float fade, low_from[2], low_to[2]; } tap_t;
 typedef struct { float *buffer; int length, at; } allpass_t;
 
 struct reverb_s {
-    int rate;
+    int rate, ears;
     float history[HISTORY]; unsigned written;
     tap_t taps[ROOM_TAPS];
     int smear_offset[ROOM_TAPS][COPIES];
@@ -144,12 +147,12 @@ static float bounce_keep(float dark, int rate) { return expf(-2 * (float)M_PI * 
 
 /* As rough as the wall is, the copy gives way to a smeared cluster of the
    same energy: the copy keeps sqrt(1 - s) of it, the cluster shares sqrt(s). */
-static echo_t echo(const room_t *room, int i, int rate)
+static echo_t echo(const room_t *room, int i, int rate, int ears)
 {
     echo_t e = {0};
     e.delay = (int)(room->delay[i] * rate);
     if (e.delay < 1) e.delay = 1;
-    if (e.delay >= HISTORY - 1024) e.delay = HISTORY - 1024;  /* room for the smear */
+    if (e.delay >= HISTORY - 1024 - EAR_LAG_MAX) e.delay = HISTORY - 1024 - EAR_LAG_MAX;  /* room for the smear */
     float pan = clamp1(room->pan[i], -1), s = clamp1(room->spread[i], 0), gain[COPIES], energy = 0;
     float weights = 0;
     for (int k = 0; k < SMEARS; ++k) weights += smear_gain[k] * smear_gain[k];
@@ -161,16 +164,20 @@ static echo_t echo(const room_t *room, int i, int rate)
     {
         float p = k ? clamp1(pan + s * smear_pan[k - 1], -1) : pan, g = room->gain[i] * gain[k] / sqrtf(energy);
         e.left[k] = g * sqrtf(0.5f * (1 - p)); e.right[k] = g * sqrtf(0.5f * (1 + p));
+        e.lag[0][k] = ears && p > 0 ? (int)(p * EAR_LAG_SECONDS * rate) : 0;
+        e.lag[1][k] = ears && p < 0 ? (int)(-p * EAR_LAG_SECONDS * rate) : 0;
     }
+    e.lagging = ears;
     e.keep = bounce_keep(room->dark[i], rate);
     return e;
 }
+void Reverb_SetEars(reverb_t *r, int headphones) { r->ears = headphones != 0; }
 void Reverb_SetRoom(reverb_t *r, const room_t *room)
 {
     for (int i = 0; i < ROOM_TAPS; ++i)
     {
         tap_t *tap = &r->taps[i];
-        echo_t target = echo(room, i, r->rate);
+        echo_t target = echo(room, i, r->rate, r->ears);
         /* A room unchanged since the last measure: already there, or on the way. */
         const echo_t *heading = !tap->fading ? &tap->from : tap->queued ? &tap->next : &tap->to;
         if (!memcmp(heading, &target, sizeof target)) continue;
@@ -211,7 +218,14 @@ static void hear(const reverb_t *r, const echo_t *e, int t, float *low, float *l
     float l = 0, rr = 0;
     for (int k = 0; k < e->copies; ++k)
     {
-        float v = read_history(r, e->delay + r->smear_offset[t][k]);
+        int at = e->delay + r->smear_offset[t][k];
+        if (e->lagging)
+        {
+            l += e->left[k] * read_history(r, at + e->lag[0][k]);
+            rr += e->right[k] * read_history(r, at + e->lag[1][k]);
+            continue;
+        }
+        float v = read_history(r, at);
         l += e->left[k] * v; rr += e->right[k] * v;
     }
     low[0] = l + (low[0] - l) * e->keep; low[1] = rr + (low[1] - rr) * e->keep;

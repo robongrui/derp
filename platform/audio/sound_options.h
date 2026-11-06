@@ -6,6 +6,9 @@
    of sight. distance: dull far sounds. falloff: far sounds fade as in air,
    not in DOOM's straight line (where the game allows it). */
 void I_SetSoundOptions(int acoustics, float amount, int walls, int distance, int falloff);
+/* What the sound comes out of: 0 speakers, past that headphones and the head
+   heard through (audio/hrtf.h, one past its HRTF_ number). */
+void I_SetSoundOutput(int output);
 /* How effects are read between their samples: 0 held as in the original,
    1 a cubic, 2 a windowed sinc (see audio/resample.h). Past held samples,
    treble (0-2) is how much made-up treble goes above them (audio/treble.h). */

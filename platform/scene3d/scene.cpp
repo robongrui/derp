@@ -153,6 +153,7 @@ void applySettings() {
     R_SetViewSize(10,0);
     applyWindowSize();
     I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance,settings.naturalFalloff);
+    I_SetSoundOutput(settings.soundOutput);
     I_SetSfxPlayback(settings.sfxResampling,settings.sfxTreble);
     I_SetMadeSounds(settings.madeImpacts,settings.glassSound,settings.ambience,settings.ambienceAmount,settings.footsteps);
     I_SetAlternativeComputerSounds(settings.alternativeComputerSounds);

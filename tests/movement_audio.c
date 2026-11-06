@@ -85,6 +85,8 @@ void Room_Snow(float amount) { (void)amount; }
 void Beyond_Measure(const room_t *room, const room_outline_t *outline, float facing, beyond_t *space)
 { (void)room; (void)outline; (void)facing; space->coupling = 0.3f; }
 float Beyond_Share(const beyond_t *space, float x, float y) { (void)space; (void)x; (void)y; return 0.25f; }
+float Occlusion_Height(float x, float y, float z) { (void)x; (void)y; return z; }
+float Occlusion_Opening(fixed_t x, fixed_t y, fixed_t z, float *way_x, float *way_y) { (void)x; (void)y; (void)z; (void)way_x; (void)way_y; return 0; }
 float Vacuum_Carry(fixed_t x, fixed_t y, int own, float *cutoff) { (void)x; (void)y; (void)own; *cutoff = OCCLUSION_OPEN_HZ; return 1; }
 void Vacuum_Follow(void) { }
 int Flyby_Near(const mobj_t *ear, const mobj_t *shooter, const mobj_t *hit,
@@ -93,6 +95,7 @@ int Flyby_Near(const mobj_t *ear, const mobj_t *shooter, const mobj_t *hit,
 reverb_t *Reverb_New(int rate) { (void)rate; return NULL; }
 void Reverb_Clear(reverb_t *reverb) { (void)reverb; }
 void Reverb_SetRoom(reverb_t *reverb, const room_t *room) { (void)reverb; (void)room; }
+void Reverb_SetEars(reverb_t *reverb, int headphones) { (void)reverb; (void)headphones; }
 void Reverb_Process(reverb_t *reverb, const float *send, float *stereo, int frames, float amount)
 { (void)stereo; (void)amount; CHECK(frames == FRAMES); memcpy(sends[reverb == beyond_reverb], send, sizeof(sends[0])); }
 void MixerMusic_UnRegister(void) {}
@@ -227,6 +230,34 @@ static void check_reuse_and_world(void)
     CHECK(near(channels[0].send, SFX_GAIN * sqrtf(8.0f / 15)));
 }
 
+/* Through the whole mixer, on speakers and both heads: what is on the
+   listener's left comes out of the left channel. Facing east, north is left. */
+static void check_sides(void)
+{
+    static float stereo[2 * FRAMES];
+    int was_output = sound_output;
+    fixed_t x = listener.x, y = listener.y;
+    angle_t facing = listener.angle;
+    for (int output = 0; output <= HRTF_HEADS; ++output)
+        for (int turn = 0; turn < 4; ++turn)
+            for (int side = 0; side < 2; ++side)
+            {
+                float angle = (float)turn * SDL_PI_F / 2, left = angle + SDL_PI_F / 2 * (side ? -1 : 1), power[2] = { 0, 0 };
+                sound_output = output;
+                listener.x = listener.y = 0;
+                listener.angle = (angle_t)turn * ANG90;
+                reset_channels();
+                play_kind(IMPACT_STEP_METAL, 300 * cosf(left), 300 * sinf(left), 0, 1, 1, 0);
+                render(stereo);
+                for (int n = 0; n < FRAMES; ++n)
+                    for (int ear = 0; ear < 2; ++ear) power[ear] += stereo[2 * n + ear] * stereo[2 * n + ear];
+                CHECK(power[0] + power[1] > 0);
+                CHECK(power[side] > 2 * power[!side]);
+            }
+    sound_output = was_output; listener.x = x; listener.y = y; listener.angle = facing;
+    reset_channels();
+}
+
 int main(void)
 {
     SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, OUTPUT_RATE };
@@ -247,7 +278,7 @@ int main(void)
     monster.flags = MF_SHOOTABLE; monster.health = 100;
     thinkercap.next = &monster.thinker; monster.thinker.next = &thinkercap;
     Resample_Init();
-    check_mix(); check_ownership(); check_reuse_and_world();
+    check_sides(); check_mix(); check_ownership(); check_reuse_and_world();
     SDL_DestroyAudioStream(stream); stream = NULL;
     puts("Movement direct samples unchanged; personal source/volume sends linear; monster/world routing and reused channels preserved.");
     return 0;

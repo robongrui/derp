@@ -197,6 +197,7 @@ struct Settings {
     int weaponLighting=1; // The weapon's painted sheen and light come out at load; lights around the player relight it.
     // Sound, though graphics.cfg keeps it: the mixer is told in applySettings.
     int musicDevice=0; // What plays the music: 0 SoundFont, 1 OPL FM, 2 the Mac's own synthesizer.
+    int soundOutput=0; // 0 speakers, 1 headphones through a KEMAR head, 2 through a KU100.
     int sfxResampling=0; // Effects between their samples: 0 held (original sizzle), 1 cubic, 2 windowed sinc.
     float sfxTreble=1; // Made-up treble above the samples' own band, past Original playback (0-2).
     int roomAcoustics=1; // Echoes and a reverb tail measured from the room around the player.

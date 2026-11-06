@@ -25,6 +25,7 @@
 #include "audio/ringing.h"
 #include "audio/head_knock.h"
 #include "audio/falling_air.h"
+#include "audio/hrtf.h"
 #include "audio/wind_voice.h"
 #include "audio/library_acoustics.h"
 #include "game_profile.h"
@@ -51,13 +52,29 @@
 #define COUPLING_GLIDE_SECONDS 0.5f
 /* How fast a sound fades as the air carrying it thins (vacuum.h). */
 #define AIR_GLIDE_SECONDS 0.25f
+/* Pan and level arrive once a tic; between tics they glide, or a fast turn ticks. */
+#define PAN_GLIDE_SECONDS 0.015f
+/* DOOM's stereo swing, and how near a sound is before it has no side: at the
+   listener a sound's direction means nothing. */
+#define PAN_SWING 96
+#define PAN_NEAR 64.0f
+/* Both sides' power at the center, where DMX has them 126/127 and 1. */
+#define PAN_POWER (1 + (126.0f / 127) * (126.0f / 127))
+/* How much of the way to the opening it comes through a sound turns each tic,
+   and the furthest it turns: a hint of the way round, never the other ear. */
+#define BEND_GLIDE 0.2f
+#define BEND_MOST (SDL_PI_F / 4)
+/* Where the listener's ears are above their feet (occlusion.c's EAR). */
+#define EAR_HEIGHT 41.0f
 /* Ambience ducks under loud effects at once and comes back over this long. */
 #define DUCK_RELEASE_SECONDS 1.2f
 typedef struct { const byte *data; int length, rate; } sample_t;
 typedef struct {
     sample_t sample;
     double position, step;
-    float left, right, send;
+    /* Where the gains are going, and where they are on the way there. */
+    float left, right, send, gain;
+    float now_left, now_right, now_send, now_gain;
     float send_scale;  /* 1 for world sounds; personal source gain correction */
     /* Lowpass: cutoff glides to target; two one-pole stages of state. */
     float cutoff, target, low[2];
@@ -69,9 +86,17 @@ typedef struct {
     treble_t treble;
     int handle, measured;
     /* Where a placed sound is, for the natural falloff, how far it carries
-       (I_SoundReach), and how it was last panned and pitched. */
-    float x, y, reach;
-    int placed, separation, pitch;
+       (I_SoundReach), and how it was last panned, pitched and how loud DOOM
+       asked for it. A made-up sound stays where it was made (anchored), at
+       level times the effects volume, no brighter than most. */
+    float x, y, z, reach, volume, level, most;
+    int placed, anchored, separation, pitch;
+    /* Out of sight it is heard from the opening it comes through: how far
+       its direction has turned that way (bend), and how far it should. */
+    float way_x, way_y, bend, bend_target;
+    /* On headphones, what the head does to it. */
+    int spatial;
+    hrtf_voice_t hrtf;
 } mix_channel_t;
 static sample_t samples[NUMSFX];
 static mix_channel_t channels[MIX_CHANNELS];
@@ -82,7 +107,10 @@ static int resampling = RESAMPLE_ORIGINAL;
 static float treble_amount = 1;
 static float next_cutoff = OCCLUSION_OPEN_HZ;
 static float next_x, next_y, next_air = 1, next_air_hz = OCCLUSION_OPEN_HZ;
+static float next_z, next_bend, next_way_x, next_way_y;
 static int next_placed, next_own, natural_falloff = 1;
+/* 0 speakers; past that, the head on headphones. */
+static int sound_output;
 static float reverb_amount = 1;
 /* The listener's room, and the bigger space beyond it (measured on the game
    thread; the mixer only has its coupling). */
@@ -128,18 +156,69 @@ static int falls_off(void) { return natural() && gamemap != 8; }
 static float reach_of(int id) { return falls_off() && id > 0 && id < NUMSFX ? SDL_max(Game_SoundCarry(id), 1.0f) : 1; }
 fixed_t I_SoundReach(int id) { return (fixed_t)(reach_of(id) * FRACUNIT); }
 
+/* Where a sound seems to be: as far as it is, but turned a little toward the
+   opening it comes through, by as much as the way round is long. */
+static void heard_at(const mix_channel_t *channel, float *x, float *y)
+{
+    const mobj_t *listener = players[consoleplayer].mo;
+    *x = channel->x; *y = channel->y;
+    if (!listener || channel->bend <= 0) return;
+    float lx = listener->x / (float)FRACUNIT, ly = listener->y / (float)FRACUNIT;
+    float dx = *x - lx, dy = *y - ly, wx = channel->way_x - lx, wy = channel->way_y - ly;
+    float apart = hypotf(dx, dy), way = hypotf(wx, wy);
+    if (apart < 1 || way < 1) return;
+    float turn = SDL_clamp(atan2f(dx * wy - dy * wx, dx * wx + dy * wy), -BEND_MOST, BEND_MOST) * channel->bend;
+    float heading = atan2f(dy, dx) + turn;
+    *x = lx + cosf(heading) * apart; *y = ly + sinf(heading) * apart;
+}
+/* Which way a point lies from the listener's view, in radians, left positive. */
+static float azimuth_to(float x, float y)
+{
+    const mobj_t *listener = players[consoleplayer].mo;
+    if (!listener) return 0;
+    float dx = x - listener->x / (float)FRACUNIT, dy = y - listener->y / (float)FRACUNIT;
+    return atan2f(dy, dx) - listener->angle * (2 * SDL_PI_F / 4294967296.0f);
+}
+/* How much direction a sound there has: none at the listener, so something
+   at arm's length can't snap from ear to ear. */
+static float presence_at(float x, float y) { return SDL_min(listener_distance(x, y) / PAN_NEAR, 1.0f); }
+/* DOOM's separation for a point (128 ahead or behind, 32 full left, 224 full
+   right): the swing of S_AdjustSoundParams. */
+static int pan_at(float x, float y) { return 128 - (int)(PAN_SWING * sinf(azimuth_to(x, y)) * presence_at(x, y)); }
+/* Up or down to a sound at height z, from the listener's ears. */
+static float elevation_to(float x, float y, float z)
+{
+    const mobj_t *listener = players[consoleplayer].mo;
+    if (!listener) return 0;
+    float dx = x - listener->x / (float)FRACUNIT, dy = y - listener->y / (float)FRACUNIT;
+    return atan2f(z - (listener->z / (float)FRACUNIT + EAR_HEIGHT), hypotf(dx, dy));
+}
+/* Turns a sound on headphones to where it is heard, at once for a new one. */
+static void aim(mix_channel_t *channel, int start)
+{
+    if (!channel->spatial) return;
+    float x, y, z = Occlusion_Height(channel->x, channel->y, channel->z);
+    heard_at(channel, &x, &y);
+    float azimuth = azimuth_to(x, y), elevation = elevation_to(x, y, z), presence = presence_at(x, y);
+    if (start) Hrtf_Start(&channel->hrtf, sound_output - 1, azimuth, elevation, presence);
+    else Hrtf_Aim(&channel->hrtf, azimuth, elevation, presence);
+}
 /* volume is DOOM's 0-15 effects scale, already lowered with distance.
-   Panning follows DMX: full level on both sides at the center (separation
-   128), fading on the far side only. The reverb send falls off slower than
-   the dry sound, so far sounds come out wetter. */
+   The far side fades as DMX's does, from full level at the center (separation
+   128). DMX left the near side at full level too, so a sound lost power as it
+   turned from ahead to beside the listener; here the near side makes that up,
+   and a sound holds its power all the way round. The reverb send falls off
+   slower than the dry sound, so far sounds come out wetter. */
 static void gains(mix_channel_t *channel, float volume, int separation, int pitch)
 {
     float level = SDL_clamp(volume, 0.0f, 15.0f) / 15.0f;
     separation = SDL_clamp(separation, 1, 254);
-    channel->left = SFX_GAIN * level * SDL_min(1.0f, (254 - separation) / 127.0f);
-    channel->right = SFX_GAIN * level * SDL_min(1.0f, separation / 127.0f);
+    float far = SDL_min(1.0f, SDL_min(254 - separation, separation) / 127.0f), near = sqrtf(PAN_POWER - far * far);
+    channel->left = SFX_GAIN * level * (separation < 128 ? near : far);
+    channel->right = SFX_GAIN * level * (separation < 128 ? far : near);
+    channel->gain = SFX_GAIN * level;
     channel->send = SFX_GAIN * sqrtf(level) * channel->send_scale;
-    channel->separation = separation; channel->pitch = pitch;
+    channel->volume = volume; channel->separation = separation; channel->pitch = pitch;
     channel->step = channel->sample.rate / (double)OUTPUT_RATE * pow(2.0, (pitch - 128) / 64.0);
     Treble_Tune(&channel->treble, (float)(0.5 * channel->step * OUTPUT_RATE), OUTPUT_RATE);
 }
@@ -147,7 +226,8 @@ static void gains(mix_channel_t *channel, float volume, int separation, int pitc
 static void audio(void *userdata, SDL_AudioStream *output, int additional, int total)
 {
     (void)userdata; (void)total;
-    float buffer[512 * 2], send[512], send_beyond[512];
+    float buffer[512 * 2], send[512], send_beyond[512], mono[512];
+    const float pan_glide = 1 - expf(-1 / (PAN_GLIDE_SECONDS * OUTPUT_RATE));
     int frames = (additional + (int)sizeof(float)*2 - 1) / ((int)sizeof(float)*2);
     while (frames > 0)
     {
@@ -169,11 +249,14 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
             float there = channel->beyond;
             channel->air += (channel->air_target - channel->air) * (1 - expf(-count / (AIR_GLIDE_SECONDS * OUTPUT_RATE)));
             float air = channel->air;
-            float send_here = channel->send * (1 - there + coupling * there);
-            float send_there = channel->send * (there + coupling * sqrtf(coupling) * (1 - there));
+            channel->now_send += (channel->send - channel->now_send) * (1 - expf(-count / (PAN_GLIDE_SECONDS * OUTPUT_RATE)));
+            float send_here = channel->now_send * (1 - there + coupling * there);
+            float send_there = channel->now_send * (there + coupling * sqrtf(coupling) * (1 - there));
             /* Held samples bring their own sizzle up there instead. */
             int treble = resampling != RESAMPLE_ORIGINAL && treble_amount > 0;
-            for (int i = 0; i < count; ++i)
+            float left = channel->now_left, right = channel->now_right, gain = channel->now_gain;
+            int i;
+            for (i = 0; i < count; ++i)
             {
                 int position = (int)channel->position;
                 if (position >= channel->sample.length) { channel->handle = 0; break; }
@@ -182,11 +265,28 @@ static void audio(void *userdata, SDL_AudioStream *output, int additional, int t
                 channel->low[0] = value + (channel->low[0] - value) * keep;
                 channel->low[1] = channel->low[0] + (channel->low[1] - channel->low[0]) * keep;
                 value = channel->low[1] * air;
-                buffer[2*i] += value * channel->left;
-                buffer[2*i+1] += value * channel->right;
+                if (channel->spatial)
+                {
+                    gain += (channel->gain - gain) * pan_glide;
+                    mono[i] = value * gain;
+                }
+                else
+                {
+                    left += (channel->left - left) * pan_glide;
+                    right += (channel->right - right) * pan_glide;
+                    buffer[2*i] += value * left;
+                    buffer[2*i+1] += value * right;
+                }
                 send[i] += value * send_here;
                 send_beyond[i] += value * send_there;
                 channel->position += channel->step;
+            }
+            channel->now_left = left; channel->now_right = right; channel->now_gain = gain;
+            if (channel->spatial)
+            {
+                /* A sound that just ended still rings out of the filter. */
+                if (i < count) memset(mono + i, 0, (size_t)(count - i) * sizeof *mono);
+                Hrtf_Process(&channel->hrtf, mono, buffer, count);
             }
         }
         /* Ambience ducks under what the effects play, then fades back. */
@@ -256,6 +356,7 @@ void I_InitSound(void)
     MadeBank_Build();
     room_reverb = Reverb_New(OUTPUT_RATE);
     beyond_reverb = Reverb_New(OUTPUT_RATE);
+    I_SetSoundOutput(sound_output);
     Resample_Init();
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio, NULL);
     if (!stream) { fprintf(stderr, "Audio unavailable: %s\n", SDL_GetError()); return; }
@@ -272,6 +373,7 @@ void I_ShutdownSound(void)
 static void play_at(const made_sample_t *sample, float x, float y, float z, float level, float reach);
 static void play_through(const made_sample_t *sample, float x, float y, float z, float level, float reach, float most, int personal);
 
+typedef struct { int handle; float x, y, z; } made_at_t;
 /* Every tic the ambience voices follow the listener; every other the room is
    measured for the reverb. */
 void I_UpdateSound(void)
@@ -294,7 +396,15 @@ void I_UpdateSound(void)
         AmbienceVoices_Set(voices);
         AmbienceVoices_SetComputerBody(&computer_body);
         WindVoice_Set(&wind, blowing);
+        made_at_t made[MIX_CHANNELS];
+        int anchored = 0;
+        for (int c = 0; c < MIX_CHANNELS; ++c)
+            if (channels[c].handle && channels[c].anchored)
+                made[anchored++] = (made_at_t){ channels[c].handle, channels[c].x, channels[c].y, channels[c].z };
         SDL_UnlockAudioStream(stream);
+        /* A made-up sound stays where it was made while the listener moves and turns. */
+        for (int c = 0; c < anchored; ++c)
+            I_SoundAt(made[c].handle, (fixed_t)(made[c].x * FRACUNIT), (fixed_t)(made[c].y * FRACUNIT), (fixed_t)(made[c].z * FRACUNIT));
         if (strike.due) play_at(MadeBank_Strike(gametic), strike.x, strike.y, strike.z, strike.level, 1);
         step_event_t steps[8];
         int count = footsteps ? Steps_Tic(steps, 8) : 0;
@@ -331,6 +441,14 @@ void I_SetSoundOptions(int enabled, float amount, int walls, int distance, int f
     natural_falloff = falloff != 0;
     if (stream) SDL_UnlockAudioStream(stream);
 }
+void I_SetSoundOutput(int output)
+{
+    if (stream) SDL_LockAudioStream(stream);
+    sound_output = SDL_clamp(output, 0, HRTF_HEADS);
+    if (room_reverb) Reverb_SetEars(room_reverb, sound_output != 0);
+    if (beyond_reverb) Reverb_SetEars(beyond_reverb, sound_output != 0);
+    if (stream) SDL_UnlockAudioStream(stream);
+}
 void I_SetSfxPlayback(int mode, float treble)
 {
     if (stream) SDL_LockAudioStream(stream);
@@ -352,7 +470,8 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
     if (!handle)
     {
         next_cutoff = Occlusion_Cutoff(x, y, z, muffle_walls, muffle_distance);
-        next_x = x / (float)FRACUNIT; next_y = y / (float)FRACUNIT; next_placed = 1;
+        next_x = x / (float)FRACUNIT; next_y = y / (float)FRACUNIT; next_z = z / (float)FRACUNIT; next_placed = 1;
+        next_bend = Occlusion_Opening(x, y, z, &next_way_x, &next_way_y);
         next_air = Vacuum_Carry(x, y, 0, &next_air_hz);
         next_beyond = Beyond_Share(&beyond, next_x, next_y);
         return;
@@ -360,20 +479,31 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
     float fx = x / (float)FRACUNIT, fy = y / (float)FRACUNIT;
     SDL_LockAudioStream(stream);
     mix_channel_t *channel = find(handle);
-    if (channel && channel->placed)
+    if (channel && (channel->placed || channel->anchored))
     {
-        channel->x = fx; channel->y = fy;
-        float volume = snd_SfxVolume * distance_gain(listener_distance(fx, fy) / channel->reach);
-        if (falls_off()) gains(channel, volume, channel->separation, channel->pitch);
+        channel->x = fx; channel->y = fy; channel->z = z / (float)FRACUNIT;
+        float heard = distance_gain(listener_distance(fx, fy) / channel->reach);
+        float volume = channel->anchored ? snd_SfxVolume * channel->level * heard : falls_off() ? snd_SfxVolume * heard : channel->volume;
+        channel->bend += (channel->bend_target - channel->bend) * BEND_GLIDE;
+        float hx, hy;
+        heard_at(channel, &hx, &hy);
+        gains(channel, volume, pan_at(hx, hy), channel->pitch);
+        aim(channel, 0);
     }
     int due = channel && (gametic < channel->measured || gametic - channel->measured >= 2);
     if (due) channel->measured = gametic;
     SDL_UnlockAudioStream(stream);
     if (!due) return;
     float cutoff = Occlusion_Cutoff(x, y, z, muffle_walls, muffle_distance), share = Beyond_Share(&beyond, fx, fy), air_hz;
-    float air = Vacuum_Carry(x, y, 0, &air_hz);
+    float air = Vacuum_Carry(x, y, 0, &air_hz), way_x, way_y, bend = Occlusion_Opening(x, y, z, &way_x, &way_y);
     SDL_LockAudioStream(stream);
-    if ((channel = find(handle))) { channel->target = SDL_min(cutoff, air_hz); channel->beyond_target = share; channel->air_target = air; }
+    if ((channel = find(handle)))
+    {
+        channel->target = SDL_min(SDL_min(cutoff, air_hz), channel->most);
+        channel->beyond_target = share; channel->air_target = air;
+        channel->bend_target = bend;
+        if (bend > 0) { channel->way_x = way_x; channel->way_y = way_y; }
+    }
     SDL_UnlockAudioStream(stream);
 }
 /* The next I_StartSound is the listener's own: on Phobos heard through the suit. */
@@ -401,20 +531,39 @@ static int start_sample(sample_t sample, float volume, int separation, int pitch
     channel->low[0] = channel->low[1] = 0;
     Treble_Reset(&channel->treble);
     channel->measured = gametic;
-    channel->placed = 0;
+    channel->placed = channel->anchored = channel->spatial = 0;
+    channel->bend = channel->bend_target = 0;
     channel->reach = 1;
+    channel->most = OCCLUSION_OPEN_HZ;
     channel->send_scale = send_scale;
     if (next_handle == INT_MAX) next_handle = 1;
     channel->handle = next_handle++;
     gains(channel, volume, separation, pitch);
+    channel->now_left = channel->left; channel->now_right = channel->right;
+    channel->now_send = channel->send; channel->now_gain = channel->gain;
     int handle = channel->handle;
     SDL_UnlockAudioStream(stream);
     return handle;
 }
+/* A sound just started out in the world: heard from where it is, or the
+   opening it comes through, and through the head on headphones. */
+static void place(mix_channel_t *channel, float bend, float way_x, float way_y)
+{
+    float x, y;
+    channel->bend = channel->bend_target = bend;
+    channel->way_x = way_x; channel->way_y = way_y;
+    heard_at(channel, &x, &y);
+    gains(channel, channel->volume, pan_at(x, y), channel->pitch);
+    channel->now_left = channel->left; channel->now_right = channel->right;
+    channel->spatial = sound_output != 0;
+    aim(channel, 1);
+}
 int I_StartSound(int id, int volume, int separation, int pitch, int priority)
 {
     (void)priority;
-    float cutoff = next_cutoff, x = next_x, y = next_y, level = (float)volume, there = next_beyond;
+    float cutoff = next_cutoff, x = next_x, y = next_y, z = next_z, level = (float)volume, there = next_beyond;
+    float bend = next_bend, way_x = next_way_x, way_y = next_way_y;
+    next_bend = 0;
     float air = next_air, air_hz = next_air_hz;
     int placed = next_placed, own = next_own;
     next_cutoff = OCCLUSION_OPEN_HZ; next_placed = 0; next_beyond = 0; next_air = 1; next_air_hz = OCCLUSION_OPEN_HZ; next_own = 0;
@@ -435,10 +584,15 @@ int I_StartSound(int id, int volume, int separation, int pitch, int priority)
     }
     if (!stream) return 0;
     if (placed && falls_off()) level = snd_SfxVolume * distance_gain(listener_distance(x, y) / reach);
+    if (placed) separation = pan_at(x, y);
     int handle = start_sample(samples[id], level, separation, pitch, cutoff, placed ? there : 0, 1, air);
     SDL_LockAudioStream(stream);
     mix_channel_t *channel = find(handle);
-    if (channel) { channel->placed = placed; channel->x = x; channel->y = y; channel->reach = reach; }
+    if (channel)
+    {
+        channel->placed = placed; channel->x = x; channel->y = y; channel->z = z; channel->reach = reach;
+        if (placed) place(channel, bend, way_x, way_y);
+    }
     SDL_UnlockAudioStream(stream);
     return handle;
 }
@@ -461,31 +615,38 @@ int I_SoundLump(const char *name)
 /* A made-up sound at a map point, loud and panned as DOOM does it for a
    thing there (S_AdjustSoundParams, or the natural falloff), muffled like
    any effect. level scales the effects volume; reach how much farther than
-   DOOM's sounds it carries, as a louder sound would. Made-up sounds are
-   placed once: those that follow a thing are short. most caps the treble,
-   for a sound heard through a wall whatever the way to it. Personal
+   DOOM's sounds it carries, as a louder sound would. Made-up sounds stay
+   where they were made: those that follow a thing are short. most caps the
+   treble, for a sound heard through a wall whatever the way to it. Personal
    movement keeps source loudness and the effects volume linear in its
    room send; only distance makes it relatively wetter. */
 static void play_through(const made_sample_t *sample, float x, float y, float z, float level, float reach, float most, int personal)
 {
     const mobj_t *listener = players[consoleplayer].mo;
     if (!stream || !sample || !listener || gamestate != GS_LEVEL || level <= 0) return;
-    float dx = x - listener->x / (float)FRACUNIT, dy = y - listener->y / (float)FRACUNIT;
     float distance = listener_distance(x, y);
     if (distance > 1200 * reach) return;
     float volume = snd_SfxVolume * level * distance_gain(distance / reach);
     float source = SDL_clamp(snd_SfxVolume, 0, 15) / 15.0f * level;
     float send_scale = personal ? sqrtf(SDL_clamp(source, 0.0f, 1.0f)) : 1;
-    /* A sound at the listener (their own steps) has no direction: centred,
-       turning toward where it is over the first 64 units. */
-    float angle = atan2f(dy, dx) - listener->angle * (2 * SDL_PI_F / 4294967296.0f);
-    int separation = 128 - (int)(96 * sinf(angle) * SDL_min(distance / 64, 1.0f));
     float air_hz, air = Vacuum_Carry((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), personal, &air_hz);
     if (air <= 0) return;
     float cutoff = SDL_min(SDL_min(most, air_hz), Occlusion_Cutoff((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), (fixed_t)(z * FRACUNIT),
                                                   muffle_walls, muffle_distance));
-    start_sample((sample_t){ sample->data, sample->length, sample->rate }, volume, separation, 128, cutoff,
-                 Beyond_Share(&beyond, x, y), send_scale, air);
+    float way_x = 0, way_y = 0, bend = personal ? 0 : Occlusion_Opening((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT), (fixed_t)(z * FRACUNIT), &way_x, &way_y);
+    int handle = start_sample((sample_t){ sample->data, sample->length, sample->rate }, volume, pan_at(x, y), 128, cutoff,
+                              Beyond_Share(&beyond, x, y), send_scale, air);
+    /* The listener's own movement stays with them. */
+    if (personal) return;
+    SDL_LockAudioStream(stream);
+    mix_channel_t *channel = find(handle);
+    if (channel)
+    {
+        channel->anchored = 1; channel->x = x; channel->y = y; channel->z = z;
+        channel->reach = reach; channel->level = level; channel->most = most;
+        place(channel, bend, way_x, way_y);
+    }
+    SDL_UnlockAudioStream(stream);
 }
 
 static void play_at(const made_sample_t *sample, float x, float y, float z, float level, float reach)

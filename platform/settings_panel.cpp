@@ -531,6 +531,10 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "OPL is the FM synthesis of DOS sound cards, with DOOM's own instrument set. "
                         "A .sf2 bank put in the soundfonts folder beside doom.cfg replaces the bundled one.")}},
                 {"Effects",{
+                    choice("sound_output","Output",&s.soundOutput,{"Speakers","Headphones (KEMAR)","Headphones (KU100)"},{0,1,2},
+                        "On headphones, sounds out in the world come from where they are: ahead or behind, above or below, as measured "
+                        "on a dummy head (SADIE II, University of York). KEMAR tells front from back best; KU100 is the more neutral. "
+                        "Sounds wrong on speakers. Your own weapons and steps, music and weather stay as they are."),
                     choice("sfx_resampling","Sample playback",&s.sfxResampling,{"Original","Smooth","Clean"},{0,1,2},
                         "DOOM's effects are 11 kHz samples. Original holds each sample, raw and gritty, with a bright sizzle on top. "
                         "Smooth blends between samples and keeps some edge. Clean filters the sizzle out entirely."),

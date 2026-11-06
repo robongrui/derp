@@ -22,6 +22,7 @@
 #define SEALED_HZ 500.0f  /* no way found at all: solid wall */
 #define DETOUR_FREE 1.05f /* ways this much longer than straight are as good as straight */
 #define DETOUR_FULL 1.5f  /* this much longer, as dull as AROUND_HZ */
+#define OPENING_NEAR 16.0f /* in the doorway itself the opening has no direction */
 #define MAX_CROSSINGS 128
 
 static float distance_cutoff(float distance)
@@ -58,6 +59,42 @@ static int in_sight(float x, float y, float ear, const sector_t *there, float sx
     return seen;
 }
 
+/* Things sound from about their middle; sector sounds (doors, lifts) from
+   the middle of their sector's height. */
+static float height_in(const sector_t *sector, float z)
+{
+    float floor = Map_Floor(sector), ceiling = Map_Ceiling(sector), sz = z + 32;
+    return sz < floor + 8 || sz > ceiling - 8 ? 0.5f * (floor + ceiling) : sz;
+}
+float Occlusion_Height(float x, float y, float z)
+{
+    if (gamestate != GS_LEVEL || !numlines) return z;
+    return height_in(R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT))->sector, z);
+}
+
+static float plain_fade(float distance, const void *data) { (void)data; return 1 / (1 + distance / 160); }
+float Occlusion_Opening(fixed_t x, fixed_t y, fixed_t z, float *way_x, float *way_y)
+{
+    mobj_t *listener = players[consoleplayer].mo;
+    if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numlines) return 0;
+    sector_t *here = listener->subsector->sector, *there = R_PointInSubsector(x, y)->sector;
+    if (here == there) return 0;
+    float lx = listener->x / (float)FRACUNIT, ly = listener->y / (float)FRACUNIT;
+    float sx = x / (float)FRACUNIT, sy = y / (float)FRACUNIT, apart = hypotf(sx - lx, sy - ly);
+    if (apart < 1 || apart > MAP_REACH) return 0;
+    Map_Gather(lx, ly);
+    if (in_sight(lx, ly, listener->z / (float)FRACUNIT + EAR, there, sx, sy, height_in(there, z / (float)FRACUNIT), apart) != WALL) return 0;
+    Acoustic_Follow();
+    acoustic_way_t way;
+    acoustic_heard_t heard;
+    int sector = (int)(there - sectors);
+    if (!Acoustic_Way(sx, sy, sector, &way) || !Acoustic_Heard(sx, sy, sector, plain_fade, NULL, &heard)) return 0;
+    if (hypotf(heard.from_x - lx, heard.from_y - ly) < OPENING_NEAR) return 0;
+    float bend = (way.length / apart - DETOUR_FREE) / (DETOUR_FULL - DETOUR_FREE);
+    *way_x = heard.from_x; *way_y = heard.from_y;
+    return bend < 0 ? 0 : bend > 1 ? 1 : bend;
+}
+
 float Occlusion_Cutoff(fixed_t x, fixed_t y, fixed_t z, int walls, int distance)
 {
     mobj_t *listener = players[consoleplayer].mo;
@@ -68,14 +105,10 @@ float Occlusion_Cutoff(fixed_t x, fixed_t y, fixed_t z, int walls, int distance)
     float cutoff = distance ? distance_cutoff(apart) : OCCLUSION_OPEN_HZ;
     if (!walls || apart < 1 || apart > MAP_REACH) return cutoff;
 
-    /* Things sound from about their middle; sector sounds (doors, lifts) from
-       the middle of their sector's height. */
     sector_t *here = listener->subsector->sector, *there = R_PointInSubsector(x, y)->sector;
     if (here == there)
     {
-        float floor = Map_Floor(there), ceiling = Map_Ceiling(there);
-        float sz = z / (float)FRACUNIT + 32;
-        if (sz < floor + 8 || sz > ceiling - 8) sz = 0.5f * (floor + ceiling);
+        float sz = height_in(there, z / (float)FRACUNIT);
         float ear = listener->z / (float)FRACUNIT + EAR;
         Map_Gather(lx, ly);
         if (in_sight(lx, ly, ear, there, sx, sy, sz, apart) == SIGHT) return cutoff;
