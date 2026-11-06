@@ -10,6 +10,7 @@ layout(set=2,binding=3) uniform sampler3D paletteLUT;
 layout(std140,set=3,binding=0) uniform Stretch { vec4 hudRect; vec4 upscale; };
 layout(std140,set=3,binding=1) uniform Camera CAMERA_BLOCK c;
 layout(location=0) out vec4 outColor;
+layout(location=11) flat in float vBloomKept; // screen.vert: what the view's overall glow leaves of the bloom.
 // Phobos (c.phobos.z): frost creeping in over the helmet's visor from its rim, crystals reaching
 // inward unevenly, a Doom pixel at a time; never over the status bar.
 float frostHash(vec2 p) {return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
@@ -86,13 +87,7 @@ void main() {
         float coverage=all(greaterThanEqual(uv,vec2(0)))&&all(lessThanEqual(uv,vec2(1)))?textureLod(hud,uv,0.0).a:0.0;
         // Screen-like additive glow retains detail without clipping to white.
         vec3 glow=textureLod(bloom,vUV,0.0).rgb*(1.0-coverage)*0.8;
-        // Where much of the view glows (SIGIL's rooms walled in fire and red rock) the bloom gives way, as
-        // the eye does, or it floods the view in one colour; lamps and screens in a room never come near.
-        // From the bloom's last mip level, the whole view's average.
-        vec3 mean=textureLod(bloom,vec2(0.5),float(textureQueryLevels(bloom)-1)).rgb;
-        float most=max(mean.r,max(mean.g,mean.b));
-        if(most>0.08) glow*=pow(0.08/most,0.75);
-        color.rgb=1.0-(1.0-color.rgb)*exp(-glow);
+        color.rgb=1.0-(1.0-color.rgb)*exp(-glow*vBloomKept);
     }
     if(c.phobos.z>0.0) color.rgb=visorFrost(color.rgb);
     if(c.rush.w>0.0) color.rgb=rush(color.rgb,uv);

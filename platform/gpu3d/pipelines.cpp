@@ -5,7 +5,7 @@
 
 namespace gpu3d {
 SDL_GPUSampleCount sampleCount=SDL_GPU_SAMPLECOUNT_1;
-static SDL_GPUShader *worldVertexShader,*reflectVertexShader,*screenVertexShader,*skyVertexShader;
+static SDL_GPUShader *worldVertexShader,*reflectVertexShader,*screenVertexShader,*skyVertexShader,*presentVertexShader;
 SDL_GPUGraphicsPipeline *opaquePipeline,*skyPipeline,*skySurfacePipeline,*reflectSkySurfacePipeline,*worldPipeline,*shadowPipeline,*decalPipeline,*particlePipeline,*crestPipeline,*heatPipeline,
     *weaponPipeline,*hudPipeline,*solidPipeline,*mistPipeline,*shaftPipeline,*overlayWeaponPipeline,*overlayHudPipeline,*overlaySolidPipeline,
     *reflectOpaquePipeline,*reflectSkyPipeline,*reflectWorldPipeline,*emissionPipeline,*blurPipeline,*presentPipeline,*depthPipeline,*prepassPipeline,*coveragePipeline,*cutoutPipeline,
@@ -101,6 +101,7 @@ static SDL_GPUGraphicsPipeline *pipeline(SDL_GPUShader *vertex,SDL_GPUShader *fr
 bool createPipelines() {
     worldVertexShader=VERTEX_SHADER(world_vert,1);reflectVertexShader=VERTEX_SHADER(reflect_vert,2);
     screenVertexShader=VERTEX_SHADER(screen_vert,0);skyVertexShader=VERTEX_SHADER(sky_vert,0);
+    presentVertexShader=shader(SHADER_CODE(present_vert),SDL_GPU_SHADERSTAGE_VERTEX,1,0,0);   // reads the bloom
     SDL_GPUShader *world=FRAGMENT_SHADER(world_frag,16,2,4),*opaque=FRAGMENT_SHADER(opaque_frag,16,2,4);
     SDL_GPUShader *cutout=FRAGMENT_SHADER(cutout_frag,16,2,4),*coverage=FRAGMENT_SHADER(coverage_frag,16,2,4);
     SDL_GPUShader *overlay=FRAGMENT_SHADER(overlay_frag,16,2,4);
@@ -142,12 +143,12 @@ bool createPipelines() {
     emissionPipeline=pipeline(wv,emission,opaqueBlend,depthWrite,one,glow);
     glowParticlePipeline=pipeline(wv,particle,alphaBlend,depthTest,one,glow);   // embers into the bloom
     blurPipeline=pipeline(sv,blur,opaqueBlend,noDepth,one,glow);
-    presentPipeline=pipeline(sv,present,opaqueBlend,noDepth,one,swapchainFormat);
+    presentPipeline=pipeline(presentVertexShader,present,opaqueBlend,noDepth,one,swapchainFormat);
     settingsPipeline=pipeline(wv,hud,alphaBlend,noDepth,one,swapchainFormat);
     depthPipeline=pipeline(wv,depth,opaqueBlend,depthOnly,one,color);
     for(SDL_GPUShader *s:{world,opaque,cutout,coverage,overlay,sky,skySurface,shadow,decal,particle,heat,glass,solid,hud,emission,blur,mist,present,depth})
         if(s)SDL_ReleaseGPUShader(device,s);
-    for(SDL_GPUShader **s:{&worldVertexShader,&reflectVertexShader,&screenVertexShader,&skyVertexShader})
+    for(SDL_GPUShader **s:{&worldVertexShader,&reflectVertexShader,&screenVertexShader,&skyVertexShader,&presentVertexShader})
         if(*s) {SDL_ReleaseGPUShader(device,*s);*s=nullptr;}
     for(auto *p:{opaquePipeline,skyPipeline,skySurfacePipeline,reflectSkySurfacePipeline,worldPipeline,shadowPipeline,decalPipeline,particlePipeline,crestPipeline,heatPipeline,weaponPipeline,hudPipeline,
                  solidPipeline,mistPipeline,shaftPipeline,overlayWeaponPipeline,overlayHudPipeline,overlaySolidPipeline,reflectOpaquePipeline,
@@ -181,7 +182,7 @@ void allocateTargets(int w,int h) {
     int bw=std::max(1,w/2),bh=std::max(1,h/2);
     emissionTexture=createTexture(glow,bw,bh,target);
     bloomScratch=createTexture(glow,bw,bh,target);
-    // The bloom with its mip levels down to one texel: how much the whole view glows (present.frag).
+    // The bloom with its mip levels: how much the whole view glows (screen.vert's bloomKept).
     SDL_GPUTextureCreateInfo bloomInfo={};
     bloomInfo.type=SDL_GPU_TEXTURETYPE_2D;bloomInfo.format=glow;bloomInfo.usage=target;
     bloomInfo.width=(Uint32)bw;bloomInfo.height=(Uint32)bh;bloomInfo.layer_count_or_depth=1;bloomInfo.sample_count=SDL_GPU_SAMPLECOUNT_1;

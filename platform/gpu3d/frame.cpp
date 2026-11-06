@@ -36,6 +36,7 @@ static void present(SDL_GPUCommandBuffer *command,SDL_GPUTexture *target,const F
     SDL_GPUSampler *upscaled=settings.upscale==1?nearestClamp:linearClamp;
     SDL_GPUTextureSamplerBinding samplers[]={{colorTexture,upscaled},{bloomTexture,linearClamp},{hudTexture,linearClamp},{paletteLUT,nearestClamp}};
     SDL_BindGPUFragmentSamplers(pass,0,samplers,4);
+    SDL_BindGPUVertexSamplers(pass,0,&samplers[1],1);   // the bloom, for how much of it the view keeps
     SDL_DrawGPUPrimitives(pass,3,1,0,0);
 #ifdef DOOM_DEVTOOLS
     if(!overlayQuad.empty()&&overlayTexture) {

@@ -25,6 +25,7 @@ set(shaders
     "reflect_vert|world.vert|REFLECT"
     "screen_vert|screen.vert|"
     "sky_vert|screen.vert|SKY"
+    "present_vert|screen.vert|PRESENT"
     "world_frag|world.frag|"
     "opaque_frag|world.frag|OPAQUE"
     "cutout_frag|world.frag|CUTOUT"
