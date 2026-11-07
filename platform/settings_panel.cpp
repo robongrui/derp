@@ -26,6 +26,7 @@ Option slider(const char *key,const char *title,float *number,double low,double 
     return option;
 }
 bool hasGlass(const Settings&) {return Game_HasEffect(GAME_EFFECT_WINDOW_GLASS)!=0;}
+bool hasRandomPitch(const Settings&) {return Game_HasEffect(GAME_EFFECT_RANDOM_PITCH)!=0;}
 bool hasMonsterBlood(const Settings&) {return Game_HasEffect(GAME_EFFECT_MONSTER_BLOOD)!=0;}
 bool hasFlashlight(const Settings&) {return Game_HasEffect(GAME_EFFECT_FLASHLIGHT)!=0;}
 bool hasFalloff(const Settings&) {return Game_HasEffect(GAME_EFFECT_NATURAL_FALLOFF)!=0;}
@@ -49,6 +50,7 @@ void fitGame(Settings &s) {
     s.deathBlast=s.deaths>=4;s.deathFaceViewer=0;
     s.deathMotion=s.hitFlinch=s.hitReactions!=0;
     s.blood=s.bloodLevel>=1;s.bloodSpray=s.bloodShine=s.bloodLevel>=2;
+    if(!Game_HasEffect(GAME_EFFECT_RANDOM_PITCH))s.randomPitch=0;
     // One way to play at a time: the authored looks or Phobos, never both.
     s.authored=s.mode==1;s.phobos=s.mode==2;
     if(!Game_HasEffect(GAME_EFFECT_WINDOW_GLASS))s.windowGlass=0;
@@ -543,7 +545,10 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "overtones for tones, finer hiss for shots and blasts, without the metallic ring of held samples. "
                         "At 100% about as bright as Original.",
                         [](const Settings &d){return d.sfxResampling!=0;},
-                        {"Off","25%","50%","75%","100%","125%","150%","175%","200%"})}}}},
+                        {"Off","25%","50%","75%","100%","125%","150%","175%","200%"}),
+                    check("random_pitch","Random pitch",&s.randomPitch,
+                        "Effects start a little higher or lower each time, up to three semitones either way, as in the earliest "
+                        "versions of DOOM. Off: every shot sounds the same, the DOOM most people know.",hasRandomPitch)}}}},
             {"Made-up sounds",{
                 {"Made-up sounds",{
                     check("made_impacts","Sparks, dying lights and glass",&s.madeImpacts,

@@ -12,6 +12,7 @@
 #include "sounds.h"
 #include "i_sound.h"
 #include "w_wad.h"
+#include "s_sound.h"
 #include "../../game_profile.h"
 #include "../../wad_probe.h"
 
@@ -174,6 +175,7 @@ int Game_Sprite(game_sprite_role role)
 }
 
 int Game_HasEffect(game_effect effect) { (void)effect; return 1; }
+void Game_SetRandomPitch(int enabled) { snd_randompitch = enabled; }
 
 /* On Phobos' night side Mars is the sky light: 42 degrees of sunlit planet,
    some 3% of full sunlight (ten thousand full moons), and most of the light

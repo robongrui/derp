@@ -24,6 +24,9 @@
 #ifndef __S_SOUND__
 #define __S_SOUND__
 
+// DERP: effects start a little higher or lower each time.
+extern int snd_randompitch;
+
 
 #ifdef __GNUG__
 #pragma interface

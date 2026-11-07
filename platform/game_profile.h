@@ -126,9 +126,12 @@ typedef enum {
     GAME_EFFECT_AUTHORED_EPISODES, /* hand-picked looks for the game's own episodes (Game_Mood) */
     GAME_EFFECT_PHOBOS,           /* physically accurate Phobos (Game_Phobos) */
     GAME_EFFECT_TUNED_MOVEMENT,   /* DERP's tighter player movement (else the game's own) */
-    GAME_EFFECT_MONSTER_BLOOD     /* blood coloured by the monster (Game_BloodTint) */
+    GAME_EFFECT_MONSTER_BLOOD,    /* blood coloured by the monster (Game_BloodTint) */
+    GAME_EFFECT_RANDOM_PITCH      /* a switch for the pitch wobble (else the game's own stays) */
 } game_effect;
 int Game_HasEffect(game_effect effect);
+/* Effects start a little higher or lower each time. */
+void Game_SetRandomPitch(int enabled);
 
 /* The outdoor light. fromSky: 1 reads the sun from the sky texture: its
    height where the sky paints its bright patch (low patches give long

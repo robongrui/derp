@@ -157,6 +157,7 @@ void applySettings() {
     I_SetSfxPlayback(settings.sfxResampling,settings.sfxTreble);
     I_SetMadeSounds(settings.madeImpacts,settings.glassSound,settings.ambience,settings.ambienceAmount,settings.footsteps);
     I_SetAlternativeComputerSounds(settings.alternativeComputerSounds);
+    Game_SetRandomPitch(settings.randomPitch);
     I_AmbienceShowGlass(settings.accelerated&&settings.windowGlass);
     I_SetMusicDevice(settings.musicDevice);
     // The authored episode's mood is baked into the sun, lamps, bounce and

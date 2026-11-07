@@ -175,13 +175,15 @@ int Game_Sprite(game_sprite_role role)
    wind either: Heretic places its own wind sounds (MT_SOUNDWIND), and what
    the game has itself wins. Its aiming is its own too: autoaim, else the
    lookdir. */
+void Game_SetRandomPitch(int enabled) { (void)enabled; }
 int Game_HasEffect(game_effect effect)
 {
     switch (effect)
     {
     case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT:
     case GAME_EFFECT_WIND: case GAME_EFFECT_NATURAL_FALLOFF: case GAME_EFFECT_FREE_AIM:
-    case GAME_EFFECT_AUTHORED_EPISODES: case GAME_EFFECT_PHOBOS: case GAME_EFFECT_TUNED_MOVEMENT: case GAME_EFFECT_MONSTER_BLOOD: return 0;
+    case GAME_EFFECT_AUTHORED_EPISODES: case GAME_EFFECT_PHOBOS: case GAME_EFFECT_TUNED_MOVEMENT: case GAME_EFFECT_MONSTER_BLOOD:
+    case GAME_EFFECT_RANDOM_PITCH: return 0;
     }
     return 1;
 }

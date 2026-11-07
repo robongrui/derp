@@ -735,6 +735,7 @@ int I_SoundIsPlaying(int handle)
 }
 void I_UpdateSoundParams(int handle, int volume, int separation, int pitch)
 {
+    (void)pitch;
     if (!stream) return;
     SDL_LockAudioStream(stream);
     for (int i = 0; i < MIX_CHANNELS; ++i)
@@ -743,7 +744,9 @@ void I_UpdateSoundParams(int handle, int volume, int separation, int pitch)
         if (channel->handle != handle) continue;
         float level = channel->placed && falls_off()
             ? snd_SfxVolume * distance_gain(listener_distance(channel->x, channel->y) / channel->reach) : (float)volume;
-        gains(channel, level, separation, pitch);
+        /* A sound keeps the pitch it started with: DOOM updates moving sounds
+           at the normal pitch, which would snap a random one back a tic in. */
+        gains(channel, level, separation, channel->pitch);
     }
     SDL_UnlockAudioStream(stream);
 }

@@ -67,6 +67,9 @@ const char snd_prefixen[]
 // Adjustable by menu.
 #define NORM_VOLUME    		snd_MaxVolume
 
+// DERP: F4's Random pitch (Game_SetRandomPitch).
+int snd_randompitch;
+
 #define NORM_PITCH     		128
 #define NORM_PRIORITY		64
 #define NORM_SEP		128
@@ -343,7 +346,10 @@ S_StartSoundAtVolume
   }
   
   // hacks to vary the sfx pitches
-  if (sfx_id >= sfx_sawup
+  // DERP: only with F4's Random pitch; off is the DOOM most people know.
+  if (!snd_randompitch)
+    ;
+  else if (sfx_id >= sfx_sawup
       && sfx_id <= sfx_sawhit)
   {	
     pitch += 8 - (M_Random()&15);

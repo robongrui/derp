@@ -208,6 +208,7 @@ struct Settings {
     int madeImpacts=1; // Made-up sounds for sparks, lamps and screens dying, and glass breaking (audio/made_bank.h).
     int glassSound=0; // Which breaking glass: 0 the shatter, 1 the fracture (a branching crack front).
     int ambience=1; // Lamps, machines, liquids, fire and wind sound where the map's textures show them.
+    int randomPitch=0; // Effects start a little higher or lower each time, as in the earliest DOOM.
     int alternativeComputerSounds=0; // Machine hum, hard-drive seeks and relay chatter in place of the computer bleeps.
     float ambienceAmount=1; // How loud the ambience is next to the effects (0-2).
     int footsteps=1; // The player's footsteps by floor, splashes in liquids, monsters splashing as they wade.
