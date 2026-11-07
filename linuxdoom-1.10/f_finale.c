@@ -95,7 +95,7 @@ void	F_CastDrawer (void);
 
 // SIGIL's (episode 5) ending text is in its WAD (E5TEXT), without the
 // line breaks' carriage returns; none at all without it.
-static char* F_LumpText (const char* name)
+static char* F_LumpText (char* name)
 {
     static char	text[1024];
     int		lump = W_CheckNumForName (name);
