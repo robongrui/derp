@@ -56,7 +56,7 @@ what I had in mind. Without that workflow I wouldn't have the spare time for a
 project like this.
 
 The defaults are how I like to play. Almost everything can be changed in the
-graphics panel with **F4**.
+settings panel with **F4**.
 
 ## At a glance
 

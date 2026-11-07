@@ -703,7 +703,7 @@ void updateTitle(int width,int height,const char *renderer) {
     if(now-titleTime>1000000000) {
         fps=frameCount*1e9/(now-titleTime);frameCount=0;titleTime=now;
         char rate[32]="";if(settings.fps==1)snprintf(rate,sizeof(rate)," · %.0f fps",fps);
-        char title[256];snprintf(title,sizeof(title),"%s · %s · %dx%d%s%s · F4: graphics · F7: screenshot · Esc: menu",
+        char title[256];snprintf(title,sizeof(title),"%s · %s · %dx%d%s%s · F4: settings · F7: screenshot · Esc: menu",
             Game_Title(),settings.accelerated?renderer:"Classic",width,height,rate,
             Game_HasEffect(GAME_EFFECT_FLASHLIGHT)?" · F: flashlight":"");
         SDL_SetWindowTitle(gameWindow,title);

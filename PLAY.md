@@ -44,7 +44,7 @@ Use the arrow keys and Return to select menu items.
 | Menu / release mouse | Esc |
 | Save / load | F2 / F3, or the menu |
 | Fullscreen | F11 |
-| Graphics settings | F4 |
+| Settings | F4 |
 | Screenshot | F7 |
 | Flashlight (3D renderer) | F |
 | Cheat menu (fly, no monsters, map warp) | F5 |
