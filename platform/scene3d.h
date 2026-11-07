@@ -124,7 +124,7 @@ struct Settings {
     int caustics=1; // Rippling light from liquids on nearby walls.
     // Experimental effects, each separately switchable.
     // F4's combined choices; fitGame sets the switches below them from these.
-    int deaths=2; // Deaths: 0 the game's frames, 1 varied, 2 procedural falls, 3 ragdolls, 4 ragdolls Hollywood (flying, punch, spins).
+    int deaths=4; // Deaths: 0 the game's frames, 1 varied, 2 procedural falls, 3 ragdolls, 4 ragdolls Hollywood (flying, punch, spins).
     int hitReactions=1; // Hit reactions: death reactions and hit flinches.
     int mode=1; // Gameplay (F4 Game, Mode): 0 normal (the derived look), 1 authored episodes, 2 physically accurate Phobos; sets authored and phobos.
     int bloodLevel=2; // Blood: 0 off, 1 splats and pools, 2 full (spray, shine).
@@ -216,7 +216,7 @@ struct Settings {
     int gridSpriteLight=0; // Things take static light and their shadow light from a grid baked at level load.
     int unoccludedSurfaceLights=0; // Glowing textures' dynamic light skips wall tests; its gloss can show through walls.
     int fewerSurfaceLights=0; // Only the 8 nearest glowing-texture lights stay dynamic, not 24.
-    int skipHiddenGeometry=0; // Walls and flats the BSP walk finds hidden from the eye are left out each frame.
+    int skipHiddenGeometry=1; // Walls and flats the BSP walk finds hidden from the eye are left out each frame.
 };
 // glassFrame: on textures with monitor screens, where each glass pixel sits
 // on its screen (see screen_glass.h); null otherwise. relief: on walls and
