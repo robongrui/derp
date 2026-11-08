@@ -107,6 +107,7 @@ set(DOOM_SOURCES
     linuxdoom-1.10/p_telept.c
     linuxdoom-1.10/p_tick.c
     linuxdoom-1.10/p_user.c
+    platform/stride.c
     linuxdoom-1.10/r_bsp.c
     linuxdoom-1.10/r_data.c
     linuxdoom-1.10/r_draw.c
@@ -160,6 +161,8 @@ set(HERETIC_SOURCES
     heretic/s_sound.c heretic/sb_bar.c heretic/sounds.c heretic/tables.c heretic/v_video.c
 )
 add_library(heretic_core STATIC ${HERETIC_SOURCES})
+# The stride the footsteps and weapon bob share, against Heretic's headers.
+target_sources(heretic_core PRIVATE platform/stride.c)
 target_include_directories(heretic_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/heretic"
     "${CMAKE_CURRENT_SOURCE_DIR}/heretic/derp")
 target_link_libraries(heretic_core PUBLIC doom_options doom_engine)
@@ -525,7 +528,7 @@ if(DOOM_BUILD_SDL)
         add_dependencies(derp-heretic-bundle doom derp-heretic)
     endif()
     if(BUILD_TESTING)
-        add_executable(doom-movement-audio-tests tests/movement_audio.c platform/audio/hrtf.c
+        add_executable(doom-movement-audio-tests tests/movement_audio.c platform/stride.c platform/audio/hrtf.c
             platform/audio/resample.c platform/audio/treble.c platform/audio/step_synth.c platform/audio/frozen.c)
         target_include_directories(doom-movement-audio-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10"
             "${CMAKE_CURRENT_SOURCE_DIR}/platform/audio")

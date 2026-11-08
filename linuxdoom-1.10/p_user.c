@@ -37,6 +37,7 @@ rcsid[] = "$Id: p_user.c,v 1.3 1997/01/28 22:08:29 b1 Exp $";
 #include "p_library.h"
 
 #include "doomstat.h"
+#include "../platform/stride.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -111,6 +112,7 @@ extern int	key_speed;
 float		tourpitch;
 boolean		freeaim;
 boolean		classicaim;
+int		weaponbob;
 
 boolean P_DebugAllowed (void)
 {
@@ -456,6 +458,13 @@ void P_PlayerThink (player_t* player)
     else
 	player->mo->flags &= ~MF_NOCLIP;
     
+    // Where the stride is, for the footsteps and the weapon bob.
+    {
+	float shift[3];
+	P_LibraryShift (&shift[0], &shift[1], &shift[2]);
+	Stride_Tic ((int)(player - players), player->mo, shift);
+    }
+
     // chain saw run forward
     cmd = &player->cmd;
     if (player->mo->flags & MF_JUSTATTACKED)

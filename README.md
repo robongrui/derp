@@ -385,7 +385,7 @@ See [`platform/flash_lighting.h`](platform/flash_lighting.h).
 The flashlight is mounted at the player's right shoulder, a little behind the
 eyes as in Doom 3. It lights the floor ahead from above, and wall edges, door
 frames and things cast visible shadows. It pulls back out of walls the player
-is pressed against and sways with DOOM's weapon bob.
+is pressed against and sways with the weapon bob.
 
 The classic beam, which is the default, brightens in DOOM's light-level steps.
 With the classic option off, the beam bounces a soft light in the color of
@@ -1260,7 +1260,10 @@ last two takes plays again.
   the kit settles: buckles and pouches with a light weapon, a long gun
   knocking on its sling, the rocket launcher or BFG thudding with its rounds
   rattling, and the click of armour when you wear it. Steps come about twice a
-  second walking and three times running. Water splashes, nukage, slime, blood
+  second walking and three times running. With **F4 → Controls → Aim →
+  Weapon bob** on Sync to footsteps, the weapon keeps time with them: it
+  swings like a pendulum, low in the middle of the screen as each foot comes
+  down and high at one side or the other between. Water splashes, nukage, slime, blood
   and lava gloop, and monsters wading through liquids splash too. Monsters on
   dry floors stay as silent as ever, so hearing tells no more about where they
   are than before.

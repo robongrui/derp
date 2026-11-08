@@ -1,8 +1,8 @@
-/* Footsteps. A step falls every stride walked on the ground, the stride
- * growing with speed, so walking steps about twice a second and running
- * three times, harder. Landing from a fall is a step too, harder the faster
- * the fall. Each step plays the footfall and the kit after it. Monsters are followed only
- * while they wade, for their splashes. See steps.h. */
+/* Footsteps. The player's fall with their stride (stride.h), which the
+ * weapon bob keeps time with: about twice a second walking and three times
+ * running, harder. Landing from a fall is a step too, harder the faster the
+ * fall. Each step plays the footfall and the kit after it. Monsters are
+ * followed only while they wade, for their splashes. See steps.h. */
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
@@ -14,6 +14,7 @@
 #include "steps.h"
 #include "library_steps.h"
 #include "../game_profile.h"
+#include "../stride.h"
 #include "../game_materials.h"
 #include "frozen.h"
 
@@ -89,36 +90,21 @@ static int emit_step(step_event_t *events, int count, int max, int kind, const m
     return count;
 }
 
-/* The player: a step every stride on the ground, and on landing. */
+/* The player: a step at every footfall of their stride (stride.h), and on
+   landing. */
 static int player_steps(step_event_t *events, int count, int max)
 {
     static const mobj_t *last_mo;
-    static float last_x, last_y, last_z, walked, last_shift_x, last_shift_y, last_shift_z;
-    static int was_grounded = 1;
+    static unsigned steps, landings;
     const mobj_t *mo = players[consoleplayer].mo;
     if (!mo) return count;
-    float x = units(mo->x), y = units(mo->y), z = units(mo->z), shift_x, shift_y, shift_z;
-    /* Carried through geometry built alike (the library): no step taken, no fall. */
-    Game_WorldShift(&shift_x, &shift_y, &shift_z);
-    last_x += Game_ShiftGrew(shift_x, last_shift_x); last_y += Game_ShiftGrew(shift_y, last_shift_y);
-    last_z += Game_ShiftGrew(shift_z, last_shift_z);
-    last_shift_x = shift_x; last_shift_y = shift_y; last_shift_z = shift_z;
-    int ground = grounded(mo), kind = LibrarySteps_Floor(on_ice(floor_kind(mo->subsector->sector->floorpic), x, y));
-    if (mo != last_mo) { last_mo = mo; last_x = x; last_y = y; last_z = z; was_grounded = ground; walked = 0; return count; }
-    float moved = hypotf(x - last_x, y - last_y), fall = last_z - z;
-    last_x = x; last_y = y; last_z = z;
-    if (moved > 64) { walked = 0; was_grounded = ground; return count; }  /* teleported */
-    /* Landing: harder the faster the fall (the last tic's drop). */
-    if (ground && !was_grounded && fall > 6) count = emit_step(events, count, max, kind, mo, 1 + fminf((fall - 6) / 14, 1));
-    was_grounded = ground;
-    if (!ground) return count;
-    if (moved < 0.5f) { walked = 0; return count; }
-    /* Steps a second: about two walking (8 units a tic), three running (16). */
-    float stride = moved * TICRATE / (1.4f + 0.1f * moved);
-    if (walked == 0) walked = 0.6f * stride;  /* the first comes soon after setting off */
-    walked += moved;
-    /* Force: 0 at a walk (8 units a tic), 1 at a run (16). */
-    if (walked >= stride) { walked -= stride; count = emit_step(events, count, max, kind, mo, fminf(fmaxf((moved - 8) / 8, 0), 1)); }
+    const stride_t *stride = Stride_Of(consoleplayer);
+    /* A new body, or a game loaded: only footfalls from here on. */
+    if (mo != last_mo) { last_mo = mo; steps = stride->steps; landings = stride->landings; return count; }
+    int kind = LibrarySteps_Floor(on_ice(floor_kind(mo->subsector->sector->floorpic), units(mo->x), units(mo->y)));
+    if (stride->landings != landings) count = emit_step(events, count, max, kind, mo, stride->landing_force);
+    if (stride->steps != steps) count = emit_step(events, count, max, kind, mo, stride->step_force);
+    steps = stride->steps; landings = stride->landings;
     return count;
 }
 

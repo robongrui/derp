@@ -1,6 +1,7 @@
 /* Dynamic lights collected each frame: muzzle flashes, projectiles,
    decorations, barrels and door spill, packed for the GPU. */
 #include "internal.h"
+#include "../stride.h"
 
 namespace doom3d {
 std::array<const mobj_t*,maxLights> lightSources={};
@@ -372,12 +373,12 @@ void collectFlashes(float fraction,const Uniforms &camera) {
             if(t>=0&&u>=0&&u<=1)clear=std::min(clear,std::max(0.0f,t-4/reach));
         }
         lamp[0]=camera.eye[0]+dx*clear;lamp[1]=camera.eye[1]+dy*clear;
-        // The beam sways with the gun as Doom bobs it (A_WeaponReady): side to
-        // side over 64 tics and dipping twice a cycle, by how fast the player
-        // moves, plus a slow drift at rest, so it feels carried rather than
-        // glued to the view.
-        float bob=std::min(1.0f,players[displayplayer].bob/16.0f/FRACUNIT),time=leveltime%clockWrapTics+fraction;
-        float phase=time*(2*doomPi/64),seconds=time/TICRATE;
+        // The beam sways with the gun as it bobs (A_WeaponReady): side to side
+        // a stride at a time, dipping as each foot comes down, by how fast the
+        // player moves, plus a slow drift at rest, so it feels carried and
+        // not glued to the view.
+        float bob=weaponbob==2?0.0f:std::min(1.0f,players[displayplayer].bob/16.0f/FRACUNIT),time=leveltime%clockWrapTics+fraction;
+        float phase=weaponbob==1?(0.5f+Stride_Swing(displayplayer,fraction))*doomPi:time*(2*doomPi/64),seconds=time/TICRATE;
         float yaw=(std::cos(phase)*bob*1.2f+std::sin(seconds*(2*doomPi/4.3f))*0.2f)*(doomPi/180);
         float pitch=(-std::abs(std::sin(phase))*bob*0.8f+std::sin(seconds*(2*doomPi/3.1f))*0.15f)*(doomPi/180);
         for(int c=0;c<3;++c) {

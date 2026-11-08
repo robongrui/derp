@@ -180,7 +180,11 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "they follow the view. Off: they go exactly where you look, so you can miss, and where you hit is where the "
                         "wound and the fall come from. Rockets, plasma and the BFG aim as in DOOM either way. Playing with a gamepad, "
                         "on is the easier aim.",hasFreeAim),
-                    check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view.")}}}},
+                    check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view."),
+                    choice("weapon_bob","Weapon bob",&s.weaponBob,{"Classic","Sync to footsteps","Off"},{0,1,2},
+                        "How the weapon sways as you move. Sync to footsteps: it swings like a pendulum, low in the middle as each "
+                        "foot comes down, so you see every step you hear, faster as you run. Classic: DOOM's own steady sway, the "
+                        "same pace at any speed. Off: the weapon stays still. The flashlight sways with it.")}}}},
             {"Gamepad",{
                 {"Sticks",{
                     slider("pad_look_x","Turn speed",&s.padLookX,0.25,3,0.25,

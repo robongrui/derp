@@ -2,6 +2,7 @@
    device. Banks and acoustics are fixtures; samples still traverse the real
    routing, channel allocation, gains, filtering and stereo mixer. */
 #include "../platform/audio/steps.c"
+#include "../platform/stride.h"
 #include "../platform/i_sdl_sound.c"
 
 #define CHECK(condition) do { if (!(condition)) { \
@@ -171,6 +172,7 @@ static void check_ownership(void)
             ++gametic;
             listener.x += 8 * FRACUNIT;
             monster.x = listener.x + (640 + tic % 8 * 8) * FRACUNIT;
+            Stride_Tic(consoleplayer, &listener, NULL);  /* as P_PlayerThink does */
             reset_channels();
             I_UpdateSound();
             for (int c = 0; c < MIX_CHANNELS; ++c)

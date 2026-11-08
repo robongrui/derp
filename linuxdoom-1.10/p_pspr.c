@@ -46,6 +46,7 @@ rcsid[] = "$Id: p_pspr.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "p_pspr.h"
 #include "d_deh.h"
+#include "../platform/stride.h"
 
 #define LOWERSPEED		FRACUNIT*6
 #define RAISESPEED		FRACUNIT*6
@@ -331,8 +332,20 @@ A_WeaponReady
     else
 	player->attackdown = false;
     
-    // bob the weapon based on movement speed
-    angle = (128*leveltime)&FINEMASK;
+    // Bob the weapon based on movement speed (weaponbob): on DOOM's own
+    // clock; or in time with the footsteps (stride.h), low in the middle
+    // as a foot comes down and high at one side or the other between, as
+    // a pendulum swings; or not at all.
+    if (weaponbob == 2)
+    {
+	psp->sx = FRACUNIT;
+	psp->sy = WEAPONTOP;
+	return;
+    }
+    if (weaponbob == 1)
+	angle = (FINEANGLES/4 + (int)(Stride_Of((int)(player - players))->swing*(FINEANGLES/2)))&FINEMASK;
+    else
+	angle = (128*leveltime)&FINEMASK;
     psp->sx = FRACUNIT + FixedMul (player->bob, finecosine[angle]);
     angle &= FINEANGLES/2-1;
     psp->sy = WEAPONTOP + FixedMul (player->bob, finesine[angle]);
