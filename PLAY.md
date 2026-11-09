@@ -150,7 +150,7 @@ takes a screenshot.
 - **Anti-aliasing (MSAA):** off by default, or 2x, 4x or 8x as far as the GPU offers; smooths the edges of walls, floors and ledges while texels and sprites stay crisp.
 - **Field of view:** 60–120 degrees, measured against the classic 4:3 view.
 - **Widescreen:** show more world at the sides rather than stretching it.
-- **FPS display:** optional. **Free look**, **Invert look**, **Classic aim** (bullets autoaim as in DOOM instead of going where you look) and the crosshair are under **F4 → Controls → Aim**.
+- **FPS display:** optional. **Free look**, **Invert look**, **Classic aim** (bullets autoaim as in DOOM instead of going where you look), the crosshair and **Weapon bob** are under **F4 → Controls → Aim**. Weapon bob is Classic by default, DOOM's own steady sway. Sync to footsteps swings the weapon like a pendulum, through the bottom of the screen as each footstep sounds, and Off keeps the weapon still.
 - **Retro scanlines** and **Doom palette colors:** the palette option quantizes the final image, including colored lighting, fog and bloom, to the WAD palette; off by default.
 
 **Textures**

@@ -103,6 +103,8 @@ extern boolean freeaim;
 // With freeaim: a shot autoaims at a monster in front as in vanilla, and
 // follows tourpitch only with none.
 extern boolean classicaim;
+// The weapon bob: 0 DOOM's own, 1 in time with the footsteps (stride.h), 2 none.
+extern int weaponbob;
 // The player's shots and missiles may follow the view: freeaim, and no demo
 // or netgame (those keep vanilla aiming).
 boolean P_LookAims (mobj_t* mo);

@@ -84,6 +84,7 @@ struct Settings {
     int scale=100; // Render size: up to 100 a percentage of the window, above that a fixed height in pixels (never above the window's).
     int upscale=0; // The render stretched to the window: 0 smooth (bilinear), 1 crisp (nearest), 2 sharp bilinear.
     int invertLook=0; // Mouse look: moving the mouse forward tilts the view down.
+    int weaponBob=0; // The weapon bob: 0 DOOM's own clock, 1 in time with the footsteps, 2 none.
     int classicAim=0; // With mouse look: bullets autoaim at a monster in front as in DOOM, following the view only with none.
     int movement=0; // 0 DERP's tighter tuning, 1 DOOM's own (acceleration, friction, faster diagonals), 2 tuned plus held running diagonals easing into DOOM's strafe-running.
     int quickConfirm=1; // Quicksave and quickload ask before overwriting or loading.

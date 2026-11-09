@@ -39,6 +39,7 @@ extern boolean menuactive, automapactive, paused;
 extern int numflats, numtextures;
 extern float tourpitch;
 extern boolean freeaim, classicaim, classicmovement, strafeboost;
+extern int weaponbob; // The game's weapon bob (F4 "Weapon bob").
 extern boolean quickconfirm; // The game's menu (F4 "Confirm quicksave and quickload").
 extern fixed_t aimslope;
 int P_PicAnimationNext(boolean istexture,int pic,int *next);

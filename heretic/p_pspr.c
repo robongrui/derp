@@ -6,6 +6,7 @@
 #include "doomdef.h"
 #include "p_local.h"
 #include "soundst.h"
+#include "../platform/stride.h"
 
 // Macros
 
@@ -623,8 +624,24 @@ void A_WeaponReady(player_t *player, pspdef_t *psp)
 		player->attackdown = false;
 	}
 
-	// Bob the weapon based on movement speed.
-	angle = (128*leveltime)&FINEMASK;
+	// Bob the weapon based on movement speed (DERP: weaponbob): on
+	// Raven's own clock; or in time with the footsteps (stride.h), low in
+	// the middle as a foot comes down and high at one side or the other
+	// between, as a pendulum swings; or not at all.
+	if(weaponbob == 2)
+	{
+		psp->sx = FRACUNIT;
+		psp->sy = WEAPONTOP;
+		return;
+	}
+	if(weaponbob == 1)
+	{
+		angle = (FINEANGLES/4 + (int)(Stride_Of((int)(player - players))->swing*(FINEANGLES/2)))&FINEMASK;
+	}
+	else
+	{
+		angle = (128*leveltime)&FINEMASK;
+	}
 	psp->sx = FRACUNIT+FixedMul(player->bob, finecosine[angle]);
 	angle &= FINEANGLES/2-1;
 	psp->sy = WEAPONTOP+FixedMul(player->bob, finesine[angle]);

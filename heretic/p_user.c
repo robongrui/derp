@@ -7,6 +7,7 @@
 #include "doomdef.h"
 #include "p_local.h"
 #include "soundst.h"
+#include "../platform/stride.h"
 
 void P_PlayerNextArtifact(player_t *player);
 static void P_FlyMove(player_t *player); // DERP
@@ -532,6 +533,7 @@ boolean P_UndoPlayerChicken(player_t *player)
 float tourpitch;
 boolean freeaim;
 boolean classicaim;
+int weaponbob;
 boolean classicmovement; // Heretic moves as it always did (no GAME_EFFECT_TUNED_MOVEMENT)
 boolean strafeboost;
 boolean debugfly, debugnoclip, debuggod, debugnomonsters, debugnotarget;
@@ -658,6 +660,8 @@ void P_PlayerThink(player_t *player)
 			P_RemoveMonsters();
 		}
 	}
+	// DERP: where the stride is, for the footsteps and the weapon bob
+	Stride_Tic((int)(player-players), player->mo, NULL);
 	// No-clip cheat
 	if(player->cheats&CF_NOCLIP)
 	{

@@ -137,6 +137,7 @@ void applySettings() {
     R_RainedIn=settings.accelerated?rainedIn:nullptr;
     freeaim=settings.accelerated&&settings.look;
     classicaim=settings.classicAim!=0;
+    weaponbob=settings.weaponBob;
     classicmovement=settings.movement==1||M_CheckParm((char*)"-classicmovement");
     strafeboost=settings.movement==2;
     Game_SetPhobos(settings.phobos);

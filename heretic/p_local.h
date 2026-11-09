@@ -107,6 +107,8 @@ extern float tourpitch;
 extern boolean freeaim;
 // Set by the shared renderer; Heretic's aiming is its own (autoaim, else lookdir).
 extern boolean classicaim;
+// DERP: the weapon bob: 0 Raven's own, 1 in time with the footsteps (stride.h), 2 none.
+extern int weaponbob;
 // DERP: level-checking cheats (F5 menu), as in the DOOM program. Flying
 // follows the look direction (E/Q rise and sink); god mode and flight also
 // ignore special sectors. They outlive map changes, unlike player->cheats.
