@@ -108,9 +108,13 @@ static void convolve(const float *filter, const float *in, float *out, int count
 
 void Hrtf_Process(hrtf_voice_t *voice, const float *mono, float *stereo, int count)
 {
-    float signal[HRTF_LINE + HRTF_BLOCK], in[HRTF_TAPS - 1 + HRTF_BLOCK], out[HRTF_BLOCK], blend[HRTF_BLOCK];
+    /* One slot past the block: an ear with no delay reads signal[whole + 1]
+       at the last sample, weighted zero. It must hold a number, not stack
+       leftovers, or a NaN there survives the zero weight. */
+    float signal[HRTF_LINE + HRTF_BLOCK + 1], in[HRTF_TAPS - 1 + HRTF_BLOCK], out[HRTF_BLOCK], blend[HRTF_BLOCK];
     memcpy(signal, voice->line, sizeof voice->line);
     memcpy(signal + HRTF_LINE, mono, (size_t)count * sizeof *mono);
+    signal[HRTF_LINE + count] = 0;
     float glide = 1 - expf(-count / (DELAY_GLIDE_SECONDS * HRTF_RATE));
     int faded = voice->fade;
     for (int ear = 0; ear < 2; ++ear)
