@@ -183,7 +183,7 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                     check("crosshair","Crosshair",&s.crosshair,"A small crosshair in the middle of the view."),
                     choice("weapon_bob","Weapon bob",&s.weaponBob,{"Classic","Sync to footsteps","Off"},{0,1,2},
                         "How the weapon sways as you move. Classic: maintain the behavior in the original DOOM games. Sync to footsteps: bobbing will be "
-                        "faster, matching the rate of the footstep sounds. Off: the weapon stays still. The flashlight sways with it.")}}}},
+                        "faster, matching the rate of the footstep sounds. Off: the weapon stays still.")}}}},
             {"Gamepad",{
                 {"Sticks",{
                     slider("pad_look_x","Turn speed",&s.padLookX,0.25,3,0.25,
