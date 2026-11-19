@@ -743,7 +743,10 @@ void I_Render3DPresent(const unsigned *pixels,const unsigned *palette) {
         width=w;height=h;allocateTargets(w,h);
         fprintf(stderr,"GPU resolution: %dx%d (display %ux%u).\n",w,h,drawableWidth,drawableHeight);
     }
-    if(!paletteLUT||((settings.palette||(settings.reflections&&settings.retroReflections))&&worldPending))updatePaletteLUT(palette);
+    // Follows the live palette in every mode: brick tone (world/brick_wear.glsl) reads it too, and the
+    // first frame comes before Doom sets any palette (all black), which left painted bricks black until
+    // a palette mode or retro reflections rebuilt it. Same palette: updatePaletteLUT returns at once.
+    updatePaletteLUT(palette);
     bool hudChanged=false;
     const std::vector<unsigned> &overlay=hudPixels(pixels,hudChanged);
     setScreenSize((int)drawableWidth,(int)drawableHeight);   // the 2D layer's own resolution (status_bar.cpp)
