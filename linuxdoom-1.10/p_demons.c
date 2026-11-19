@@ -1297,6 +1297,6 @@ void P_DemonThink (mobj_t* mo)
     mo->healed += more;
     // A low rasp every few seconds: heard through the walls, it says where
     // it is, and that time is running out.
-    if (!(((leveltime + mo->serial)/TICRATE) & 3) && mo->info->activesound && !P_DerpHushed (mo))
+    if (!(((leveltime + mo->serial)/TICRATE) & 3) && mo->info->activesound && P_DerpVoices () && !P_DerpHushed (mo))
 	S_StartSound (mo, mo->info->activesound);
 }

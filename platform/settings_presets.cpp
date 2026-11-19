@@ -48,6 +48,48 @@ void applyPreset(Settings &s,int preset) {
     fitGame(s);
 }
 
+// F4 Sound's Sounds row: DOOM's own turns off every made-up sound and every change to how sounds
+// carry; Default puts them back as a new config has them. Music, the output and the volumes are
+// never touched, nor random pitch (earliest DOOM had it: taste).
+namespace {
+struct SoundLine { int Settings::*field; int value[2]; };   // DOOM's own, Default
+const SoundLine soundLines[]={
+    {&Settings::madeImpacts,   {0,1}},
+    {&Settings::footsteps,     {0,1}},
+    {&Settings::monsterVoices, {0,1}},
+    {&Settings::ambience,      {0,0}},
+    {&Settings::roomAcoustics, {0,0}},
+    {&Settings::farRooms,      {0,0}},
+    {&Settings::muffleWalls,   {0,1}},
+    {&Settings::muffleDistance,{0,1}},
+    {&Settings::naturalFalloff,{0,1}},
+    {&Settings::sfxResampling, {0,0}},
+};
+void setSounds(Settings &s,int style) {for(const SoundLine &line:soundLines)s.*line.field=line.value[style-1];}
+}
+void applySoundStyle(Settings &s,int style) {
+    if(style<1||style>2)return;
+    setSounds(s,style);
+    s.soundStyle=style;
+    fitGame(s);
+}
+// Against what the style comes to in this game (fitGame: no natural falloff in Heretic).
+int matchSoundStyle(const Settings &s) {
+    for(int style=1;style<=2;++style) {
+        Settings t=s;setSounds(t,style);fitGame(t);
+        bool fits=true;
+        for(const SoundLine &line:soundLines)fits&=s.*line.field==t.*line.field;
+        if(fits)return style;
+    }
+    return 0;
+}
+void matchPresets(Settings &s) {s.preset=matchPreset(s);s.soundStyle=matchSoundStyle(s);}
+void followPresets(Settings &s,const char *changed) {
+    if(!strcmp(changed,"preset"))applyPreset(s,s.preset);
+    else if(!strcmp(changed,"sound_style"))applySoundStyle(s,s.soundStyle);
+    matchPresets(s);
+}
+
 int matchPreset(Settings &s) {
     bool fits[presetCount];
     for(bool &fit:fits)fit=true;

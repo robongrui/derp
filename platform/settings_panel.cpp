@@ -57,6 +57,14 @@ template<int Climate::*field> bool showsRoll(const Settings &s,int &value) {
     value=climateRolled(c)?c.*field:-1000;
     return true;
 }
+// Time of day's own Random shows this map's hour beside it (valueText), the
+// weather and the rest as picked.
+bool showsRolledHour(const Settings &s,int &value) {
+    if(s.weather==weatherRandom)return showsRoll<&Climate::timeOfDay>(s,value);
+    if(s.timeOfDay!=timeRandom)return false;
+    if(!climateHourRolled(s.temperature,value))value=timeRandom;
+    return true;
+}
 // Nothing falls under a clear roll: no amount.
 bool showsRolledAmount(const Settings &s,int &value) {
     Climate c;
@@ -152,11 +160,13 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "haze of sand to a storm, a thin mist to a fog you can't see through. The heavier, the more the clouds hide "
                         "the sun; light rain is a sunshower, the sun still out. Map's own: as the map's DERPINFO or DERP mode has it (a downpour, unless it says less).",
                         [](const Settings &d){return d.weather!=0&&d.weather!=weatherRandom;}),showsRolledAmount),
-                    rolled(choice("time_of_day","Time of day",&s.timeOfDay,{"Map's own","Dawn","Morning","Noon","Afternoon","Dusk","Night"},{0,1,2,3,4,5,6},
+                    rolled(choice("time_of_day","Time of day",&s.timeOfDay,{"Map's own","Random","Dawn","Morning","Noon","Afternoon","Dusk","Night"},{0,timeRandom,1,2,3,4,5,6},
                         "Where the sun stands and how it shines, from where the sky paints it. Dawn and Dusk: low and orange, soft "
                         "shadows, a tinted sky. Noon: high and white, the brightest light and the hardest shadows. Night: no sun, the "
                         "outdoors dark and the lit rooms shining out through their windows. Map's own: as DERP derives it from the sky, "
-                        "or as the map or DERP mode has it. Re-bakes the light. Never on Phobos.",notRandom),showsRoll<&Climate::timeOfDay>),
+                        "or as the map or DERP mode has it. Random: each map rolls its own hour, any of them as often, the weather "
+                        "staying as picked; only hours the temperature goes with, and the row shows this map's. Deaths and saves "
+                        "loaded keep it; a new game rolls anew. Re-bakes the light. Never on Phobos.",notRandom),showsRolledHour),
                     rolled(fits(choice("temperature","Temperature",&s.temperature,{"Map's own","-30 C","-20 C","-10 C","0 C","10 C","20 C","30 C","40 C","50 C"},
                         {climateOwn,-30,-20,-10,0,10,20,30,40,50},
                         "How hot or cold it is outside. From 30 C the heat of the day shows: a stronger, warmer sun, glare round it, a "
@@ -816,6 +826,17 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "OPL is the FM synthesis of DOS sound cards, with DOOM's own instrument set. "
                         "A .sf2 bank put in the soundfonts folder beside doom.cfg replaces the bundled one.")}},
                 {"Effects",{
+                    fits(choice("sound_style","Sounds",&s.soundStyle,{"Custom","DOOM's own","Default"},{0,1,2},
+                        "Sets in one go everything DERP adds to the sound or changes in how it carries, and leaves the music, "
+                        "the output and random pitch alone.",nullptr,
+                        {"You have set the sound switches yourself (on this page, Made-up sounds and Hearing). Pick one of the "
+                         "others to set them all in one go.",
+                         "The sound as DOOM had it: no made-up sparks, glass, footsteps or ambience, DERP mode's monsters with id's "
+                         "sounds instead of their voices, no echoes, nothing muffled behind "
+                         "walls or dulled with distance, DOOM's own straight fade, and the samples played raw. Everything else "
+                         "can stay as it is: Explosions and Muzzle flash are drawing, on Graphics, Combat.",
+                         "As a new config has it: the made-up sparks, glass and footsteps, the monsters' voices, muffled behind walls and duller with "
+                         "distance, natural falloff; ambience and room acoustics off (they cost the most)."}),presetOffered),
                     choice("sound_output","Output",&s.soundOutput,{"Speakers","Headphones (KEMAR)","Headphones (KU100)"},{0,1,2},
                         "On headphones, sounds out in the world come from where they are: ahead or behind, above or below, as measured "
                         "on a dummy head (SADIE II, University of York). KEMAR tells front from back best; KU100 is the more neutral. "
@@ -845,6 +866,11 @@ std::vector<OptionGroup> optionGroups(Settings &s) {
                         "Your steps sound by what the floor is: stone, metal, wood, grass and carpet. In water you splash, "
                         "in nukage, slime, blood and lava it gloops, and monsters wading through liquids splash too. "
                         "Monsters on dry floors stay as silent as ever."),
+                    check("monster_voices","Monster voices",&s.monsterVoices,
+                        "In DERP mode the soldiers shout what they are about to do and cry out in voices of their own, and the imps "
+                        "hiss, call and answer each other in place of id's sounds. Off: every monster makes DOOM's own sounds; they "
+                        "think and act as before, you just don't hear them say it.",
+                        [](const Settings &d){return d.authored!=0;}),
                     check("ambience","Ambience",&s.ambience,
                         "Lamps, door lights and computers hum, nukage and blood bubble, lava rumbles, fire crackles, water drips and wind blows "
                         "under the sky, heard dull through window glass until it is shot, where the map shows them. Only near ones are heard; "
@@ -949,7 +975,7 @@ void finishReading(Settings &s) {
     if(readOld[3]&&!readNew[3])s.mode=oldMode[1]?2:oldMode[0]?1:0;
     for(int g=0;g<4;++g)readOld[g]=readNew[g]=false;
     versionCurrent=anyVersion=false;
-    s.preset=matchPreset(s);
+    matchPresets(s);
 }
 void writeOptions(FILE *file,Settings &s) {
     fprintf(file,"%s %d\n",configVersionKey,configVersion);

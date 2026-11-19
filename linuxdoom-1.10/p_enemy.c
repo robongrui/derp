@@ -1761,14 +1761,16 @@ void A_PainDie (mobj_t* actor)
 void A_Scream (mobj_t* actor)
 {
     int		sound;
+    boolean	silent;
 
-    // A DERP monster shot through the head dies without a sound.
-    if (P_DerpSilent (actor))
-	return;
+    // A DERP monster shot through the head dies without a sound, unheard by
+    // the rest; with Monster voices off you still hear id's death sound.
+    silent = P_DerpSilent (actor);
     // Heard by DERP's monsters round about: one of theirs fell.
-    P_DerpNoise (actor, NOISE_DEATH, actor->x, actor->y);
-    // A DERP soldier's own (a shot through the head has returned above).
-    if (P_DerpBody (actor, BARK_DEATH))
+    if (!silent)
+	P_DerpNoise (actor, NOISE_DEATH, actor->x, actor->y);
+    // A DERP soldier's own.
+    if (silent ? P_DerpVoices () : P_DerpBody (actor, BARK_DEATH))
 	return;
 	
     switch (actor->info->deathsound)

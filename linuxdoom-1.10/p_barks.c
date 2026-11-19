@@ -254,6 +254,24 @@ static void ItsLump (char* name, const mobj_t* mo, int voice, int moment, int ta
 	memcpy (name, own, 9);
 }
 
+// F4 Sound's Monster voices (P_SetMonsterVoices): off, DERP's monsters make id's sounds.
+static boolean voices = true;
+
+void P_SetMonsterVoices (boolean on)
+{
+    voices = on;
+}
+
+static boolean Voiced (void)
+{
+    return voices && P_DerpAI () && derpparts.senses;
+}
+
+boolean P_DerpVoices (void)
+{
+    return Voiced ();
+}
+
 static int Pitch (const mobj_t* mo)
 {
     // A pack is several animals: wider than a squad of men.
@@ -424,7 +442,7 @@ boolean P_DerpBark (mobj_t* actor, bark_t moment)
     int		voice, take, tics;
     bark_t	line;
 
-    if (!P_DerpAI () || !derpparts.senses || !Speaks (actor) || Busy (actor) || TooSoon (actor, moment))
+    if (!Voiced () || !Speaks (actor) || Busy (actor) || TooSoon (actor, moment))
 	return false;
     line = Joke (actor, moment);
     voice = Voice (actor, line);
@@ -466,7 +484,7 @@ boolean P_DerpBark (mobj_t* actor, bark_t moment)
 
 boolean P_DerpHushed (mobj_t* actor)
 {
-    return P_DerpAI () && derpparts.senses && (P_DerpSoldier (actor->type) || actor->type == MT_TROOP);
+    return Voiced () && (P_DerpSoldier (actor->type) || actor->type == MT_TROOP);
 }
 
 int P_DerpTakes (const mobj_t* actor, bark_t moment)
@@ -484,7 +502,7 @@ boolean P_DerpSayTake (mobj_t* actor, bark_t moment, int take)
     char	name[9];
     int		voice = Voice (actor, moment);
 
-    if (!P_DerpAI () || !derpparts.senses || !Speaks (actor) || Busy (actor))
+    if (!Voiced () || !Speaks (actor) || Busy (actor))
 	return false;
     LumpName (name, voice, moment, take);
     if (W_CheckNumForName (name) < 0)
@@ -502,7 +520,7 @@ static boolean Cry (mobj_t* actor, bark_t moment, boolean answered)
     char	name[9];
     int		take, tics;
 
-    if (!P_DerpAI () || !derpparts.senses || !actor || actor->player || actor->type != MT_TROOP
+    if (!Voiced () || !actor || actor->player || actor->type != MT_TROOP
 	|| !takes[VOICE_IMP][moment])
 	return false;
     if (said[moment].again && leveltime - saidtic[moment] < said[moment].again)
@@ -570,9 +588,9 @@ boolean P_DerpBody (mobj_t* actor, bark_t moment)
     char	name[9];
     int		voice, take;
 
-    if (P_DerpAI () && derpparts.senses && actor && !actor->player && actor->type == MT_TROOP)
+    if (Voiced () && actor && !actor->player && actor->type == MT_TROOP)
 	return ImpBody (actor, moment);
-    if (!P_DerpAI () || !derpparts.senses || !actor || actor->player || !P_DerpSoldier (actor->type))
+    if (!Voiced () || !actor || actor->player || !P_DerpSoldier (actor->type))
 	return false;
     // He barely felt that, or wants you to think so.
     if (moment == BARK_PAIN && actor->type == MT_CHAINGUY && P_Random () < 64 && P_DerpBark (actor, BARK_SHRUG))
@@ -623,7 +641,7 @@ void P_DerpBarkNear (fixed_t x, fixed_t y, int range, bark_t moment)
 {
     mobj_t*	mo;
 
-    if (P_DerpAI () && derpparts.senses && (mo = NearSoldier (x, y, range, NULL)) != NULL)
+    if (Voiced () && (mo = NearSoldier (x, y, range, NULL)) != NULL)
 	P_DerpBark (mo, moment);
 }
 
@@ -631,13 +649,13 @@ void P_DerpBarkSawFall (mobj_t* victim, int range, bark_t moment)
 {
     mobj_t*	mo;
 
-    if (P_DerpAI () && derpparts.senses && (mo = NearSoldier (victim->x, victim->y, range, victim)) != NULL)
+    if (Voiced () && (mo = NearSoldier (victim->x, victim->y, range, victim)) != NULL)
 	P_DerpBark (mo, moment);
 }
 
 void P_DerpBarkHit (mobj_t* target, mobj_t* source, int damage)
 {
-    if (!P_DerpAI () || !derpparts.senses)
+    if (!Voiced ())
 	return;
     // He is done for: the pack has seen it.
     if (target->player && damage >= target->health)
@@ -718,7 +736,7 @@ void P_BarksThink (void)
 
     if (soon != NUMBARKS && leveltime >= soontic)
 	SaySoon ();
-    if (P_DerpAI () && derpparts.senses && leveltime % TICRATE == 0)
+    if (Voiced () && leveltime % TICRATE == 0)
 	Watch ();
     if (impanswer != NUMBARKS && leveltime >= impanswertic)
     {

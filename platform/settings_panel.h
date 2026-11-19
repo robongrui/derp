@@ -78,5 +78,12 @@ OptionCost optionCost(const Option &option,const Settings &s);
 // applyPreset sets the options a preset covers; matchPreset says which one s is set as, 0 for none (Custom).
 void applyPreset(Settings &s,int preset);
 int matchPreset(Settings &s);
+// F4 Sound's Sounds row, the same way: 1 DOOM's own, 2 Default, 0 Custom.
+void applySoundStyle(Settings &s,int style);
+int matchSoundStyle(const Settings &s);
+// Both rows as the options now come to; and after an option changed, the row picked
+// sets what it covers first (the menus' presetFollows).
+void matchPresets(Settings &s);
+void followPresets(Settings &s,const char *changed);
 }
 #endif

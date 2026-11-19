@@ -19,6 +19,7 @@
 #include "p_kick.h"
 #include "p_moves.h"
 #include "p_focus.h"
+#include "p_barks.h"
 #include "../../derp_info.h"
 #include "m_argv.h"
 #include "sounds.h"
@@ -267,6 +268,7 @@ int Game_Sprite(game_sprite_role role)
 
 int Game_HasEffect(game_effect effect) { (void)effect; return 1; }
 void Game_SetRandomPitch(int enabled) { snd_randompitch = enabled; }
+void Game_SetMonsterVoices(int enabled) { P_SetMonsterVoices(enabled != 0); }
 
 /* On Phobos' night side Mars is the sky light: 42 degrees of sunlit planet,
    some 3% of full sunlight (ten thousand full moons), and most of the light

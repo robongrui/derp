@@ -64,6 +64,17 @@ bool climateRolled(Climate &climate) {
     climate=roll();
     return true;
 }
+// Time of day's Random: the same seed as Weather's, salted so the hour doesn't
+// follow the weather Random would have rolled.
+bool climateHourRolled(int temperature,int &hour) {
+    if(gamestate!=GS_LEVEL||Game_Phobos())return false;
+    const derp_map &own=mapInfo();
+    if(temperature==climateOwn&&own.temperatureSet)temperature=own.temperature;
+    unsigned long long key=((unsigned long long)Game_ClimateSeed()<<32)^((unsigned long long)gameepisode<<16)^((unsigned long long)gamemap<<1)
+                          ^((unsigned long long)(temperature+1000)<<40)^0x686f7572ull;   // "hour"
+    hour=rollHour(key,temperature);   // a handful of steps: the menu's draft and the game's settings each ask
+    return true;
+}
 // Where the player leaves the hour or the temperature to the map, the map's own DERPINFO (or
 // DERP mode's authored look, mapInfo) may give them.
 Climate climateNow() {
@@ -74,6 +85,7 @@ Climate climateNow() {
         if(c.timeOfDay==TIME_OWN&&own.time>TIME_OWN&&own.time<=TIME_NIGHT)c.timeOfDay=own.time;
         if(c.temperature==climateOwn&&own.temperatureSet)c.temperature=own.temperature;
     }
+    if(c.timeOfDay==timeRandom&&!climateHourRolled(c.temperature,c.timeOfDay))c.timeOfDay=TIME_OWN;
     return c;
 }
 
@@ -91,6 +103,8 @@ void climateMood(game_mood &mood) {
     if(hour==TIME_OWN&&explicitTemperature()&&!mood.sun&&mood.outdoor<0.8f&&climateNow().temperature>hottestAt(TIME_NIGHT))
         hour=climateNow().temperature>hottestAt(TIME_DUSK)?TIME_AFTERNOON:TIME_DUSK;
     hourNow=hour;
+    static int told=-1;
+    if(settings.timeOfDay==timeRandom&&hour!=told) {told=hour;fprintf(stderr,"3D climate: Random rolled hour %d.\n",hour);}
     if(hour!=TIME_OWN) {
         const Hour &h=hours[hour];
         mood.outdoor=h.outdoor;mood.sun=h.up;mood.shineOut=!h.up;

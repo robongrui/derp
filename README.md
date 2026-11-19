@@ -864,11 +864,14 @@ or one value for every map:
 | --- | --- |
 | Weather | Clear, Rain, Snow, Nukage rain, Sand, Ash, Fog, Dry ice, Firestorm, or Random |
 | Amount | Light, Moderate, Heavy, Extreme |
-| Time of day | Dawn, Morning, Noon, Afternoon, Dusk, Night |
+| Time of day | Dawn, Morning, Noon, Afternoon, Dusk, Night, or Random |
 | Temperature | −30 °C to 50 °C |
 | Wind and Wind from | Still, Breeze, Strong, Gale; eight compass directions |
 
-**Random** rolls a climate for every map. The menu only offers combinations
+**Random** weather rolls a whole climate for every map. **Random** time of day
+rolls only the hour, so the weather and the rest stay as you picked them, and
+never an hour too cool for the temperature you chose. Both rolls hold through
+deaths and loaded saves; a new game rolls them again. The menu only offers combinations
 that fit (no snow above freezing, no sandstorm in still air, no fog in a gale,
 no 50 °C at night) and works down its order: a choice that clashes with one
 above it moves to the nearest value that fits. Where the map's own weather
@@ -1208,7 +1211,13 @@ detail above 5.5 kHz. Which of them plays where is read from the map's
 textures.
 
 The target is a late-90s A3D or EAX sound card with a fairly short, lo-fi
-reverb. The settings are in **F4 → Sound**.
+reverb. The settings are in **F4 → Sound**. Its first row, **Sounds**, sets
+them all in one go: **DOOM's own** turns off every made-up sound and every
+change to how sound carries, **Default** puts them back. That includes **Monster voices** (Made-up sounds):
+off, DERP mode's soldiers and imps make id's own sounds instead of barking and
+crying in their own voices, and think just the same. Music, the output and
+random pitch stay as they are, and so do Explosions and Muzzle flash, which are
+drawing (**F4 → Graphics → Combat → Shots**).
 
 ### Quiet by design
 

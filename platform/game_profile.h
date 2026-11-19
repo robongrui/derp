@@ -200,6 +200,8 @@ typedef enum {
 int Game_HasEffect(game_effect effect);
 /* Effects start a little higher or lower each time. */
 void Game_SetRandomPitch(int enabled);
+/* DERP mode's monsters bark and cry in voices of their own (p_barks.c); off: id's sounds. */
+void Game_SetMonsterVoices(int enabled);
 
 /* The outdoor light. fromSky: 1 reads the sun from the sky texture: its
    height where the sky paints its bright patch (low patches give long

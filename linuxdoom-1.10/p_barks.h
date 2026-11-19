@@ -151,6 +151,10 @@ typedef enum
     NUMBARKS
 } bark_t;
 
+// F4 Sound's Monster voices: off, nobody barks, cries or keeps quiet, and every
+// monster makes id's own sounds; the AI decides as ever. P_DerpVoices: they are heard.
+void P_SetMonsterVoices (boolean on);
+boolean P_DerpVoices (void);
 // A level starts: nobody speaking, and which recordings there are.
 void P_BarksLevel (void);
 // Each tic: an answer that is due.

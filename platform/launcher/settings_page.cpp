@@ -125,8 +125,7 @@ const char *tipOf(const Option &option) {
 // As F4 does it (settings_menu.cpp): the preset picked sets what it covers,
 // any other change leaves the preset showing what the options come to.
 void presetFollows(const Option &option) {
-    if(!strcmp(option.key,"preset"))applyPreset(page.draft,page.draft.preset);
-    else page.draft.preset=matchPreset(page.draft);
+    followPresets(page.draft,option.key);
     page.dirty=true;
 }
 
@@ -242,8 +241,8 @@ struct Drawer {
 // What the table asks of the game and the renderer (see the top of this file).
 extern "C" int Game_HasEffect(game_effect effect) {return (effects>>(unsigned)effect)&1u;}
 extern "C" int I_SoundtrackFound(int soundtrack) {return soundtrack>=0&&soundtrack<5&&soundtrackFound[soundtrack];}
-// No map in play: Weather's Random shows as Random (climate_rules.h).
-namespace doom3d {bool climateRolled(Climate&) {return false;}}
+// No map in play: Weather's and Time of day's Random show as Random (climate_rules.h).
+namespace doom3d {bool climateRolled(Climate&) {return false;} bool climateHourRolled(int,int&) {return false;}}
 int gpuMaxSamples() {return 8;}
 bool gpuHdrOffered() {
     SDL_PropertiesID properties=SDL_GetDisplayProperties(SDL_GetPrimaryDisplay());
@@ -268,7 +267,7 @@ void SettingsPage_Select(int program) {
     page.draft=Settings{};
     readFile(configPath(program).c_str(),page.draft);
     page.defaults=Settings{};fitGame(page.defaults);
-    page.draft.preset=matchPreset(page.draft);
+    matchPresets(page.draft);
     page.groups=optionGroups(page.draft);
     dropHidden(page.groups);
     for(OptionGroup &group:page.groups)

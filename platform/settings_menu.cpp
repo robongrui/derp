@@ -117,7 +117,14 @@ std::string valueText(const Option &option) {
     if(option.kind==OptionKind::Choice) {
         int shown=*option.flag;
         bool rolled=option.shows&&option.shows(panel.draft,shown);
-        for(size_t i=0;i<option.values.size();++i)if(option.values[i]==shown)return option.items[i];
+        auto item=[&option](int value)->const char* {
+            for(size_t i=0;i<option.values.size();++i)if(option.values[i]==value)return option.items[i];
+            return nullptr;
+        };
+        // A row still picked by hand whose pick rolls (Time of day's Random): the pick, then this map's roll.
+        if(rolled&&option.isEnabled(panel.draft)&&shown!=*option.flag&&item(*option.flag)&&item(shown))
+            return std::string(item(*option.flag))+" ("+item(shown)+")";
+        if(item(shown))return item(shown);
         return rolled?(shown==-1?"None":"Random"):option.items.front();
     }
     size_t step=(size_t)std::lround((*option.number-option.low)/option.step);
@@ -212,10 +219,7 @@ bool isDefault(const Option &option) {
 
 // After an option changed: the preset picked sets the options it covers; any
 // other change leaves the preset showing what the options now come to (Custom, if none).
-void presetFollows(const Option &option) {
-    if(!strcmp(option.key,"preset"))applyPreset(panel.draft,panel.draft.preset);
-    else panel.draft.preset=matchPreset(panel.draft);
-}
+void presetFollows(const Option &option) {followPresets(panel.draft,option.key);}
 
 void resetOption() {
     Option &option=selectedOption();
@@ -364,7 +368,7 @@ void I_Render3DSettingsMenu(void) {
     if(panel.open)return;
     panel.draft=settings;
     panel.defaults=Settings{};panel.defaults.heroLight=Game_HeroLight();fitGame(panel.defaults);
-    panel.draft.preset=matchPreset(panel.draft);
+    matchPresets(panel.draft);
     panel.groups=optionGroups(panel.draft);
     dropHidden(panel.groups);
     panel.groupTab.resize(panel.groups.size(),0);

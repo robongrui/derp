@@ -21,6 +21,9 @@ enum ClimateWind { WIND_OWN, WIND_STILL, WIND_BREEZE, WIND_STRONG, WIND_GALE };
 constexpr int climateOwn=100;
 // Settings::weather's Random: every map rolls its own climate (rollClimate).
 constexpr int weatherRandom=10;
+// Settings::timeOfDay's Random: every map rolls its own hour (rollHour), the
+// weather and the rest as picked. Never a ClimateTime: climateNow rolls it away.
+constexpr int timeRandom=7;
 // Settings::weather (0 clear, 1 the map's own, then rain on) as a Weather,
 // -1 for the map's own (and for Random, whose roll fits by itself).
 inline int weatherOfSetting(int weather) {return weather==1||weather==weatherRandom?-1:weather<=0?WEATHER_NONE:weather-1;}
@@ -35,6 +38,7 @@ inline void kindTemperatures(int kind,int &low,int &high) {
     else if(kind==WEATHER_FIRESTORM) low=10;
 }
 // The hottest it gets at a time of day: the heat of the day needs the sun up.
+// Random (any hour, rolled to fit) takes any heat.
 inline int hottestAt(int time) {return time==TIME_DAWN||time==TIME_NIGHT?30:time==TIME_DUSK?40:50;}
 // A sandstorm needs wind; fog and dry ice lie only in still air or a breeze.
 inline bool kindWind(int kind,int wind) {
@@ -59,13 +63,21 @@ struct Climate { int weather,fallAmount,timeOfDay,temperature,wind,windFrom; };
 // Picked in the menu's order, each from what fits those before it, so it is
 // never a stupid combination. Nukage rain is left out (a rule of the game,
 // not a look); wind only where the game has it (no wind: the map's own).
+inline unsigned long long climateNext(unsigned long long &seed) {   // splitmix64
+    seed+=0x9e3779b97f4a7c15ull;
+    unsigned long long z=seed;
+    z=(z^(z>>30))*0xbf58476d1ce4e5b9ull;z=(z^(z>>27))*0x94d049bb133111ebull;
+    return z^(z>>31);
+}
+// Time of day's Random for one map: any hour from dawn to night, as often as
+// each other, among those the temperature in force goes with (climateOwn: all).
+inline int rollHour(unsigned long long seed,int temperature) {
+    int fit[6],count=0;
+    for(int h=TIME_DAWN;h<=TIME_NIGHT;++h)if(temperature==climateOwn||temperature<=hottestAt(h))fit[count++]=h;
+    return fit[climateNext(seed)%(unsigned long long)count];   // noon takes any heat: never empty
+}
 inline Climate rollClimate(unsigned long long seed,bool wind) {
-    auto next=[&seed]() {   // splitmix64
-        seed+=0x9e3779b97f4a7c15ull;
-        unsigned long long z=seed;
-        z=(z^(z>>30))*0xbf58476d1ce4e5b9ull;z=(z^(z>>27))*0x94d049bb133111ebull;
-        return z^(z>>31);
-    };
+    auto next=[&seed]() {return climateNext(seed);};
     auto pick=[&next](const int *weights,int count) {
         int total=0;for(int i=0;i<count;++i)total+=weights[i];
         if(total<=0)return -1;
@@ -103,5 +115,8 @@ inline Climate rollClimate(unsigned long long seed,bool wind) {
 // Settings say; false with no map in play (the menu shows plain Random).
 Climate climateNow();
 bool climateRolled(Climate &climate);
+// Time of day's Random: this map's hour under that temperature (climateOwn: the
+// map's own, if it has one); false with no map in play.
+bool climateHourRolled(int temperature,int &hour);
 }
 #endif

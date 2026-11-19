@@ -203,6 +203,7 @@ int Game_Sprite(game_sprite_role role)
    the game has itself wins. Its aiming is its own too: autoaim, else the
    lookdir. */
 void Game_SetRandomPitch(int enabled) { (void)enabled; }
+void Game_SetMonsterVoices(int enabled) { (void)enabled; }
 int Game_HasEffect(game_effect effect)
 {
     switch (effect)

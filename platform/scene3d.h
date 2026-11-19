@@ -269,7 +269,9 @@ struct Settings {
     int randomPitch=0; // Effects start a little higher or lower each time, as in the earliest DOOM.
     int alternativeComputerSounds=0; // Machine hum, hard-drive seeks and relay chatter in place of the computer bleeps.
     float ambienceAmount=1; // How loud the ambience is next to the effects (0-2).
+    int monsterVoices=1; // DERP mode's monsters bark and cry in their own voices (p_barks.c); off: id's sounds.
     int footsteps=1; // The player's footsteps by floor, splashes in liquids, monsters splashing as they wade.
+    int soundStyle=2; // F4 Sound's Sounds row (settings_presets.cpp): 1 DOOM's own, 2 the defaults, 0 Custom (as the switches come to).
     // Performance: cheaper stand-ins for per-frame light work.
     int bakeOnlyLights=1; // Static lights only in the bake, with its light direction and flicker groups; pools as area lights.
     int gridSpriteLight=1; // Things take static light and their shadow light from a grid baked at level load.

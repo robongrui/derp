@@ -379,7 +379,7 @@ uint64_t settingsKey() {
     BAKE_IGNORES(roomAcoustics) BAKE_IGNORES(reverbAmount) BAKE_IGNORES(farRooms) BAKE_IGNORES(roomTails) BAKE_IGNORES(roomGrid)
     BAKE_IGNORES(muffleWalls) BAKE_IGNORES(muffleDistance) BAKE_IGNORES(naturalFalloff) BAKE_IGNORES(madeImpacts)
     BAKE_IGNORES(glassSound) BAKE_IGNORES(ambience) BAKE_IGNORES(randomPitch) BAKE_IGNORES(alternativeComputerSounds)
-    BAKE_IGNORES(ambienceAmount) BAKE_IGNORES(footsteps) BAKE_IGNORES(skyCache)
+    BAKE_IGNORES(ambienceAmount) BAKE_IGNORES(footsteps) BAKE_IGNORES(soundStyle) BAKE_IGNORES(monsterVoices) BAKE_IGNORES(skyCache)
     // Drawing only: read by the frame's shaders and effects, by no bake and by nothing a bake reads.
     // (Left in on purpose though they look like drawing: palette, rebrick, windowGlass,
     // softLight, eyeAdaptation, bounceTint, gridSpriteLight, movingRelight; bakes or their inputs read them.)

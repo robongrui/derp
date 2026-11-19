@@ -224,8 +224,10 @@ static std::array<float,4> nodeBox(unsigned node) {
     }
     return box;
 }
-// Which of the candidate leaves the eye can see (visible[leaf] set).
-static void visibleLeaves(const Uniforms &camera,const std::vector<char> &candidate,std::vector<char> &visible) {
+// Which of the candidate leaves the eye can see (visible[leaf] set). markLines: the eye's own
+// walk, which marks the lines it sees for the automap (ML_MAPPED) as vanilla's R_AddLine
+// would: a seg facing the eye with some of it in view and not behind a solid wall.
+static void visibleLeaves(const Uniforms &camera,const std::vector<char> &candidate,std::vector<char> &visible,bool markLines=false) {
     if(nodeBoxSerial!=r_levelserial||nodeBoxes.size()!=2*(size_t)numnodes) {
         nodeBoxSerial=r_levelserial;nodeBoxes.assign(2*(size_t)numnodes,{});
         if(numnodes)nodeBox(unsigned(numnodes-1));
@@ -271,10 +273,12 @@ static void visibleLeaves(const Uniforms &camera,const std::vector<char> &candid
                 const sector_t *front=seg.frontsector,*back=seg.backsector;
                 bool solid=!back||(front->ceilingpic!=skyflatnum&&back->ceilingpic!=skyflatnum&&
                     (ceilZ(back)<=floorZ(front)||floorZ(back)>=ceilZ(front)));
-                if(!solid) continue;
+                if(!solid&&!markLines) continue;
                 float a1=relative(units(seg.v1->x),units(seg.v1->y)),a2=relative(units(seg.v2->x),units(seg.v2->y));
                 float span=std::remainder(a1-a2,2*(float)doomPi);
-                if(span>0) view.cover(a2,span);
+                if(span<=0) continue;   // facing away
+                if(markLines&&!view.hidden(a2,span)) seg.linedef->flags|=ML_MAPPED;
+                if(solid) view.cover(a2,span);
             }
             return;
         }
@@ -357,31 +361,17 @@ static void cullHidden(const Uniforms &camera,bool allSides) {
 }
 // The automap draws the lines the eye has seen (ML_MAPPED), which vanilla
 // marks as it draws a wall (R_StoreWallRange); this view never runs that.
-// The lines along the leaves seen, on the side facing the eye: a pillar's
-// far wall is in a leaf seen round it, but faces away. Takes cullHidden's
-// leaves when it culled, else walks them itself, once a tic.
+// The eye's walk marks them (visibleLeaves' markLines). Without culling there
+// is no such walk, so one of its own, once a tic. Marking whole leaves seen
+// instead showed walls behind the eye and off to the side: too much map.
 static void markSeenLines(const Uniforms &camera) {
+    if(eyeLeaves.size()==(size_t)numsubsectors)return;   // the eye's walk marked them
+    static int walked=-1;static unsigned level=0;
+    if(walked==leveltime&&level==r_levelserial)return;
+    walked=leveltime;level=r_levelserial;
     static std::vector<char> own,candidate;
-    const std::vector<char> *seen=&thingLeaves;
-    if(thingLeaves.size()!=(size_t)numsubsectors) {
-        static int walked=-1;static unsigned level=0;
-        if(walked==leveltime&&level==r_levelserial)return;
-        walked=leveltime;level=r_levelserial;
-        candidate.assign(numsubsectors,1);own.assign(numsubsectors,0);
-        visibleLeaves(camera,candidate,own);
-        seen=&own;
-    }
-    float ex=camera.eye[0],ey=camera.eye[1];
-    for(int leaf=0;leaf<numsubsectors;++leaf) {
-        if(!(*seen)[leaf])continue;
-        const subsector_t &sub=subsectors[leaf];
-        for(int i=0;i<sub.numlines;++i) {
-            const seg_t &seg=segs[sub.firstline+i];
-            float x1=units(seg.v1->x),y1=units(seg.v1->y);
-            // A seg's front is on its right (P_PointOnLineSide).
-            if((units(seg.v2->x)-x1)*(ey-y1)-(units(seg.v2->y)-y1)*(ex-x1)<0)seg.linedef->flags|=ML_MAPPED;
-        }
-    }
+    candidate.assign(numsubsectors,1);own.assign(numsubsectors,0);
+    visibleLeaves(camera,candidate,own,true);
 }
 // The nearest reflective liquid below the eye that it can see sets this
 // frame's mirror plane (visibleLeaves).
@@ -1323,7 +1313,7 @@ void geometry(const Uniforms &camera,float fraction) {
         if(settings.skipHiddenGeometry) {
             static std::vector<char> every;
             every.assign(numsubsectors,1);eyeLeaves.assign(numsubsectors,0);
-            visibleLeaves(camera,every,eyeLeaves);
+            visibleLeaves(camera,every,eyeLeaves,true);
         }
         findReflection(camera);
         bool allSides=planGlassCaptures(camera)||firstFrameAfterLoad();
