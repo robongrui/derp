@@ -73,8 +73,7 @@ In the game, press **Esc**, choose **New Game**, an episode and a difficulty.
 | Quit | Command-Q on the Mac |
 
 Crouch, slide, kick and the shootslide work in DERP mode; jump works there and
-on Phobos. The slow motion key needs **F4 → Graphics → Combat → Slow motion**
-set to Key or When shooting. In DERP mode it then runs on the hourglass beside
+on Phobos. In DERP mode it then runs on the hourglass beside
 the status bar, and the shootslide works whatever that is set to. On keyboards
 with media keys, hold **Fn** for the F keys.
 
