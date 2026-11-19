@@ -51,6 +51,8 @@ void showLoading(const char *title,const char *stage,float fraction) {
     SDL_BindGPUGraphicsPipeline(pass,settingsPipeline);
     Uniforms none={};
     SDL_PushGPUVertexUniformData(command,0,&none,sizeof(none));
+    float hdr[4];hdrUniform(hdr);
+    SDL_PushGPUFragmentUniformData(command,0,hdr,sizeof(hdr));
     SDL_GPUTextureSamplerBinding panel={settingsTexture,nearestClamp};
     SDL_BindGPUFragmentSamplers(pass,0,&panel,1);
     SDL_GPUBufferBinding binding={quadBuffer,0};

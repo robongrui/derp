@@ -168,8 +168,9 @@ int main(void)
     for (int kind = 0; kind < IMPACT_KINDS; ++kind)
     {
         current_kind = kind;
-        int expected = kind >= IMPACT_GLASS_TINKLE && kind <= IMPACT_GLASS_FRACTURE_BIG ? 22050 : 11025;
-        check(Impact_Rate(kind) == expected, "Only glass effects must change to a 22050 Hz native rate");
+        /* Glass and the claws on the floor (b116dd3) render at 22050 Hz; the rest stay 11025. */
+        int expected = (kind >= IMPACT_GLASS_TINKLE && kind <= IMPACT_GLASS_FRACTURE_BIG) || kind >= IMPACT_CLAW_HARD ? 22050 : 11025;
+        check(Impact_Rate(kind) == expected, "Only glass and claw effects must render at a 22050 Hz native rate");
     }
     for (int kind = IMPACT_GLASS_TINKLE; kind <= IMPACT_GLASS_FRACTURE_BIG; ++kind)
         for (size_t r = 0; r < sizeof(rates) / sizeof(rates[0]); ++r)

@@ -87,16 +87,29 @@ static inline float doom_flash_reach(float dx,float dy,float dz,const doom_flash
 /* Glowing wall panels sit DOOM_PANEL_OFFSET units in front of their wall and
  * shine only ahead of it: the light fades out toward the wall's plane, so a
  * wall cutting it off there (a box's own edge, a niche's corner) leaves no
- * hard shadow line. (nx, ny) is the wall's unit normal, 0 for other lights.
+ * hard shadow line. It fades by the angle off the panel's face, up and down
+ * as well as sideways, as a lit pane does: full straight ahead, half at 60
+ * degrees, so a strip under the ceiling lights the room, not the ceiling.
+ * (nx, ny) is the wall's unit normal, 0 for other lights.
  * The receiver's normal, if given, keeps the wall around the panel lit.
  * Keep panelEmission in platform/shaders/lighting.glsl equivalent. */
 #define DOOM_PANEL_OFFSET 4.0f
 static inline float doom_panel_emission(float dx,float dy,float dz,float nx,float ny,const float *normal) {
     if(nx==0&&ny==0) return 1;
     float ahead=dx*nx+dy*ny+DOOM_PANEL_OFFSET,distance=sqrtf(dx*dx+dy*dy+dz*dz);
-    float t=fminf(1,fmaxf(0,ahead/fmaxf(distance,1)*2)),emission=t*t*(3-2*t);
+    float t=fminf(1,fmaxf(0,ahead/fmaxf(distance,1))),emission=t*t*(3-2*t);
     if(normal) emission=fmaxf(emission,fmaxf(0,normal[0]*nx+normal[1]*ny)*fmaxf(0,1-fabsf(ahead)/8));
     return emission;
+}
+/* How much a light's facing counts at a distance: broad lights' low
+ * directionality stands in for the room's bounce, which a light right beside
+ * a surface outshines, so up close light that skims a surface fades by its
+ * angle (grazing light on the ceiling next to a strip lamp). Full within 32
+ * units, the light's own by 64. Keep nearDirectionality in
+ * platform/shaders/lighting.glsl equivalent. */
+static inline float doom_near_directionality(float directionality,float distance) {
+    float t=fminf(1,fmaxf(0,(distance-32)/32)),near=0.85f*(1-t*t*(3-2*t));
+    return fmaxf(directionality,near);
 }
 /* A light's panel normal lives in direction[1..2] when it has no cone. */
 static inline float doom_flash_emission(float dx,float dy,float dz,const doom_flash_t *f) {
@@ -334,6 +347,6 @@ static inline float doom_flash_facing(float x,float y,float z,const float normal
     float lx=f->position[0]-x,ly=f->position[1]-y,lz=f->position[2]-z;
     float distance=sqrtf(lx*lx+ly*ly+lz*lz);
     float lambert=distance>0.001f?fmaxf(0.0f,(normal[0]*lx+normal[1]*ly+normal[2]*lz)/distance):1.0f;
-    return 1.0f+(lambert-1.0f)*f->color[3];
+    return 1.0f+(lambert-1.0f)*doom_near_directionality(f->color[3],distance);
 }
 #endif

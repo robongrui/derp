@@ -14,8 +14,8 @@ const std::vector<WallMirror> &wallMirrors() {
     if(mirrorsFor==r_levelserial)return mirrors;
     mirrorsFor=r_levelserial;
     mirrors.clear();
-    for(int i=0;i<DerpInfo_Map.mirrors;++i) {
-        const float *m=DerpInfo_Map.mirror[i];
+    for(int i=0;i<mapInfo().mirrors;++i) {
+        const float *m=mapInfo().mirror[i];
         float ex=m[2]-m[0],ey=m[3]-m[1],length=std::hypot(ex,ey);
         if(length<1)continue;
         // It faces its line's right side, as a linedef's front does.

@@ -2,9 +2,15 @@
 #ifndef DOOM_I_MUSIC_H
 #define DOOM_I_MUSIC_H
 
+/* A frame is on screen: a song started since begins now (i_sdl_video.c). */
+void I_MusicFrame(void);
+
 /* Rendered in the SDL mixer; these take the audio lock (i_sdl_sound.c). */
 /* soundfont: through the bank in use, else the OPL. */
 int I_Mixer_RegisterSong(void *data, int soundfont);
+/* A recorded song (MP3 or Ogg from malloc; the mixer takes it over)
+   instead of a score, gain times as loud. */
+int I_Mixer_RegisterRecorded(void *bytes, int size, float gain);
 void I_Mixer_UnRegisterSong(void);
 void I_Mixer_PlaySong(int looping);
 void I_Mixer_StopSong(void);

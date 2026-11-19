@@ -5,8 +5,12 @@
 
 namespace doom3d {
 const char *graphicsConfig="graphics.cfg";
+bool graphicsConfigNamed=false;
 void loadSettings() {
+    settings.heroLight=Game_HeroLight(); // per game, until the file says otherwise
     FILE *file=fopen(graphicsConfig,"r"); if(!file) return;
+    // The player's own file must be of this release (configVersion); one named by -graphics is read as it is.
+    if(graphicsConfigNamed) readAnyVersion();
     char key[64];float value;
     while(fscanf(file,"%63s %f",key,&value)==2) readOption(settings,key,value);
     finishReading(settings);

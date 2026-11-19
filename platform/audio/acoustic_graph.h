@@ -43,4 +43,6 @@ int Acoustic_GlassWhole(int line);
 /* How much air a sector holds (0-1), or NULL (all of them full): no way
    crosses an opening into a sector with none. */
 void Acoustic_SetAir(float (*air)(int sector));
+/* On authored maps the search covers the whole level (level_sound.h). */
+void Acoustic_SetFar(int on);
 #endif

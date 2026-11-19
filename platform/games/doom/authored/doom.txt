@@ -1,0 +1,72 @@
+// DERP mode's looks picked by hand for DOOM and The Ultimate DOOM (doom.wad), in DERPINFO's words
+// (DERPINFO.md): weather, wind, the map's own hour and temperature, the sun.
+// Only maps the IWAD itself holds get them, and only in DERP mode; a map's
+// DERPINFO lump and the player's derpinfo.txt win over them. Written in game
+// with the dev tools (Shift+I saves a map); baked into the program at build.
+
+map E1M1
+{
+    weather = rain
+    weatheramount = 0.25
+    time = morning
+    temperature = 10
+    windamount = 0.5
+    wind = 270
+    sun.dawn = 291, 17
+    sun.morning = 203, 21
+}
+
+map E1M2
+{
+    weather = rain
+    weatheramount = 1
+    time = morning
+    temperature = 10
+    windamount = 1
+    wind = 180
+    sun.morning = 22, 22
+}
+
+map E1M3
+{
+    weather = rain
+    weatheramount = 0.25
+    time = noon
+    temperature = 20
+    windamount = 1
+    wind = 180
+    sun.morning = 205, 29
+    sun.noon = 204, 25
+}
+
+map E1M4
+{
+    weather = rain
+    weatheramount = 0.25
+    time = noon
+    temperature = 0
+    windamount = 0.5
+    wind = 180
+    sun.morning = 266, 41
+    sun.noon = 359, 41
+}
+
+map E1M5
+{
+    weather = none
+    time = afternoon
+    temperature = 0
+    windamount = 0.5
+    wind = 180
+    sun.afternoon = 203, 25
+}
+
+map E1M6
+{
+    weather = none
+    time = afternoon
+    temperature = 0
+    windamount = 0.5
+    wind = 180
+    sun.afternoon = 139, 35
+}

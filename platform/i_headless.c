@@ -21,6 +21,7 @@ boolean I_GamepadUsedLast(void) { return false; }
 void I_UpdateNoBlit(void) { }
 void I_FinishUpdate(void) { }
 void I_SetPalette(byte *palette) { (void)palette; }
+void I_PickupTint(const byte *color, float amount) { (void)color; (void)amount; }
 void I_ReadScreen(byte *screen)
 {
     memcpy(screen, screens[0], SCREENWIDTH * SCREENHEIGHT);
@@ -58,14 +59,22 @@ int I_StartSound(int id, int vol, int sep, int pitch, int priority)
 }
 void I_StopSound(int handle) { (void)handle; }
 int I_SoundLump(const char *name) { (void)name; return 0; }
+int I_BarkLump(const char *name, fixed_t x, fixed_t y, fixed_t z, int loud, int pitch) { (void)name; (void)x; (void)y; (void)z; (void)loud; return 0; }
+void I_BarkClear(void) { }
+int I_BarkVoice(void) { return 0; }
 int I_SoundIsPlaying(int handle) { (void)handle; return 0; }
 void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
 {
     (void)handle; (void)vol; (void)sep; (void)pitch;
 }
 void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z) { (void)handle; (void)x; (void)y; (void)z; }
+void I_BeginSoundUpdate(void) { }
+void I_EndSoundUpdate(void) { }
 void I_SoundOwn(void) { }
 fixed_t I_SoundReach(int id) { (void)id; return FRACUNIT; }
+int I_LevelSound(void) { return 0; }
+void I_LevelEnding(void) { }
+void I_FarSound(int id, fixed_t x, fixed_t y, fixed_t z, int volume) { (void)id; (void)x; (void)y; (void)z; (void)volume; }
 void I_InitMusic(void) { }
 void I_ShutdownMusic(void) { }
 void I_SetMusicVolume(int volume) { (void)volume; }

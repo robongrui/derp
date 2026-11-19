@@ -162,7 +162,14 @@ typedef struct player_s
     pspdef_t		psprites[NUMPSPRITES];
 
     // True if secret level has been done.
-    boolean		didsecret;	
+    boolean		didsecret;
+
+    // DERP, Authored (p_focus.c): the slow-motion meter in tics of slowed world, what
+    // of a shootslide's slow motion is still to run, and the gun's steps carried over
+    // between tics in slow motion (1024ths).
+    int			focus;
+    int			focusasked;
+    int			focusstep;
 
 } player_t;
 

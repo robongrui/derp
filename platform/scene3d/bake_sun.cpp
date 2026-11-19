@@ -2,6 +2,7 @@
    the sunbeams through them. */
 #include "internal.h"
 #include "../rooms.h"
+#include "gpu_trace.h"
 
 namespace doom3d {
 bool sunBaked=false;
@@ -12,6 +13,7 @@ float sunLevel=0; // Typical sky-sector light; indoor sun patches rise toward it
 struct SkyOpening { float edge=0; std::vector<std::pair<const sector_t*,float>> indoor; };
 static std::vector<int> skyOpeningOf;static std::vector<SkyOpening> skyOpenings;
 std::vector<SunShaft> sunShafts;
+static size_t floorBeams=0;   // how many of them start on a floor (the rest on walls), for the log
 
 std::vector<char> beamAir;
 // Sun shadows, baked once per level into the contact map's blue channel and
@@ -21,19 +23,22 @@ static float enclosure(const sector_t *sector,float *light=nullptr);
 static void bakeShafts();
 static void findSkyOpenings();
 // A floor cell's sun visibility (0-255), or -1 for void and sky floors.
-int sunCell(const BakeMap &map,size_t i,const float direction[3]) {
+int sunCell(const BakeMap &map,size_t i,const float direction[3],float spread) {
     int sector=seamCells[i].own;
     if(sector==noSector||sectors[sector].floorpic==skyflatnum)return -1;
     float px=mapOrigin[0]+(i%mapWidth+0.5f)*mapCell,py=mapOrigin[1]+(i/mapWidth+0.5f)*mapCell;
-    return (int)std::lround(sunVisibility(map,sector,px,py,map.sectors[sector].floor+1,direction)*255);
+    return (int)std::lround(sunVisibility(map,sector,px,py,map.sectors[sector].floor+1,direction,spread)*255);
 }
 // A wall strip's sun visibility into the atlas alpha. Walls fade with the
 // angle to the sun so grazing walls fall into shade.
-void sunStrip(const BakeMap &map,const BakeStrip &strip,const float direction[3]) {
+static float sunFacing(const BakeStrip &strip,const float direction[3]) {
     float length=std::hypot(direction[0],direction[1]),sunX=direction[0]/length,sunY=direction[1]/length;
-    float facing=std::clamp((strip.dy*sunX-strip.dx*sunY)*1.5f,0.0f,1.0f);
+    return std::clamp((strip.dy*sunX-strip.dx*sunY)*1.5f,0.0f,1.0f);
+}
+void sunStrip(const BakeMap &map,const BakeStrip &strip,const float direction[3],float spread) {
+    float facing=sunFacing(strip,direction);
     forStripTexels(strip,[&](size_t i,float x,float y,float z) {
-        float visible=facing>0?facing*sunVisibility(map,strip.sector,x,y,z,direction):0;
+        float visible=facing>0?facing*sunVisibility(map,strip.sector,x,y,z,direction,spread):0;
         wallBakeCells[4*i+3]=(uint8_t)std::lround(visible*255);
     });
 }
@@ -46,28 +51,97 @@ void bakeSun() {
     for(int i=0;i<numsectors;++i)if(sectors[i].ceilingpic==skyflatnum)skyLights.push_back(lighting(&sectors[i]));
     if(skyLights.empty()) {fprintf(stderr,"3D sun: no sky sectors.\n");return;}
     std::nth_element(skyLights.begin(),skyLights.begin()+skyLights.size()/2,skyLights.end());
-    float level=skyLights[skyLights.size()/2];
+    float level=daylightLevel(skyLights[skyLights.size()/2]);
     uint64_t start=SDL_GetTicksNS();
     const float *direction=sunDirection;
     std::atomic<size_t> lit{0};
-    parallelFor(mapHeight,[&](int y) {
+    // The three loops below, from an earlier visit if the bake cache has them (bake_cache.cpp).
+    bool fresh=!bakeCacheRestore(LoadStage::Sun,BAKE_BUILT);
+    // On the graphics card when it can (gpu_bakes.cpp): the floor cells and the wall texels
+    // turned to the sun as one batch of points, then the same loops below without their rays.
+    bool card=fresh&&gpuBakesOn();
+    std::vector<uint8_t> cardOpen;
+    std::vector<size_t> stripStart;
+    if(card) {
+        std::vector<std::array<float,4>> points;
+        for(size_t i=0;i<seamCells.size();++i) {
+            int sector=seamCells[i].own;
+            if(sector==noSector||sectors[sector].floorpic==skyflatnum)continue;
+            points.push_back({mapOrigin[0]+(i%mapWidth+0.5f)*mapCell,mapOrigin[1]+(i/mapWidth+0.5f)*mapCell,bakeMap.sectors[sector].floor+1,(float)sector});
+        }
+        stripStart.assign(bakeOrder.size()+1,points.size());
+        for(size_t n=0;n<bakeOrder.size();++n) {
+            stripStart[n]=points.size();
+            const BakeStrip &strip=bakeStrips[bakeOrder[n]];
+            if(sunFacing(strip,direction)>0)forStripTexels(strip,[&](size_t,float x,float y,float z) {points.push_back({x,y,z,(float)strip.sector});});
+        }
+        stripStart[bakeOrder.size()]=points.size();
+        card=gpuSunVisibility(points,direction,sunSpread,cardOpen);
+    }
+    if(card) {
+        size_t k=0;
+        for(size_t i=0;i<seamCells.size();++i) {
+            int sector=seamCells[i].own;
+            if(sector==noSector||sectors[sector].floorpic==skyflatnum)continue;
+            int visible=cardOpen[k++];
+            contactCells[4*i+2]=(uint8_t)visible;
+            if(visible>0)++lit;
+        }
+    }
+    else if(fresh)parallelFor(mapHeight,[&](int y) {
         for(int x=0;x<mapWidth;++x) {
             size_t i=(size_t)y*mapWidth+x;
-            int visible=sunCell(bakeMap,i,direction);
+            int visible=sunCell(bakeMap,i,direction,sunSpread);
             if(visible<0)continue;
             contactCells[4*i+2]=(uint8_t)visible;
             if(visible>0)++lit;
         }
     });
-    parallelFor((int)bakeOrder.size(),[&](int n) {sunStrip(bakeMap,bakeStrips[bakeOrder[n]],direction);});
+    // Each cell takes the middle value of itself and the floor cells round it. A sun ray that
+    // slips out where a roof meets its wall, at one cell in a row along the roof's edge, drew
+    // a bright line on the floor exactly under that edge (E1M6's porches; plain once the
+    // sky's light around it was soft). A line one cell wide has no majority anywhere and
+    // goes; a shadow's edge and its stepped penumbra stay where they are.
+    if(fresh) {
+        std::vector<uint8_t> before(contactCells.size()/4);
+        for(size_t i=0;i<before.size();++i)before[i]=contactCells[4*i+2];
+        auto floorCell=[&](size_t i) {int s=seamCells[i].own;return s!=noSector&&sectors[s].floorpic!=skyflatnum;};
+        parallelFor(mapHeight,[&](int y) {
+            for(int x=0;x<mapWidth;++x) {
+                size_t i=(size_t)y*mapWidth+x;
+                if(!floorCell(i))continue;
+                uint8_t round[9];int count=0;
+                for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx) {
+                    int nx=x+dx,ny=y+dy;
+                    if(nx<0||ny<0||nx>=mapWidth||ny>=mapHeight)continue;
+                    size_t n=(size_t)ny*mapWidth+nx;
+                    if(floorCell(n))round[count++]=before[n];
+                }
+                std::nth_element(round,round+count/2,round+count);
+                contactCells[4*i+2]=round[count/2];
+            }
+        });
+    }
+    if(fresh) {
+        if(card)parallelFor((int)bakeOrder.size(),[&](int n) {
+            const BakeStrip &strip=bakeStrips[bakeOrder[n]];
+            float facing=sunFacing(strip,direction);size_t k=stripStart[n];
+            forStripTexels(strip,[&](size_t i,float,float,float) {
+                wallBakeCells[4*i+3]=(uint8_t)std::lround((facing>0?facing*(cardOpen[k++]/255.0f):0)*255);
+            });
+        });
+        else parallelFor((int)bakeOrder.size(),[&](int n) {sunStrip(bakeMap,bakeStrips[bakeOrder[n]],direction,sunSpread);});
+        bakeCacheKeep(LoadStage::Sun);
+    }
     contactTexture=gpuCreateTexture(GpuFormat::RGBA8,mapWidth,mapHeight,contactCells.data(),mapWidth*4);
     if(!contactTexture)I_Error((char*)"Could not allocate surface maps");
     uploadWallBake();
     // Hidden by the episode's mood (sun.cpp): no sunlight, no beams.
     if(levelMood().sun)bakeShafts();else sunShafts.clear();
     sunLevel=levelMood().sun?level:0;
-    fprintf(stderr,"3D sun: yaw %.0f degrees, %.0f up, %zu sunlit cells, %zu sunbeams, %zu wall strips in %dx%d, baked in %.0f ms.\n",
-        sunYaw*180/doomPi,sunElevation*180/doomPi,lit.load(),sunShafts.size(),bakeOrder.size(),atlasWidth,atlasHeight,(SDL_GetTicksNS()-start)/1e6);
+    fprintf(stderr,"3D sun: yaw %.0f degrees, %.0f up, %zu sunlit cells, %zu sunbeams (%zu off walls), %zu wall strips in %dx%d, baked in %.0f ms%s.\n",
+        sunYaw*180/doomPi,sunElevation*180/doomPi,lit.load(),sunShafts.size(),sunShafts.size()-std::min(floorBeams,sunShafts.size()),bakeOrder.size(),atlasWidth,atlasHeight,(SDL_GetTicksNS()-start)/1e6,
+        card?" on the graphics card":"");
 }
 // Sunbeams: about one per 24 units of sunlit floor in beam air (beamAir),
 // jittered within its block so the beams never line up in rows. Each runs
@@ -128,20 +202,15 @@ static void bakeShafts() {
         }
         return width;
     };
-    int block=std::max(1,(int)std::lround(24/mapCell));
-    for(int by=0;by<mapHeight;by+=block)for(int bx=0;bx<mapWidth;bx+=block) {
-        int x=std::min(mapWidth-1,bx+(int)(hashUnit(bx,by,0x5a17u)*block)),y=std::min(mapHeight-1,by+(int)(hashUnit(bx,by,0x5a18u)*block));
-        size_t i=(size_t)y*mapWidth+x;int sector=seamCells[i].own;
-        if(sector==noSector||!indoor[sector]||sectors[sector].floorpic==skyflatnum)continue;
-        float visible=contactCells[4*i+2]/255.0f;
-        if(visible<0.5f)continue;
-        float px=mapOrigin[0]+(x+0.5f)*mapCell,py=mapOrigin[1]+(y+0.5f)*mapCell,pz=bakeMap.sectors[sector].floor;
+    // A beam from where the sun lands (px,py,pz), in sector, back toward the sun.
+    auto beam=[&](float px,float py,float pz,int sector,float visible) {
         float length=0,width=0;bool left=false;int last=sector;
-        for(float t=4;t<1024;t+=4) {
+        for(float t=4;t<2040;t+=4) {
             float qx=px+sunDirection[0]*t,qy=py+sunDirection[1]*t,qz=pz+sunDirection[2]*t;
             int cx=(int)std::floor((qx-mapOrigin[0])/mapCell),cy=(int)std::floor((qy-mapOrigin[1])/mapCell);
             if(cx<0||cy<0||cx>=mapWidth||cy>=mapHeight)break;
             int at=seamCells[(size_t)cy*mapWidth+cx].own;
+            if(at==noSector&&t<=16)continue;   // a wall's foot: the cells right at it may be the wall's
             if(at==noSector||qz<bakeMap.sectors[at].floor)break;
             if(!indoor[at]||qz>bakeMap.sectors[at].ceiling) {
                 left=bakeMap.sectors[at].sky;
@@ -150,10 +219,48 @@ static void bakeShafts() {
             }
             length=t;last=at;
         }
-        if(!left||length<24)continue;
+        if(!left||length<24)return;
         float wide=std::clamp((width-128)/192,0.0f,1.0f),contrast=1-wide*wide*(3-2*wide);
-        if(contrast<0.05f)continue;
-        sunShafts.push_back({px,py,pz,length+24,visible*contrast,sector});
+        if(contrast<0.05f)return;
+        sunShafts.push_back({px,py,pz,length+24,visible*contrast,sector,bakeMap.sectors[sector].floor});
+    };
+    // Where it lands on a floor.
+    int block=std::max(1,(int)std::lround(24/mapCell));
+    for(int by=0;by<mapHeight;by+=block)for(int bx=0;bx<mapWidth;bx+=block) {
+        int x=std::min(mapWidth-1,bx+(int)(hashUnit(bx,by,0x5a17u)*block)),y=std::min(mapHeight-1,by+(int)(hashUnit(bx,by,0x5a18u)*block));
+        size_t i=(size_t)y*mapWidth+x;int sector=seamCells[i].own;
+        if(sector==noSector||!indoor[sector]||sectors[sector].floorpic==skyflatnum)continue;
+        float visible=contactCells[4*i+2]/255.0f;
+        if(visible<0.5f)continue;
+        beam(mapOrigin[0]+(x+0.5f)*mapCell,mapOrigin[1]+(y+0.5f)*mapCell,bakeMap.sectors[sector].floor,sector,visible);
+    }
+    // And where it lands on a wall: a low sun through a window, or through a hole onto the far
+    // side of the room, lights the wall and not the floor, and that light had no beam. One per
+    // 24 units of wall along and up, jittered as the floor's, on the sides turned to the sun:
+    // the solid parts of a side only (the gap of a two-sided line is air, and the light through
+    // it lands further on).
+    float flat=std::hypot(sunDirection[0],sunDirection[1]);
+    floorBeams=sunShafts.size();
+    if(flat<1e-4f)return;
+    for(int n:bakeOrder) {
+        const BakeStrip &strip=bakeStrips[n];
+        if(n/2>=numlines||!indoor[strip.sector]||(strip.dy*sunDirection[0]-strip.dx*sunDirection[1])/flat<0.1f)continue;
+        const line_t &line=lines[n/2];
+        const BakeSector &own=bakeMap.sectors[strip.sector];
+        const sector_t *behind=line.backsector?(line.frontsector-sectors==strip.sector?line.backsector:line.frontsector):nullptr;
+        float gapLow=0,gapHigh=0;
+        if(behind) {
+            const BakeSector &other=bakeMap.sectors[behind-sectors];
+            gapLow=std::max(own.floor,other.floor);gapHigh=std::min(own.ceiling,other.ceiling);
+        }
+        int columns=(int)std::ceil(strip.length/24),rows=(int)std::ceil((own.ceiling-own.floor)/24);
+        for(int column=0;column<columns;++column)for(int row=0;row<rows;++row) {
+            float along=(column+hashUnit(column,row,0x5a19u+(uint32_t)n))*24,z=own.floor+(row+hashUnit(column,row,0x5a1au+(uint32_t)n))*24;
+            if(along>strip.length-1||z>own.ceiling-1||(z>gapLow&&z<gapHigh))continue;
+            float px=strip.ax+strip.dx*along+strip.dy,py=strip.ay+strip.dy*along-strip.dx;
+            float visible=sunVisibility(bakeMap,strip.sector,px,py,z,sunDirection);
+            if(visible>=0.5f)beam(px,py,z,strip.sector,visible);
+        }
     }
 }
 // The sky's openings, from the room map (rooms.c).
@@ -209,6 +316,8 @@ LightRule lightRule(const LightRuleInputs &in,bool sky,float room,float light,fl
     if(sky) {
         float shade=sun?in.shade*(1-in.even):0,gain=sun?in.gain*(1-in.even):0;   // a whiteout takes the shadows too
         float k=light*(1-shade),u=light*(1+gain);
+        // Whole-level lighting: only the sun; the sky's light is in the bounce (sector_light.glsl's rule).
+        if(in.whole&&in.skyLight>0) {r.level=r.sun=(u-k)*v*daylightScale();r.sky=0;return r;}
         float d=in.skyLight<=0?k:room>0?std::min(room,light):k*0.75f;
         if(room>0)k=std::max(k,std::min(room,light));
         float h=std::clamp(open,0.0f,1.0f);h+=(1-h)*in.even;
@@ -229,10 +338,11 @@ LightRuleInputs lightRuleInputs() {
     in.shade=sunShade;in.gain=sunGain;
     in.skyLight=settings.skyLight&&ambientKey==bakeThingsKey?skyLevel*(Game_Phobos()?marsShine:1):0;
     in.windowLight=settings.windowLight&&bakedLightsActive;
+    in.whole=settings.lightModel==1&&bakedLightsActive&&settings.bounce&&bounceKey>=0;
     game_sun game;Game_Sun(&game);in.skyCast=game.skyCast;
     // A whiteout or a thick fog lights the open ground evenly (sector_light.glsl's flatAir).
     float fog=fogBankCount()?0.75f*std::clamp(weatherNow(WEATHER_FOG)*1.25f,0.0f,1.0f):0.0f;
-    in.even=std::max(whiteoutNow(),settings.weather?fog:0.0f);
+    in.even=std::max(whiteoutNow(),climateNow().weather?fog:0.0f);
     return in;
 }
 // The light of the roofed sectors round a sky sector's opening, by the
@@ -262,7 +372,7 @@ float sunLightAt(float x,float y,const sector_t *sector,float light) {
     size_t i=(size_t)cy*mapWidth+cx;
     float visible=contactCells[4*i+2]/255.0f;
     float sky=in.skyLight>0&&!flatLightCells.empty()?(flatCell(floorBounce,i)[3]>>4)/15.0f:1.0f;
-    bool outside=sector->ceilingpic==skyflatnum;
+    bool outside=sector->ceilingpic==skyflatnum||(in.whole&&Rooms_Outside(int(sector-sectors)));
     float level=lightRule(in,outside,outside?roomLight(sector):-1,light,visible,sky).level;
     return light+std::round((level-light)*16)/16;
 }

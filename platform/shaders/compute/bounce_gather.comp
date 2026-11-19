@@ -1,0 +1,168 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// One pass of the bounce's gather (BounceSolve::run's gather and radiance in
+// scene3d/bake_bounce.cpp), a thread a sample: what its rays met (kept by
+// bounce_trace.comp, or traced here for samples past what the card keeps),
+// lit by the lamps, the pass before's bounce, the sun and the sky; the sky's
+// share and the last pass's shoulder; the split over the bump basis. Out: the
+// sample's light and split, six floats, which the processor smooths, blends
+// and encodes as before.
+layout(local_size_x=64) in;
+#ifdef METAL
+#define MAP_BINDING 1
+#define SAMPLE_BINDING 2
+#define TABLE_BINDING 3
+#define STRIP_BINDING 4
+#define HIT_BINDING 5
+#define STATIC_BINDING 6
+#define LIGHT_BINDING 7
+#define OUT_BINDING 8
+#else
+#define MAP_BINDING 0
+#define SAMPLE_BINDING 1
+#define TABLE_BINDING 2
+#define STRIP_BINDING 3
+#define HIT_BINDING 4
+#define STATIC_BINDING 5
+#define LIGHT_BINDING 6
+#define OUT_BINDING 0
+#endif
+// job: x the first sample, y how many, z rays a sample, w samples kept (the stride of the kept rays).
+// pass: x this pass, y the passes, z flags (below).
+// grid: the map's origin, its cell, the rays' reach. dims: map width and height, atlas stride and width.
+// statics: where the side albedos (three floats a wall part), flat albedos (sector*2+ceiling) and
+// sector levels start, and the weather's ground (a byte a cell; 0: none).
+// lights: where the flat cells (four layers of a word a cell) and the wall atlas start, the
+// contact map (sun in blue), and the layer's size.
+layout(std140,set=2,binding=0) uniform Job {
+    uvec4 mapA; uvec4 mapB; uvec4 job; uvec4 pass; vec4 grid; uvec4 dims; uvec4 statics; uvec4 lights;
+    vec4 sunEnergy;     // w: day (daylightScale)
+    vec4 lies;          // what the weather leaves on the ground; w: the sky's gain inside the solve
+    vec4 skyRadiance;   // w: skyGlow
+    vec4 more;          // x: most (the daylight a sample may hold), y: the sun's gain inside the solve
+    // The pass before's bounce in half floats (scene3d/bounce_carry.h), in the light buffer: x where
+    // it starts (words), y where its walls start (entries of three halves), z the atlas width, w 1
+    // when there (else the 8-bit layers, as before).
+    uvec4 carry;
+};
+const uint gatherLights=1u,gatherSkyDome=2u,gatherAdapts=4u,gatherSplit=8u,gatherSettles=16u,gatherWets=32u,gatherWeather=64u,gatherTrueLamps=128u;
+layout(std430,set=0,binding=MAP_BINDING) readonly buffer MapWords { uint mapWords[]; };
+layout(std430,set=0,binding=SAMPLE_BINDING) readonly buffer Samples { uvec4 samples[]; };
+layout(std430,set=0,binding=TABLE_BINDING) readonly buffer Table { vec4 table[]; };
+layout(std430,set=0,binding=STRIP_BINDING) readonly buffer Strips { vec4 strips[]; };
+layout(std430,set=0,binding=HIT_BINDING) readonly buffer Hits { uvec2 hits[]; };
+layout(std430,set=0,binding=STATIC_BINDING) readonly buffer Statics { uint staticWords[]; };
+layout(std430,set=0,binding=LIGHT_BINDING) readonly buffer Light { uint lightWords[]; };
+layout(std430,set=1,binding=OUT_BINDING) writeonly buffer Out { float results[]; };
+#include "trace.glsl"
+#include "bounce_rays.glsl"
+
+float staticF(uint i) {return uintBitsToFloat(staticWords[i]);}
+vec3 staticRGB(uint i) {return vec3(staticF(i),staticF(i+1u),staticF(i+2u));}
+vec4 lightAt(uint i) {uint w=lightWords[i];return vec4(float(w&255u),float((w>>8)&255u),float((w>>16)&255u),float(w>>24));}
+float lum(vec3 c) {return 0.299*c.r+0.587*c.g+0.114*c.b;}
+// An entry of the carry: three halves from half index 3*entry.
+float carryHalf(uint h) {vec2 two=unpackHalf2x16(lightWords[carry.x+h/2u]);return (h&1u)!=0u?two.y:two.x;}
+vec3 carried(uint entry) {uint h=3u*entry;return vec3(carryHalf(h),carryHalf(h+1u),carryHalf(h+2u));}
+// fillHeadroom (platform/baked_lighting.h).
+vec3 fillHeadroom(vec3 rgb,float sectorLight) {
+    float luminance=lum(rgb);
+    if(luminance<=0.0)return rgb;
+    float headroom=max(1.25-sectorLight,0.0),knee=headroom*0.5,rest=headroom-knee,shoulder;
+    if(luminance<=knee||rest<=0.0)shoulder=min(luminance,knee);
+    else shoulder=knee+rest*(1.0-exp(-(luminance-knee)/rest));
+    return rgb*(shoulder/luminance);
+}
+// addLobes (scene3d/bake_basis.cpp).
+void addLobes(vec3 normal,vec3 towards,float weight,inout vec3 lobes) {
+    float length=sqrt(dot(towards,towards));
+    if(weight<=0.0||length<=1e-6)return;
+    bool level=abs(normal.z)>0.5;
+    vec3 t=vec3(level?1.0:-normal.y,level?0.0:normal.x,0.0),b=vec3(0.0,level?1.0:0.0,level?0.0:1.0);
+    vec3 d=vec3(dot(towards,t),dot(towards,b),dot(towards,normal))/length;
+    lobes.x+=weight*max(0.0,dot(d,vec3(-0.40824829,0.70710678,0.57735027)));
+    lobes.y+=weight*max(0.0,dot(d,vec3(-0.40824829,-0.70710678,0.57735027)));
+    lobes.z+=weight*max(0.0,dot(d,vec3(0.81649658,0.0,0.57735027)));
+}
+int sideSector(uint strip) {
+    uint l=mapA.y+(strip>>1)*8u;
+    return (strip&1u)!=0u?mapI(l+5u):mapI(l+4u);
+}
+void main() {
+    uint i=gl_GlobalInvocationID.x;
+    if(i>=job.y)return;
+    uint s=job.x+i,rays=job.z,flags=pass.z;
+    bool skyDome=(flags&gatherSkyDome)!=0u,split=(flags&gatherSplit)!=0u,lit=(flags&gatherLights)!=0u;
+    bool last=pass.x+1u==pass.y,again=pass.x>0u;
+    BounceSample bs=bounceSample(s);
+    const uint layer=lights.w;
+    vec3 out3=vec3(0.0),lobes=vec3(0.0),daylight=vec3(0.0);
+    uint seenSky=0u;
+    for(uint n=0u;n<rays;++n) {
+        vec3 d=bounceDirection(bs,n,rays);
+        uvec2 word=s<job.w?hits[n*job.w+s]:bounceTrace(bs,d,skyDome);
+        uint kind=word.y>>29,surface=word.y&0x1FFFFFFFu,at=word.x;
+        if(kind==rayEscaped||kind==raySky) {
+            if(split)addLobes(bs.normal,d,skyRadiance.w/float(rays),lobes);
+            if(kind==raySky)++seenSky;
+            continue;
+        }
+        vec3 hitLight=vec3(0.0),hitDay=vec3(0.0);
+        int sector=-1;
+        if(kind==rayWall||kind==rayFlat) {
+            vec3 albedo;vec4 light;vec3 before=vec3(0.0);float visible;
+            if(kind==rayWall) {
+                sector=sideSector(surface/3u);
+                albedo=staticRGB(statics.x+3u*surface);
+                light=lightAt(lights.y+at);
+                if(again)before=carry.w!=0u?carried(carry.y+(at/dims.z)*carry.z+at%dims.z):lightAt(lights.y+at+dims.w).rgb/255.0*2.0;
+                visible=light.a/255.0;
+            } else {
+                bool ceiling=(surface&1u)!=0u;
+                sector=int(surface>>1);
+                albedo=staticRGB(statics.y+3u*surface);
+                light=lightAt(lights.x+(ceiling?1u:0u)*layer+at);
+                if(again)before=carry.w!=0u?carried((ceiling?layer:0u)+at):lightAt(lights.x+(ceiling?3u:2u)*layer+at).rgb/255.0*2.0;
+                visible=ceiling?0.0:lightAt(lights.z+at).b/255.0;
+                // snowAt's share of covered texels at that depth, roughly.
+                if(!ceiling&&(flags&gatherWeather)!=0u) {
+                    uint ground=(staticWords[statics.w+at/4u]>>(8u*(at&3u)))&255u;
+                    if(ground!=0u) {
+                        float deep=float(ground-1u)/254.0;
+                        if((flags&gatherSettles)!=0u) {
+                            float share=clamp((deep*1.1-0.35)/0.45,0.0,1.0);
+                            albedo+=(lies.rgb-albedo)*share;
+                        } else if((flags&gatherWets)!=0u)albedo*=1.0-0.36*deep;
+                    }
+                }
+            }
+            vec3 baked=light.rgb/255.0*2.0;   // as baked; drawn within its sector's headroom unless gatherTrueLamps
+            vec3 shown=!lit?vec3(0.0):(flags&gatherTrueLamps)!=0u?baked:fillHeadroom(baked,staticF(statics.z+uint(sector)));
+            hitLight=albedo*(shown+before);
+            hitDay=albedo*sunEnergy.rgb*visible;
+        } else if(kind==rayBare)sector=sideSector(surface/3u);
+        out3+=hitLight/float(rays);
+        daylight+=hitDay*(skyDome?more.y:1.0)/float(rays);
+        hitLight+=hitDay;
+        if(split&&kind!=rayNothing)addLobes(bs.normal,d,(lum(hitLight)+0.3*staticF(statics.z+uint(sector)))/float(rays),lobes);
+    }
+    // The sky's own light on the place, by how much of the sky it sees, as the eye takes it.
+    if(skyDome&&seenSky>0u) {
+        float view=float(seenSky)/float(rays)*(abs(bs.normal.z)<=0.5?2.0:1.0),gain=lies.w,day=sunEnergy.w,share;
+        if((flags&gatherAdapts)!=0u)share=last?min(day,view*gain):view*gain;
+        else share=min(1.0,sqrt(view/0.25))*(last?1.0:gain);
+        daylight+=skyRadiance.rgb*share;
+    }
+    out3+=daylight;
+    // The last pass: down to what can be drawn.
+    if(skyDome&&last) {
+        float is=lum(out3),most=more.x,knee=most*0.6;
+        if(is>knee&&most>knee) {
+            float fit=knee+(most-knee)*(1.0-exp(-(is-knee)/(most-knee)));
+            out3*=fit/is;
+        }
+    }
+    uint o=6u*i;
+    results[o]=out3.r;results[o+1u]=out3.g;results[o+2u]=out3.b;
+    results[o+3u]=lobes.x;results[o+4u]=lobes.y;results[o+5u]=lobes.z;
+}

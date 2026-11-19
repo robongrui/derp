@@ -9,9 +9,13 @@
 #include "i_video.h"
 #include "m_argv.h"
 #include "v_video.h"
+#include "w_wad.h"
+#include "z_zone.h"
 #include "game_profile.h"
 #include "bindings.h"
 #include "i_gamepad.h"
+#include "slow_motion.h"
+#include "i_music.h"
 #include <SDL3/SDL.h>
 #ifdef DOOM_RENDER3D
 #include "i_render3d.h"
@@ -146,6 +150,8 @@ int I_PlatformAction(int role)
     case GAME_ACTION_FULLSCREEN:
         SDL_SetWindowFullscreen(window, !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN));
         return 1;
+    case GAME_ACTION_SLOW_MOTION:
+        return SlowMotion_Toggle();
 #ifdef DOOM_RENDER3D
     case GAME_ACTION_FLASHLIGHT:
         if (accel && I_Render3DIsAccelerated() && gamestate == GS_LEVEL && !menuactive && !paused)
@@ -153,6 +159,12 @@ int I_PlatformAction(int role)
         return 1;
     case GAME_ACTION_CENTER_VIEW:
         if (accel && gamestate == GS_LEVEL && !menuactive && !paused) I_Render3DCenterView();
+        return 1;
+    /* In a menu (a yes/no question's Y) the key is the game's. */
+    case GAME_ACTION_SUN_AIM:
+    case GAME_ACTION_SUN_BACK:
+        if (!accel || !I_Render3DIsAccelerated() || gamestate != GS_LEVEL || menuactive || paused) return 0;
+        I_Render3DSunAim(role == GAME_ACTION_SUN_BACK);
         return 1;
     case GAME_ACTION_STATS:
         if (!accel || !I_Render3DIsAccelerated()) return 0;
@@ -202,7 +214,10 @@ void I_InitGraphics(void)
         I_Error("Window dimensions must be between 320x240 and 8192x8192");
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     // Render checks draw off screen: no window comes up over the user's work
-    if (M_CheckParm("-rendercheck")) flags |= SDL_WINDOW_HIDDEN;
+    // (-hidden: the same for any other run that nobody watches, the timing tests' say.)
+    // -renderwindow keeps a render check's window shown: a timing run that needs the swapchain,
+    // its vsync and frame limit, and ends by itself at -rendertic.
+    if ((M_CheckParm("-rendercheck") && !M_CheckParm("-renderwindow")) || M_CheckParm("-hidden")) flags |= SDL_WINDOW_HIDDEN;
     char title[128];
     snprintf(title, sizeof(title), "%s — Esc: menu · F11: fullscreen · Cmd-Q: quit", Game_Title());
     window = SDL_CreateWindow(title, width, height, flags);
@@ -251,6 +266,7 @@ void I_ShutdownGraphics(void)
 }
 void I_StartFrame(void)
 {
+    SlowMotion_Frame();
 #ifdef DOOM_RENDER3D
     if (accel) { I_Render3DStartFrame(); I_StartTic(); }
 #endif
@@ -337,13 +353,14 @@ void I_StartTic(void)
                may have opened or closed in between. */
             int key = !pressed && keys[scan] ? keys[scan] : translate(scan, event.key.key);
             /* The platform's own bound keys (bindings.h) act here; the
-               flashlight's and the view's also go on, so cheats such as
-               "idfly" can be typed. */
+               flashlight's, the view's and the sun's also go on, so cheats
+               such as "idfly" or "idmus" can be typed. */
             game_action_role role = key ? Bind_Role(key, NULL) : GAME_ACTION_GAME;
             if (role != GAME_ACTION_GAME && !keys[scan])
             {
                 int handled = pressed ? I_PlatformAction(role) : 1;
-                if (handled && role != GAME_ACTION_FLASHLIGHT && role != GAME_ACTION_CENTER_VIEW && role != GAME_ACTION_GYRO)
+                if (handled && role != GAME_ACTION_FLASHLIGHT && role != GAME_ACTION_CENTER_VIEW && role != GAME_ACTION_GYRO
+                    && role != GAME_ACTION_SUN_AIM && role != GAME_ACTION_SUN_BACK)
                     continue;
             }
             if (key)
@@ -401,6 +418,7 @@ void I_StartTic(void)
                 int mask = 1 << button;
                 if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
                 {
+                    if (event.button.button == SDL_BUTTON_RIGHT) SlowMotion_Button();
                     game_action_role role = Bind_Role(KEY_MOUSE1 + button, NULL);
                     if (role != GAME_ACTION_GAME && I_PlatformAction(role) && role != GAME_ACTION_FLASHLIGHT)
                         continue;
@@ -482,8 +500,76 @@ void I_LatchMouse(void)
 }
 #endif
 
+#ifdef DOOM_RENDER3D
+/* Damage, pickup and radiation suit flashes are PLAYPAL's base palette blended toward one
+   colour. Recoloring every texture through them tinted the whole 3D world (bloom, glow and
+   lights with it); the renderer keeps the base palette and lays the colour over the finished
+   picture instead. Fitted per channel (data = a*base + b): the amount is 1-a, the colour
+   b/(1-a). A palette that is no such blend (Heretic's E2PAL) is used as it is. */
+static boolean PaletteFlash(const byte *data, float tint[4])
+{
+    const byte *base = W_CacheLumpName("PLAYPAL", PU_CACHE);
+    float a[3], b[3], amount = 0, error = 0;
+    tint[0] = tint[1] = tint[2] = tint[3] = 0;
+    if (!memcmp(data, base, 768)) return true;
+    for (int c = 0; c < 3; ++c)
+    {
+        double sx = 0, sy = 0, sxx = 0, sxy = 0;
+        for (int i = 0; i < 256; ++i)
+        {
+            double x = base[3*i+c], y = data[3*i+c];
+            sx += x; sy += y; sxx += x*x; sxy += x*y;
+        }
+        double d = 256*sxx - sx*sx;
+        if (d <= 0) return false;
+        a[c] = (float)((256*sxy - sx*sy) / d);
+        b[c] = (float)((sy - a[c]*sx) / 256);
+        for (int i = 0; i < 256; ++i)
+        {
+            float e = data[3*i+c] - (a[c]*base[3*i+c] + b[c]);
+            error += e*e;
+        }
+        amount += (1 - a[c]) / 3;
+    }
+    if (error / 768 > 9 || amount <= 0.004f || amount > 1) return false;
+    for (int c = 0; c < 3; ++c)
+    {
+        int level = (int)(b[c] / amount + 0.5f);
+        level = level < 0 ? 0 : level > 255 ? 255 : level;
+        tint[c] = gammatable[usegamma][level] / 255.0f;
+    }
+    tint[3] = amount;
+    return true;
+}
+#endif
+void I_PickupTint(const byte *color, float amount)
+{
+#ifdef DOOM_RENDER3D
+    /* Colour < 0: the palette flash's own (the WAD's bonus gold), at this amount. */
+    float tint[4] = {-1, -1, -1, amount};
+    if (!accel) return;
+    if (color)
+        for (int c = 0; c < 3; ++c) tint[c] = gammatable[usegamma][color[c]] / 255.0f;
+    I_Render3DPickupTint(tint);
+#else
+    (void)color; (void)amount;
+#endif
+}
 void I_SetPalette(byte *data)
 {
+#ifdef DOOM_RENDER3D
+    float tint[4];
+    if (accel && PaletteFlash(data, tint))
+    {
+        I_Render3DScreenTint(tint);
+        data = W_CacheLumpName("PLAYPAL", PU_CACHE);
+    }
+    else if (accel)
+    {
+        tint[0] = tint[1] = tint[2] = tint[3] = 0;
+        I_Render3DScreenTint(tint);
+    }
+#endif
     for (int i = 0; i < 256; ++i)
         palette[i] = UINT32_C(0xff000000)
                    | (uint32_t)gammatable[usegamma][data[3*i]] << 16
@@ -499,13 +585,14 @@ void I_FinishUpdate(void)
     for (int i = 0; i < SCREENWIDTH * SCREENHEIGHT; ++i)
         pixels[i] = palette[screens[0][i]];
 #ifdef DOOM_RENDER3D
-    if (accel) { I_Render3DPresent(pixels, palette); return; }
+    if (accel) { I_Render3DPresent(pixels, palette); I_MusicFrame(); return; }
 #endif
     SDL_UpdateTexture(texture, NULL, pixels, SCREENWIDTH * sizeof(uint32_t));
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
     SDL_RenderTexture(renderer, texture, NULL, NULL);
     SDL_RenderPresent(renderer);
+    I_MusicFrame();
 }
 void I_ReadScreen(byte *screen)
 {

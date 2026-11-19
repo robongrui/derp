@@ -34,6 +34,12 @@ float eyeGlow(sampler2D image,vec2 uv) {
     vec2 n=texelFetch(image,clamp(ivec2(floor(uv)),ivec2(0),textureSize(image,0)-1),0).ba;
     return n.x>0.995&&n.y>0.74?(n.y*255.0-192.0)/63.0:0.0;
 }
+// The flash on a monster's firing frame (platform/sprite_flash.h), stamped
+// over the normals as the eyes are, at a corner no silhouette reaches either.
+bool firingFlash(sampler2D image,vec2 uv) {
+    vec2 n=texelFetch(image,clamp(ivec2(floor(uv)),ivec2(0),textureSize(image,0)-1),0).ba;
+    return n.x>0.995&&n.y<0.1;
+}
 // Masks (texture B channel) read as nearest or bilinear with repeat; the
 // image is bound with a linear repeat sampler.
 float maskAt(sampler2D image,vec2 uv,bool filtered) {

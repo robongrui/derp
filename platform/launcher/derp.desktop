@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=DERP
+GenericName=DOOM and Heretic launcher
+Comment=Pick a game WAD, custom WADs and music, then play
+Exec=derp %F
+Icon=play-derp
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=doom;heretic;wad;
+MimeType=application/x-doom-wad;application/x-doom-patch;audio/x-soundfont;inode/directory;

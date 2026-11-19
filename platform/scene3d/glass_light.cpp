@@ -97,5 +97,19 @@ void addGlassLight(const BakeMap &map,int sector,float x,float y,float z,const f
         for(int c=0;c<3;++c)out[c]+=seen[c]*amount;
     }
 }
+// What addGlassLight reads besides the map, for the bake cache: the windows, their glass and the sun's height.
+uint64_t glassLightInputs() {
+    uint64_t h=bakeHash(nullptr,0,0x676C617373ull);
+    if(glassWindows.empty())return h;
+    h=bakeHash(&sunElevation,sizeof sunElevation,h);
+    for(const GlassWindow &w:glassWindows) {
+        int where[]={w.line,w.side,w.part,w.sector,w.image->width,w.image->height};
+        float place[]={w.ax,w.ay,w.ux,w.uy,w.nx,w.ny,w.length,w.bottom,w.top,w.u,w.anchor};
+        h=bakeHash(where,sizeof where,h);h=bakeHash(place,sizeof place,h);
+        h=bakeHash(w.image->pixels.data(),w.image->pixels.size()*sizeof(w.image->pixels[0]),h);
+        h=bakeHash(w.image->emission.data(),w.image->emission.size()*sizeof(w.image->emission[0]),h);
+    }
+    return h;
+}
 void glassLightShutdown() {glassWindows.clear();}
 } // namespace doom3d

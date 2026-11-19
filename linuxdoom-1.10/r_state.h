@@ -107,7 +107,7 @@ extern void (*R_BeforeTic)(void);
 // Renderer-only shot notification; projectile is a mobj type or -1 for gunfire.
 extern void (*R_MuzzleFlash)(mobj_t *source, int weapon, int projectile);
 // Renderer-only hitscan wall impact: side faces the shooter; x,y,z is the puff.
-extern void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z);
+extern void (*R_WallImpact)(line_t *line, int side, fixed_t x, fixed_t y, fixed_t z, mobj_t *shooter, fixed_t dx, fixed_t dy, fixed_t slope);
 // Renderer-only hitscan blood: x,y,z is the blood spot, dx,dy the shot direction,
 // slope its vertical rise per horizontal unit (to locate the hit on the sprite).
 extern void (*R_BloodHit)(mobj_t *target, mobj_t *shooter, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy, fixed_t slope, int damage);
@@ -121,9 +121,15 @@ extern boolean (*R_PlaneImpact)(sector_t *sector, boolean ceiling, fixed_t x, fi
 // Renderer-only: a hitscan shot passes through a two-sided line's opening at
 // x,y,z, travelling along dx,dy (window glass breaks).
 extern void (*R_ShotPassed)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+// Whether his flashlight is on (the accelerated renderer's; else NULL).
+extern boolean (*R_Flashlight)(void);
 // A body struck the glass on line hard enough to break it (Phobos, P_Strike): it shatters at
 // x, y, z, the body going dx, dy.
 extern void (*R_GlassStruck)(line_t *line, fixed_t x, fixed_t y, fixed_t z, fixed_t dx, fixed_t dy);
+// An explosion at spot, damage at its middle (P_RadiusAttack, before anything is hurt): renderer only.
+extern void (*R_Explosion)(mobj_t *spot, mobj_t *source, int damage);
+// The Authored kick landing (p_kick.c), hit or miss: what the drawing has lying about there is kicked too.
+extern void (*R_KickLanded)(mobj_t *kicker, int sweep);
 // DERP: whether weather blowing in at a broken window reaches mo (the
 // renderer knows the panes and the wind); NULL: only the open sky does.
 extern int (*R_RainedIn)(mobj_t *mo);

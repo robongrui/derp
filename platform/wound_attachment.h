@@ -96,5 +96,27 @@ inline Point map(const Frame &source,const Frame &dest,Point point) {
     if(bestX<0)return estimate;
     return {bestX+(point.u-sx),bestY+(point.v-sy)};
 }
+
+// The same patch search, around an estimate the caller already has (gore's skeleton places the wound on
+// its bone, which can be a few texels off the artwork): within reach texels of it, the pull toward it
+// stronger, so the hole sticks to the painted patch it was made in without wandering off the bone.
+inline Point mapNear(const Frame &source,const Frame &dest,Point point,Point estimate,int reach) {
+    if(source.pixels==dest.pixels&&source.width==dest.width&&source.height==dest.height)
+        return point;
+    int sx=(int)std::floor(point.u),sy=(int)std::floor(point.v);
+    if(!detail::opaque(source,sx,sy)||!std::isfinite(estimate.u)||!std::isfinite(estimate.v))return estimate;
+    int cx=(int)std::floor(estimate.u),cy=(int)std::floor(estimate.v);
+    float best=std::numeric_limits<float>::max();
+    int bestX=-1,bestY=-1;
+    for(int y=cy-reach;y<=cy+reach;++y)
+        for(int x=cx-reach;x<=cx+reach;++x) {
+            if(!detail::opaque(dest,x,y))continue;
+            float dx=(x-cx)/(float)reach,dy=(y-cy)/(float)reach;
+            float cost=detail::patchCost(source,dest,sx,sy,x,y)+0.35f*(dx*dx+dy*dy);
+            if(cost<best) {best=cost;bestX=x;bestY=y;}
+        }
+    if(bestX<0)return estimate;
+    return {bestX+(point.u-sx),bestY+(point.v-sy)};
+}
 } // namespace doom_wounds
 #endif

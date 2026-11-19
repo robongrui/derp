@@ -44,7 +44,16 @@ rcsid[] = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_bullets.h"
 #include "p_phobos.h"
+#include "p_derp.h"
+#include "p_nav.h"
+#include "p_encounter.h"
+#include "p_senses.h"
+#include "p_brain.h"
+#include "p_tactics.h"
+#include "p_director.h"
+#include "p_derplog.h"
 #include "p_library.h"
 
 #include "s_sound.h"
@@ -766,23 +775,33 @@ void P_GroupLines (void)
 	
     // build line tables for each sector	
     linebuffer = Z_Malloc (total*sizeof(*linebuffer), PU_LEVEL, 0);
+    // Each sector its slice of the buffer by its count, then every line handed to its
+    // sectors in one pass, in map order: the order the old test of every line against
+    // every sector gave (sectors x lines: 585,000 tests on MAP14, far more on big maps).
+    sector = sectors;
+    for (i=0 ; i<numsectors ; i++, sector++)
+    {
+	sector->lines = linebuffer;
+	linebuffer += sector->linecount;
+	sector->linecount = 0;
+    }
+    li = lines;
+    for (i=0 ; i<numlines ; i++, li++)
+    {
+	li->frontsector->lines[li->frontsector->linecount++] = li;
+	if (li->backsector && li->backsector != li->frontsector)
+	    li->backsector->lines[li->backsector->linecount++] = li;
+    }
     sector = sectors;
     for (i=0 ; i<numsectors ; i++, sector++)
     {
 	M_ClearBox (bbox);
-	sector->lines = linebuffer;
-	li = lines;
-	for (j=0 ; j<numlines ; j++, li++)
+	for (j=0 ; j<sector->linecount ; j++)
 	{
-	    if (li->frontsector == sector || li->backsector == sector)
-	    {
-		*linebuffer++ = li;
-		M_AddToBox (bbox, li->v1->x, li->v1->y);
-		M_AddToBox (bbox, li->v2->x, li->v2->y);
-	    }
+	    li = sector->lines[j];
+	    M_AddToBox (bbox, li->v1->x, li->v1->y);
+	    M_AddToBox (bbox, li->v2->x, li->v2->y);
 	}
-	if (linebuffer - sector->lines != sector->linecount)
-	    I_Error ("P_GroupLines: miscounted");
 			
 	// set the degenmobj_t to the middle of the bounding box
 	sector->soundorg.x = (bbox[BOXRIGHT]+bbox[BOXLEFT])/2;
@@ -824,6 +843,7 @@ P_SetupLevel
     int		lumpnum;
 	
     ++r_levelserial;
+    P_ClearBullets ();
     totalkills = totalitems = totalsecret = wminfo.maxfrags = 0;
     wminfo.partime = 180;
     for (i=0 ; i<MAXPLAYERS ; i++)
@@ -914,6 +934,8 @@ P_SetupLevel
 
     bodyqueslot = 0;
     deathmatch_p = deathmatchstarts;
+    // Whether DERP's monsters play here, before the things spawn with their health.
+    P_DerpLevel ();
     P_LoadThings (lumpnum+ML_THINGS);
     
     // if deathmatch, randomly spawn the active players
@@ -935,6 +957,15 @@ P_SetupLevel
     P_SpawnSpecials ();
     P_AirLevel ();
     P_LibraryLevel ();
+    // Where DERP's monsters can go: built with the level's things in place.
+    P_NavLevel ();
+    P_EncounterLevel ();
+    // What they hear through: the openings (after the navigation, its grid).
+    P_SensesLevel ();
+    P_TacticsLevel ();
+    P_DirectorLevel ();
+    P_BrainLevel ();
+    P_DerpLogLevel ();
 	
     // build subsector connect matrix
     //	UNUSED P_ConnectSubsectors ();

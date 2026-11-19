@@ -27,6 +27,7 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "doomdef.h" 
 #include "doomstat.h"
@@ -73,6 +74,8 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 
 #include "g_game.h"
+#include "p_nav.h"
+#include "p_focus.h"
 #include "d_deh.h"
 
 
@@ -131,7 +134,8 @@ int             totalkills, totalitems, totalsecret;    // for intermission
  
 char            demoname[32]; 
 boolean         demorecording; 
-boolean         demoplayback; 
+boolean         demoplayback;
+boolean         demostarting; 
 boolean		netdemo; 
 byte*		demobuffer;
 byte*		demo_p;
@@ -196,6 +200,9 @@ static boolean G_MouseHeld (int key)
 
 // DERP: the next (1) or previous (-1) weapon key pressed since the last ticcmd.
 static int	weaponstep;
+// DERP: weapon slot + 1 whose key went down since the last ticcmd. A wheel
+// notch is down and up within one frame, so holding alone never sees it.
+static int	weaponslot;
 
 // mouse values are used once 
 int             mousex;
@@ -240,22 +247,25 @@ int G_CmdChecksum (ticcmd_t* cmd)
 } 
  
 
-// DERP: whether the key for weapon slot i (0: fist, 7: chainsaw) is held.
-static boolean G_WeaponHeld (int i)
+// DERP: whether the key for weapon slot i (0: fist, 7: chainsaw) is held
+// (key < 0) or is key.
+#define SLOT(a)	(key < 0 ? HELD(a) : BOUND(key, a))
+static boolean G_WeaponKey (int i, int key)
 {
     switch (i)
     {
-      case 0: return HELD(weapon1);
-      case 1: return HELD(weapon2);
-      case 2: return HELD(weapon3);
-      case 3: return HELD(weapon4);
-      case 4: return HELD(weapon5);
-      case 5: return HELD(weapon6);
-      case 6: return HELD(weapon7);
-      case 7: return HELD(weapon8);
+      case 0: return SLOT(weapon1);
+      case 1: return SLOT(weapon2);
+      case 2: return SLOT(weapon3);
+      case 3: return SLOT(weapon4);
+      case 4: return SLOT(weapon5);
+      case 5: return SLOT(weapon6);
+      case 6: return SLOT(weapon7);
+      case 7: return SLOT(weapon8);
     }
     return false;
 }
+#undef SLOT
 
 // DERP: the weapon the next (step 1) or previous (-1) weapon key picks: the
 // next along DOOM's slots that the player has and has ammo for, as the number
@@ -416,6 +426,12 @@ void G_BuildTiccmd (ticcmd_t* cmd)
  
     if (HELD(jump))
 	cmd->buttons |= BT_JUMP;
+    if (HELD(crouch))
+	cmd->buttons2 |= BT2_CROUCH;
+    if (HELD(kick))
+	cmd->buttons2 |= BT2_KICK;
+    if (HELD(shootslide))
+	cmd->buttons2 |= BT2_SHOOTSLIDE;
 
     if (HELD(use) || joybuttons[joybuse] )
     { 
@@ -426,8 +442,8 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 
     // chainsaw overrides 
     for (i=0 ; i<NUMWEAPONS-1 ; i++)        
-	if (G_WeaponHeld (i))
-	{ 
+	if (G_WeaponKey (i, -1) || weaponslot == i+1)
+	{
 	    cmd->buttons |= BT_CHANGE; 
 	    cmd->buttons |= i<<BT_WEAPONSHIFT; 
 	    break; 
@@ -438,8 +454,8 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	if (weapon >= 0)
 	    cmd->buttons |= BT_CHANGE | weapon<<BT_WEAPONSHIFT;
     }
-    weaponstep = 0;
-    
+    weaponstep = weaponslot = 0;
+
     // forward double click (a mouse button bound to Forward)
     if (MOUSEHELD(up) != dclickstate && dclicktime > 1 )
     { 
@@ -622,7 +638,7 @@ void G_DoLoadLevel (void)
     joyxmove = joyymove = 0; 
     mousex = mousey = 0; 
     sendpause = sendsave = paused = false; 
-    weaponstep = 0;
+    weaponstep = weaponslot = 0;
     memset (joyarray, 0, sizeof(joyarray)); 
 } 
  
@@ -701,6 +717,12 @@ boolean G_Responder (event_t* ev)
 	    weaponstep = 1;
 	if (BOUND(ev->data1, prevweapon))
 	    weaponstep = -1;
+	{
+	    int	slot;
+	    for (slot = 0; slot < NUMWEAPONS-1; slot++)
+		if (G_WeaponKey (slot, ev->data1))
+		    weaponslot = slot+1;
+	}
 	if (ev->data1 >= 0 && ev->data1 <NUMKEYS)
 	    gamekeydown[ev->data1] = true; 
 	return true;    // eat key down events 
@@ -934,6 +956,7 @@ void G_PlayerFinishLevel (int player)
     p->fixedcolormap = 0;		// cancel ir gogles 
     p->damagecount = 0;			// no palette changes 
     p->bonuscount = 0; 
+    p->focusasked = 0;			// DERP: a shootslide's slow motion ends with the level
 } 
  
 
@@ -974,6 +997,7 @@ void G_PlayerReborn (int player)
 	 
     for (i=0 ; i<NUMAMMO ; i++) 
 	p->maxammo[i] = maxammo[i]; 
+    P_FocusReborn (p);
 		 
 }
 
@@ -1365,7 +1389,11 @@ void G_DoLoadGame (void)
     
     // skip the description field 
     memset (vcheck,0,sizeof(vcheck)); 
-    snprintf (vcheck, sizeof(vcheck), "native %i-%zu", VERSION, sizeof(void*) * CHAR_BIT); 
+    // ".p": the thirty-first layout of a saved thing (DERP's monsters, their
+    // minds, squads, the demons' ways, their strides and jumps, what they make
+    // of shots, the opening they keep off, p_mobj.h); a save from before reads
+    // as incompatible, not as garbage.
+    snprintf (vcheck, sizeof(vcheck), "native %i-%zu.p", VERSION, sizeof(void*) * CHAR_BIT); 
     if (length < SAVESTRINGSIZE + VERSIONSIZE + 10 ||
         memcmp (save_p, vcheck, strlen(vcheck) + 1))
     {
@@ -1395,11 +1423,16 @@ void G_DoLoadGame (void)
     P_UnArchiveWorld (); 
     P_UnArchiveThinkers (); 
     P_UnArchiveSpecials (); 
+    // DERP's navigation was built for the level as it loaded; the save's
+    // floors and bridges moved since, with no mover left to say so.
+    P_NavSync ();
     P_LibraryBufferEnd (savebuffer + length);
     P_UnArchiveLibrary ();
  
     if (*save_p != 0x1d) 
 	I_Error ("Bad savegame");
+    if (save_p + 1 + sizeof climateseed <= savebuffer + length)
+	memcpy (&climateseed, save_p + 1, sizeof climateseed);
     
     // done 
     Z_Free (savebuffer); 
@@ -1448,7 +1481,7 @@ void G_DoSaveGame (void)
     memcpy (save_p, description, SAVESTRINGSIZE); 
     save_p += SAVESTRINGSIZE; 
     memset (name2, 0, sizeof(name2));
-    snprintf (name2, sizeof(name2), "native %i-%zu", VERSION, sizeof(void*) * CHAR_BIT); 
+    snprintf (name2, sizeof(name2), "native %i-%zu.p", VERSION, sizeof(void*) * CHAR_BIT); 
     memcpy (save_p, name2, VERSIONSIZE); 
     save_p += VERSIONSIZE; 
 	 
@@ -1469,6 +1502,10 @@ void G_DoSaveGame (void)
     P_ArchiveLibrary ();
 	 
     *save_p++ = 0x1d;		// consistancy marker 
+    // After the marker, so a save from before still loads: Random weather's
+    // seed, for the maps to come out as they were.
+    memcpy (save_p, &climateseed, sizeof climateseed);
+    save_p += sizeof climateseed;
 	 
     length = save_p - savebuffer; 
     if ((size_t)length > capacity)
@@ -1550,8 +1587,21 @@ boolean G_StepMap (int step, int* episode, int* map)
     return false;
 }
 
+// F4 Weather's Random: the playthrough's seed for each map's roll
+// (scene3d/climate.cpp). Not the game's random numbers, which would change
+// demos: every new game takes a fresh one from the clock.
+unsigned        climateseed;
+static void G_NewClimateSeed (void)
+{
+    static unsigned games;
+    climateseed = ((unsigned) time (NULL) * 2654435761u) ^ ((unsigned) I_GetTime () * 40503u) ^ (++games * 0x9e3779b9u);
+    if (!climateseed)
+	climateseed = 1;
+}
+
 void G_DoNewGame (void) 
 {
+    G_NewClimateSeed ();
     demoplayback = false; 
     netdemo = false;
     netgame = false;
@@ -1565,6 +1615,7 @@ void G_DoNewGame (void)
     gameaction = ga_nothing; 
 } 
 
+
 // The sky texture to be used instead of the F_SKY1 dummy.
 extern  int	skytexture; 
 
@@ -1577,6 +1628,8 @@ G_InitNew
 { 
     int             i; 
 	 
+    if (!climateseed)
+	G_NewClimateSeed ();
     if (paused) 
     { 
 	paused = false; 
@@ -1833,7 +1886,9 @@ void G_DoPlayDemo (void)
 
     // don't spend a lot of time in loadlevel 
     precache = false;
+    demostarting = true;
     G_InitNew (skill, episode, map); 
+    demostarting = false;
     precache = true; 
 
     usergame = false; 

@@ -3,7 +3,7 @@
 game itself, checked for holes and compared with reference pictures, so
 renderer work can't quietly ruin it.
 
-    py -I scp_7179_b/renders.py --iwad D:/dev/DOOM-gamedata/gog_doom/doom2.wad
+    py -I scp_7179_b/renders.py --iwad path/to/doom2.wad
         [--game "build/play/Release/Play DERP.exe"] [--only across,fall] [--accept [views]]
 
 Each view is rendered twice, hidden (-rendercheck), from the library.wad

@@ -40,6 +40,10 @@ void G_InitNew (skill_t skill, int episode, int map);
 // A normal game starts at map 1,
 // but a warp test can start elsewhere
 void G_DeferedInitNew (skill_t skill, int episode, int map);
+
+// F4 Weather's Random: the playthrough's seed (fresh with each new game,
+// kept in saves) each map's roll mixes with the map (scene3d/climate.cpp).
+extern unsigned climateseed;
 // Steps to the next (step 1) or previous (-1) map present in the WADs.
 boolean G_StepMap (int step, int* episode, int* map);
 

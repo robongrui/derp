@@ -29,6 +29,7 @@ rcsid[] = "$Id: p_doors.c,v 1.4 1997/02/03 16:47:53 b1 Exp $";
 #include "doomdef.h"
 #include "p_local.h"
 #include "p_phobos.h"
+#include "p_senses.h"
 
 #include "s_sound.h"
 
@@ -466,6 +467,9 @@ EV_VerticalDoor
 	}
     }
 	
+    // Heard by DERP's monsters (p_senses.h).
+    P_DerpNoise (thing, NOISE_DOOR, line->v1->x/2 + line->v2->x/2, line->v1->y/2 + line->v2->y/2);
+
     // for proper sound
     switch(line->special)
     {

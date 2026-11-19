@@ -42,6 +42,21 @@ bool tileDark(const SurfaceLightKey &key) {
     return hashUnit(tic/2,0,seed)>=0.6f*(1-age/sputterSeconds);
 }
 bool tileShotOut(const SurfaceLightKey &key) {return brokenTiles.count(key)>0;}
+// Every tile shot out goes through markBroken: the glowing tiles collected
+// last frame stand (surface_light_keep.cpp) while the serial holds and the
+// newest has stopped sputtering.
+static unsigned brokenSerial=0;
+static float newestBroken=0;
+static void markBroken(const SurfaceLightKey &key,const BrokenTile &tile) {
+    brokenTiles[key]=tile;++brokenSerial;
+    if(brokenTiles.size()==1||tile.born>newestBroken)newestBroken=tile.born;
+}
+unsigned brokenTileSerial() {return brokenSerial;}
+bool brokenTilesSteady() {
+    if(brokenTiles.empty())return true;
+    float age=gameSeconds()-newestBroken;
+    return age>=sputterSeconds;
+}
 // The texture row offset a wall section is drawn from, as wallGeometry sets it.
 static float wallAnchor(const line_t &line,int side,int section) {
     const side_t &s=sides[line.sidenum[side]];
@@ -50,6 +65,64 @@ static float wallAnchor(const line_t &line,int side,int section) {
     if(section==0)return ((s.midtexture&&(line.flags&ML_DONTPEGBOTTOM))?floor+units(textureheight[s.midtexture]):ceil)+row;
     if(section==1)return ((line.flags&ML_DONTPEGTOP)?ceil:ceilZ(back)+(s.toptexture?units(textureheight[s.toptexture]):0))+row;
     return ((line.flags&ML_DONTPEGBOTTOM)?ceil:floorZ(back))+row;
+}
+// How much a wall's texture glows at a point of it (along from its start, z), 0-255; a floor's or ceiling's
+// flat at (x, y). For blood on a lamp letting the light through (blood_layer.cpp).
+byte wallEmissionAt(int lineIndex,int side,int section,float along,float z) {
+    if(lineIndex<0||lineIndex>=numlines)return 0;
+    const line_t &line=lines[lineIndex];
+    if(line.sidenum[side]<0)return 0;
+    const side_t &s=sides[line.sidenum[side]];
+    int texture=section==0?s.midtexture:section==1?s.toptexture:s.bottomtexture;
+    if(texture<=0)return 0;
+    const Image &image=wallImage(texturetranslation[texture]);
+    if(image.emission.empty()||image.width<=0||image.height<=0)return 0;
+    int u=(int)std::floor(units(s.textureoffset)+along),v=(int)std::floor(wallAnchor(line,side,section)-z);
+    int w=image.width,h=image.height;
+    return image.emission[(size_t)((v%h+h)%h)*w+((u%w+w)%w)];
+}
+byte flatEmissionAt(int sector,bool ceiling,float x,float y) {
+    if(sector<0||sector>=numsectors)return 0;
+    int pic=ceiling?sectors[sector].ceilingpic:sectors[sector].floorpic;
+    if(pic==skyflatnum)return 0;
+    const Image &image=lumpImage(firstflat+flattranslation[pic],true);
+    if(image.emission.empty()||image.width<=0||image.height<=0)return 0;
+    int u=(int)std::floor(x),v=(int)std::floor(-y),w=image.width,h=image.height;
+    return image.emission[(size_t)((v%h+h)%h)*w+((u%w+w)%w)];
+}
+// Whether a point of a wall (as wallEmissionAt's) or a flat lies on a lamp shot out, for good: blood on it lets
+// no light through any more (blood_layer.cpp). lampsShotCount changes whenever a lamp goes (or comes back).
+static std::vector<std::array<float,4>> darkWallParts(int index,int side,int span,const Image &image,float len,float bottom,float top,
+                                                      float u,float anchor,bool (*dark)(const SurfaceLightKey&));
+static std::set<std::pair<int,int>> darkFlatRepeats(int sector,bool ceiling,bool (*dark)(const SurfaceLightKey&));
+static SurfaceLightKey wholePlane(int sector,bool ceiling);
+size_t lampsShotCount() {return brokenTiles.size();}
+bool wallShotOutAt(int lineIndex,int side,int section,float along,float z) {
+    if(brokenPieces.empty()||!brokenPieces.count({0,lineIndex*2+side,section}))return false;
+    if(tileShotOut(wholePiece(lineIndex,side,section)))return true;
+    const line_t &line=lines[lineIndex];WallSpan span;
+    if(!wallSpan(line,side,section,span)||span.texture<=0)return false;
+    const Image &image=wallImage(texturetranslation[span.texture]);
+    if(image.width<=0||image.height<=0)return false;
+    float len=std::hypot(span.b.x-span.a.x,span.b.y-span.a.y);
+    for(const auto &r:darkWallParts(lineIndex,side,section,image,len,span.bottom,span.top,units(sides[line.sidenum[side]].textureoffset),
+                                    wallAnchor(line,side,section),tileShotOut))
+        if(along>=r[0]&&along<r[1]&&z>=r[2]&&z<r[3])return true;
+    return false;
+}
+bool flatShotOutAt(int sector,bool ceiling,float x,float y) {
+    if(brokenPieces.empty()||!brokenPieces.count({1,sector,(int)ceiling}))return false;
+    if(tileShotOut(wholePlane(sector,ceiling)))return true;
+    int pic=ceiling?sectors[sector].ceilingpic:sectors[sector].floorpic;
+    const Image &image=lumpImage(firstflat+flattranslation[pic],true);
+    if(image.width<=0||image.height<=0)return false;
+    // (Asked texel by texel as a blood tile is drawn: the repeats kept until a lamp goes.)
+    static std::map<std::pair<int,int>,std::set<std::pair<int,int>>> known;static size_t knownAt=(size_t)-1;
+    if(knownAt!=brokenTiles.size()) {known.clear();knownAt=brokenTiles.size();}
+    auto found=known.find({sector,(int)ceiling});
+    if(found==known.end())found=known.emplace(std::make_pair(sector,(int)ceiling),darkFlatRepeats(sector,ceiling,tileShotOut)).first;
+    const auto &repeats=found->second;
+    return repeats.count({(int)std::floor(x/image.width),(int)std::floor(-y/image.height)})>0;
 }
 // Whether the shot found the glow: a glowing texel within reach of (u, v)
 // (bullets land a pixel or so off, and a thin tube should still break;
@@ -109,7 +182,7 @@ static void darkenLampless(const std::set<std::pair<int,int>> &planes,float now,
     for(const auto &entry:brokenTiles)if(entry.first[0]==0&&entry.first[5]==0)lit.insert({entry.first[1],entry.first[2]});
     for(const auto &[sector,ceiling]:planes)for(int joined:joinedPlanes(sector,ceiling)) {
         if(lit.count({joined,ceiling})||brokenTiles.count(wholePlane(joined,ceiling)))continue;
-        brokenTiles[wholePlane(joined,ceiling)]={now,x,y,z};
+        markBroken(wholePlane(joined,ceiling),{now,x,y,z});
         brokenPieces.insert({1,joined,ceiling});
     }
 }
@@ -140,6 +213,18 @@ static std::vector<const SurfaceLight*> fixtureTiles(const SurfaceLight &hit) {
     if(tiles.empty())tiles.push_back(&hit);
     return tiles;
 }
+void fixtureOf(const SurfaceLight &tile,std::vector<SurfaceLightKey> &tiles,std::vector<SurfaceLightKey> &cells,float middle[3]) {
+    tiles.clear();cells.clear();
+    double sum[3]={};
+    const std::vector<const SurfaceLight*> all=fixtureTiles(tile);
+    for(const SurfaceLight *t:all) {
+        tiles.push_back(t->key);
+        SurfaceLightKey cell=surfaceCellOf(*t);
+        if(std::find(cells.begin(),cells.end(),cell)==cells.end())cells.push_back(cell);
+        sum[0]+=t->x;sum[1]+=t->y;sum[2]+=t->z;
+    }
+    for(int c=0;c<3;++c)middle[c]=all.empty()?0.0f:(float)(sum[c]/all.size());
+}
 // Breaks the fixture a tile belongs to, with the lampless planes joined to
 // its floors and ceilings; the merged lights it was part of re-bake from
 // the tiles left.
@@ -148,7 +233,7 @@ static void breakFixture(const SurfaceLight &hit) {
     std::set<std::pair<int,int>> planes;
     std::set<SurfaceLightKey> cells;
     for(const SurfaceLight *tile:fixtureTiles(hit)) {
-        brokenTiles[tile->key]={now,tile->x,tile->y,tile->z};
+        markBroken(tile->key,{now,tile->x,tile->y,tile->z});
         brokenPieces.insert(pieceOf(tile->key));
         if(tile->key[0]==0)planes.insert({tile->key[1],tile->key[2]});
         cells.insert(surfaceCellOf(*tile));
@@ -264,7 +349,7 @@ void shotWall(const line_t &line,int side,int section,float along,float x,float 
                 [&](const SurfaceLightKey &k){return k[0]==1&&k[1]==index&&k[2]==side&&k[5]==section;},[&] {
         SurfaceLightKey whole=wholePiece(index,side,section);
         if(brokenTiles.count(whole))return false;
-        brokenTiles[whole]={gameSeconds(),x,y,z};brokenPieces.insert(pieceOf(whole));
+        markBroken(whole,{gameSeconds(),x,y,z});brokenPieces.insert(pieceOf(whole));
         return true;
     },x,y,z,normal,reach);
 }
@@ -402,7 +487,7 @@ void blastLights(float x,float y,float z,float radius) {
             auto ours=[&](const SurfaceLightKey &k){return k[0]==1&&k[1]==i&&k[2]==side&&k[5]==section;};
             if(brokenTiles.count(whole)||std::any_of(surfaceLights.begin(),surfaceLights.end(),[&](const SurfaceLight &l){return ours(l.key);})||
                std::any_of(brokenTiles.begin(),brokenTiles.end(),[&](const auto &e){return ours(e.first);}))continue;
-            brokenTiles[whole]={now,px,py,pz};brokenPieces.insert(pieceOf(whole));
+            markBroken(whole,{now,px,py,pz});brokenPieces.insert(pieceOf(whole));
         }
     }
 }
@@ -418,7 +503,7 @@ static std::unordered_map<const mobj_t*,Flight> flights;
 static void projectileBurst(const mobj_t &thing,const Flight &flight) {
     float x=units(thing.x),y=units(thing.y),z=units(thing.z)+units(thing.height)/2;
     game_thing_role role=Game_ThingRole(thing.type);
-    if(role==GAME_THING_ROCKET||role==GAME_THING_BIG_SHOT)blastLights(x,y,z,128);
+    if((role==GAME_THING_ROCKET||role==GAME_THING_BIG_SHOT)&&!(role==GAME_THING_ROCKET&&explosionFront(x,y,z,128,false,true)))blastLights(x,y,z,128);
     int reach=std::max(1,(int)std::lround(units(thing.radius)*0.5f));
     int sector=int(thing.subsector->sector-sectors);
     if(thing.z<=thing.floorz+FRACUNIT) {if(sectors[sector].floorpic!=skyflatnum)shotFlat(sector,false,x,y,units(thing.floorz),reach);return;}
@@ -459,6 +544,25 @@ void watchShotLights() {
 // MODE_DEAD_GLOW. A flickering sector's lamps go dark whole while they are
 // out (lampOut), marked MODE_LAMP_OFF too: switched off, not shot, so a
 // screen among them keeps its glass whole; its shot-out tiles stay broken.
+// The parts of a wall piece gone dark with its tiles (along0, along1, z0, z1): each dark tile covers the
+// texture repeats its sample stands for, the outer ones reaching the piece's ends. dark: whether a tile
+// counts (tileDark while it sputters, tileShotOut for good).
+static std::vector<std::array<float,4>> darkWallParts(int index,int side,int span,const Image &image,float len,float bottom,float top,
+                                                      float u,float anchor,bool (*dark)(const SurfaceLightKey&)) {
+    float w=(float)image.width,h=(float)image.height;
+    const GlowTiles tiles=glowTiles(image,u,len,anchor,bottom,top);
+    int firstU=tiles.firstU,lastU=tiles.lastU,firstV=tiles.firstV,lastV=tiles.lastV;
+    int stepU=std::max(1,64/image.width),stepV=std::max(1,64/image.height);
+    std::vector<std::array<float,4>> parts;
+    for(int tileU=firstU;tileU<=lastU;tileU+=stepU)for(int tileV=firstV;tileV<=lastV;tileV+=stepV) {
+        if(!dark({1,index,side,tileU,tileV,span}))continue;
+        float a0=tileU==firstU?0:tileU*w-u,a1=tileU+stepU>lastU?len:(tileU+stepU)*w-u;
+        float z1=tileV==firstV?top:anchor-tileV*h,z0=tileV+stepV>lastV?bottom:anchor-(tileV+stepV)*h;
+        a0=std::max(a0,0.0f);a1=std::min(a1,len);z0=std::max(z0,bottom);z1=std::min(z1,top);
+        if(a1>a0&&z1>z0)parts.push_back({a0,a1,z0,z1});
+    }
+    return parts;
+}
 bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span,const Image &image,Point a,Point b,
                    float bottom,float top,float u,float anchor,float light,unsigned mode,unsigned seed) {
     int index=(int)(&line-lines);
@@ -480,17 +584,7 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
         quad(out,vertex(0,top,m),vertex(len,top,m),vertex(len,bottom,m),vertex(0,bottom,m));
         return true;
     }
-    int firstU=(int)std::ceil((u-image.emissionU)/w),lastU=(int)std::floor((u+len-image.emissionU)/w);
-    int firstV=(int)std::ceil((anchor-top-image.emissionV)/h),lastV=(int)std::floor((anchor-bottom-image.emissionV)/h);
-    int stepU=std::max(1,64/image.width),stepV=std::max(1,64/image.height);
-    std::vector<std::array<float,4>> dark; // along0, along1, z0, z1
-    for(int tileU=firstU;tileU<=lastU;tileU+=stepU)for(int tileV=firstV;tileV<=lastV;tileV+=stepV) {
-        if(!tileDark({1,index,side,tileU,tileV,span}))continue;
-        float a0=tileU==firstU?0:tileU*w-u,a1=tileU+stepU>lastU?len:(tileU+stepU)*w-u;
-        float z1=tileV==firstV?top:anchor-tileV*h,z0=tileV+stepV>lastV?bottom:anchor-(tileV+stepV)*h;
-        a0=std::max(a0,0.0f);a1=std::min(a1,len);z0=std::max(z0,bottom);z1=std::min(z1,top);
-        if(a1>a0&&z1>z0)dark.push_back({a0,a1,z0,z1});
-    }
+    auto dark=darkWallParts(index,side,span,image,len,bottom,top,u,anchor,tileDark);
     if(dark.empty()) {
         if(!off)return false;
         unsigned m=mode|offMode;
@@ -513,6 +607,21 @@ bool addBrokenWall(std::vector<Vertex> &out,const line_t &line,int side,int span
 // repeat, with the partial repeats beside it at the sector's edge that have
 // no tile of their own. A plane with no tiles at all (darkenLampless) goes
 // dark whole.
+// A floor's or ceiling's texture repeats gone dark with its tiles: each dark tile's, with the partial repeats
+// beside it at the sector's edge that have no tile of their own. dark: as darkWallParts.
+static std::set<std::pair<int,int>> darkFlatRepeats(int sector,bool ceiling,bool (*dark)(const SurfaceLightKey&)) {
+    auto ours=[&](const SurfaceLightKey &k){return k[0]==0&&k[1]==sector&&k[2]==(int)ceiling;};
+    std::set<std::pair<int,int>> tiles,gone;
+    for(const auto &tile:surfaceLights)if(ours(tile.key))tiles.insert({tile.key[3],tile.key[4]});
+    for(const auto &entry:brokenTiles)if(ours(entry.first)&&entry.first[5]==0) {
+        tiles.insert({entry.first[3],entry.first[4]});
+        if(dark(entry.first))gone.insert({entry.first[3],entry.first[4]});
+    }
+    std::set<std::pair<int,int>> repeats=gone;
+    for(const auto &[u,v]:gone)for(int dv=-1;dv<=1;++dv)for(int du=-1;du<=1;++du)
+        if(!tiles.count({u+du,v+dv}))repeats.insert({u+du,v+dv});
+    return repeats;
+}
 bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,const Image &image,float z,float light,unsigned mode) {
     if(image.emissionWeight<=0)return false;
     bool off=lampOut(sector,image);
@@ -525,16 +634,7 @@ bool addBrokenFlat(std::vector<Vertex> &out,int leaf,int sector,bool ceiling,con
         return true;
     };
     if(!shot||tileDark(wholePlane(sector,ceiling)))return whole(shot?MODE_DEAD_GLOW:offMode);
-    auto ours=[&](const SurfaceLightKey &k){return k[0]==0&&k[1]==sector&&k[2]==(int)ceiling;};
-    std::set<std::pair<int,int>> tiles,dark;
-    for(const auto &tile:surfaceLights)if(ours(tile.key))tiles.insert({tile.key[3],tile.key[4]});
-    for(const auto &entry:brokenTiles)if(ours(entry.first)&&entry.first[5]==0) {
-        tiles.insert({entry.first[3],entry.first[4]});
-        if(tileDark(entry.first))dark.insert({entry.first[3],entry.first[4]});
-    }
-    std::set<std::pair<int,int>> repeats=dark;
-    for(const auto &[u,v]:dark)for(int dv=-1;dv<=1;++dv)for(int du=-1;du<=1;++du)
-        if(!tiles.count({u+du,v+dv}))repeats.insert({u+du,v+dv});
+    std::set<std::pair<int,int>> repeats=darkFlatRepeats(sector,ceiling,tileDark);
     float w=(float)image.width,h=(float)image.height;
     const auto &bounds=floorBounds[leaf];
     std::vector<std::array<float,4>> squares; // x0, y0, x1, y1
@@ -576,5 +676,5 @@ void dimShotSector(int sector,float share) {
     if(shotDim.size()!=(size_t)numsectors)shotDim.assign(numsectors,1.0f);
     shotDim[sector]=std::max(0.1f,shotDim[sector]*(1-0.85f*std::clamp(share,0.0f,1.0f)));
 }
-void shotLightsShutdown() {brokenTiles.clear();brokenPieces.clear();shotDim.clear();flights.clear();}
+void shotLightsShutdown() {brokenTiles.clear();++brokenSerial;brokenPieces.clear();shotDim.clear();flights.clear();}
 } // namespace doom3d

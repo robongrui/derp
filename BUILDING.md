@@ -238,6 +238,23 @@ For a bounded frame capture, the app accepts `-rendercheck /absolute/output.png`
 to isolate graphics settings. These are development options, independent of
 normal F7 screenshots.
 
+For a hitch during normal play, start the SDL GPU build with
+`-frametrace /absolute/frame-spikes.csv`, play until it happens, then quit
+normally. The game saves the last 65,536 gameplay frames on exit. Each row
+gives the map and game tic, the time between frame submissions, and how much
+elapsed in AI (navigation, senses, decisions and coordination), main-thread
+audio updates, other game work, effects, renderer setup, scene preparation, GPU command
+encoding, frame pacing, swapchain acquisition, and submission. Acquire and
+submit can both include driver waits. The timings do not measure GPU
+execution directly. The capture marks loading, menus, screenshots, unfocused
+frames, and gaps where the renderer missed a presentation.
+
+To compare the same map and settings with DERP's AI disabled, run again with
+`-noderpai -frametrace /absolute/frame-spikes-ai-off.csv`. `-noderpai` overrides
+both Authored mode's AI and `-derpai`, leaving Authored visuals and audio in
+use. Movement and combat tuning share the AI switch, so the runs may play out
+differently. Start both runs from the same level start and repeat the same actions.
+
 There is no built-in GPU profiler; use the platform's GPU tools (Xcode
 Instruments on macOS) for timing. The window title shows frames per second.
 
@@ -272,18 +289,15 @@ the shader's headlamp formula and is checked against numerical integration.
 
 ## Shaders and platforms
 
-Shaders are Vulkan GLSL in `platform/shaders`. `scripts/compile_gpu_shaders.cmake`
-compiles them to SPIR-V for Vulkan and translates that to MSL for Metal with
-SPIRV-Cross; both are committed in `platform/gpu_shaders.h`, so normal builds
-need no shader tools. After a shader change, regenerate it (requires
-`glslangValidator` and `spirv-cross`, e.g. `brew install glslang spirv-cross`):
-
-```sh
-cmake --build build/play --target doom-gpu-shaders
-```
-
-When both tools are installed, the `gpu-shaders-compile` test checks that every
-shader still compiles and translates. SDL_gpu orders Metal buffers differently
+Shaders are Vulkan GLSL in `platform/shaders`. The build compiles them
+(`scripts/gpu_shaders.cmake`, a step per shader and backend through
+`scripts/compile_gpu_shader.cmake`) to SPIR-V for Vulkan, or translates that
+to MSL for Metal with SPIRV-Cross, into byte arrays in `<build>/gpu-shaders`;
+nothing generated is committed. A shader compiles again when its source or a
+file it may include changes, and `cmake --build build/play --target doom-gpu-shaders`
+compiles them alone. A build holds only its platform's backend: Metal on macOS,
+Vulkan elsewhere. `-DDOOM_SHADER_FORMATS="spv;msl"` builds both in, for
+MoltenVK on a Mac (below). SDL_gpu orders Metal buffers differently
 from SPIR-V, so `world.frag` renumbers its storage buffers under `METAL`.
 SDL_gpu cannot sample integer textures, so the light-seam map is uploaded as
 16-bit UNORM and converted back exactly in the shader. Without depth resolves,
@@ -296,8 +310,8 @@ which the renderer scales by whole pixels in the final pass so it stays sharp
 at any render resolution. `-gpudebug` enables SDL_gpu validation and `-gpumsaa 1` forces
 single-sample rendering. The window title names the active driver.
 
-The panel's Performance tab (both off by default, both need baked static
-lights) trades per-frame light work for level-load bakes.
+Two switches on the panel's Lighting and Live light tabs (both need baked
+static lights) trade per-frame light work for level-load bakes.
 `bake_only_lights 1` takes torches, lamps and glowing textures out of the
 dynamic light list. The bake then also records per texel where that light
 comes from and which of 15 flicker groups dominates it, so bump detail,
@@ -309,7 +323,8 @@ at two heights. Things blend that grid instead of tracing rays every frame,
 and their floor shadows fall from that light.
 
 `SDL_GPU_DRIVER=vulkan` runs the Vulkan path on a Mac through MoltenVK
-(`brew install molten-vk vulkan-loader`):
+(`brew install molten-vk vulkan-loader`, and a build configured with
+`-DDOOM_SHADER_FORMATS="spv;msl"`):
 
 ```sh
 SDL_GPU_DRIVER=vulkan SDL_VULKAN_LIBRARY=/opt/homebrew/lib/libvulkan.1.dylib \
@@ -363,6 +378,10 @@ secrets are set (Settings → Secrets and variables → Actions):
 - A C11 compiler: current Apple Clang, Clang, GCC, or Visual Studio 2022 MSVC.
 - Ninja when using the supplied presets. Plain CMake commands use your
   platform's default generator and do not require Ninja.
+- For the 3D renderer (on by default): `glslangValidator`, and `spirv-cross` on
+  macOS. The Vulkan SDK (https://vulkan.lunarg.com) has both on every system;
+  otherwise `apt install glslang-tools spirv-cross` or
+  `brew install glslang spirv-cross`. The shaders compile with the build.
 
 On Windows, use a Visual Studio developer terminal. Apple Silicon builds use
 the host architecture automatically; no Intel emulation is required.
@@ -403,7 +422,7 @@ Targets:
 | `doom-native-smoke` | Optional real-level movement, firing and save/load check |
 | `doom-gpu-smoke` | Optional 3D-renderer gameplay and level-transition check |
 | `doom-perf-smoke` | Optional per-map frame timing and slow-spot report for a WAD |
-| `doom-gpu-shaders` | Regenerates `platform/gpu_shaders.h` from `platform/shaders` |
+| `doom-gpu-shaders` | Compiles `platform/shaders` into `<build>/gpu-shaders` (part of every renderer build) |
 | `doom-headless` | Single-player demo playback without graphics/audio |
 | `doom-portability-tests` | Data-free portability regression checks |
 | `doom-x11` | Optional historical Linux X11/OSS executable |

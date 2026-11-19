@@ -30,6 +30,7 @@ int Game_GlowKind(const char *name, int flat)
 }
 
 /* No machinery and no monitors in Heretic's world. */
+int Game_PaintLamp(const char *name, int flat) { (void)name; (void)flat; return 0; }
 int Game_SparkTexture(const char *name, int flat) { (void)name; (void)flat; return 0; }
 int Game_ScreenTexture(const char *name, int flat) { (void)name; (void)flat; return 0; }
 

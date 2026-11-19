@@ -88,8 +88,15 @@ typedef enum
     BT_WEAPONMASK	= (8+16+32),
     BT_WEAPONSHIFT	= 3,
 
-    // Jump (Phobos only): push off the floor.
+    // Jump: on Phobos a push off the floor, in Authored a low hop (p_moves.c).
     BT_JUMP		= 64,
+
+    // In ticcmd_t.buttons2 (Authored only): crouch, a slide out of a run
+    // (p_moves.c), the kick (p_kick.c), and the shootslide: a slide into slow
+    // motion (p_focus.c).
+    BT2_CROUCH		= 1,
+    BT2_KICK		= 2,
+    BT2_SHOOTSLIDE	= 4,
 
     // Pause the game.
     BTS_PAUSE		= 1,

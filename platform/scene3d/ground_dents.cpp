@@ -45,13 +45,13 @@ void mark(size_t cell) {
 float refill(Weather kind) {
     switch(kind) {
     case WEATHER_SNOW: return 0.02f*fallNow;
-    case WEATHER_ASH: return 0.03f*fallNow;
+    case WEATHER_ASH: case WEATHER_FIRESTORM: return 0.03f*fallNow;
     case WEATHER_SAND: return 0.05f*windAmount()*std::min(1.0f,fallNow*2);
     case WEATHER_RAIN: case WEATHER_NUKAGE: return 0.1f*fallNow;
     default: return 0;
     }
 }
-bool dentable(Weather kind) {return kind==WEATHER_SNOW||kind==WEATHER_ASH||kind==WEATHER_SAND||kind==WEATHER_RAIN||kind==WEATHER_NUKAGE;}
+bool dentable(Weather kind) {return kind==WEATHER_SNOW||kind==WEATHER_ASH||kind==WEATHER_FIRESTORM||kind==WEATHER_SAND||kind==WEATHER_RAIN||kind==WEATHER_NUKAGE;}
 bool ready() {return level==r_levelserial&&flatLightCells.size()>=(size_t)mapWidth*mapHeight*4&&seamCells.size()>=(size_t)mapWidth*mapHeight;}
 // Repaints the marked tiles' outside cells: indoor cells are the floor
 // film's to paint (floor_film.cpp), and painting the bake over them made

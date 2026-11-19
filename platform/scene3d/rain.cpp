@@ -22,23 +22,44 @@ namespace {
 // (buildRainDrops).
 std::array<float,3> dropAlbedo;
 float dropGlow=0;
-std::array<float,3> rainColor(const sector_t &sector,float x,float y,float z) {
-    auto color=weatherColor(sector,x,y,z,dropAlbedo);
-    for(int c=0;c<3;++c)color[c]=std::max(color[c],dropAlbedo[c]*dropGlow);
+// At night rain shows only where a light catches it: how far the hour has gone
+// dark (as sky_layers.cpp's night), and how much of a drop's own light, the
+// level's, goes with it. What the lamps give it stays. Evenly pale over a dark
+// yard the drops were a pattern, as the far sheets were (sky.frag).
+constexpr float nightDrop=0.55f,nightAlpha=0.3f;   // (at 0.8 and 0.6 there was no rain left but at the lamps)
+float rainNight() {return std::clamp((0.9f-levelMood().outdoor)/0.35f,0.0f,1.0f);}
+// They glint by the lamps near them (weather_lamps.cpp); unlit, when given,
+// takes the colour without that, for the far sheet, and lit how lit by them.
+std::array<float,3> rainColor(const sector_t &sector,float x,float y,float z,std::array<float,3> *unlit=nullptr,float *lit=nullptr) {
+    std::array<float,3> plain;
+    auto color=weatherColor(sector,x,y,z,dropAlbedo,true,LampCatch::Glint,true,&plain,lit);
+    // In a sunshower the drops catch the sun: bright against the cloud.
+    // (In the flashlight's beam a drop is lit, night or not: it keeps its light and its body there.)
+    float night=rainNight(),beam=night>0?std::min(1.0f,beamAt(x,y,z)):0;
+    float glow=sunshower()?dropGlow*2.2f:dropGlow,keep=1-nightDrop*night*(1-beam);
+    if(lit)*lit=std::max(*lit,beam);
+    for(int c=0;c<3;++c) {
+        float lamps=std::max(0.0f,color[c]-plain[c]),own=std::max(plain[c],dropAlbedo[c]*glow)*keep;
+        color[c]=std::min(1.0f,own+lamps);
+        if(unlit)(*unlit)[c]=own;
+    }
     return color;
 }
 const sector_t *sectorAt(float x,float y) {return weatherSectorAt(x,y);}
 // A streak of rain whose head is at (x, y, z), moving along (vx, vy, vz):
 // length units of it trail behind the head, drawn in pieces of whole Doom
 // pixels, so a slant shows as a stair the way an old sprite would draw it.
+// Lit by a lamp (lit, 0-1: rainColor) it goes opaque and a third longer by
+// how lit it is: a lit streak by a street lamp is solid light.
 void streak(const Uniforms &camera,float x,float y,float z,float vx,float vy,float vz,float length,int pieces,
-            const std::array<float,3> &color,float alpha) {
+            const std::array<float,3> &color,float alpha,float lit=0) {
     float speed=std::sqrt(vx*vx+vy*vy+vz*vz);
     if(speed<1) return;
+    alpha+=(1-alpha)*lit;length*=1+0.35f*lit;
     float step=length/pieces,dx=vx/speed,dy=vy/speed,dz=vz/speed;
     for(int k=0;k<pieces;++k) {
         float back=step*(k+0.5f);
-        pixelBlock(particleVertices,camera,x-dx*back,y-dy*back,z-dz*back,0.55f,step/0.55f,color,false,&dropAlbedo,true,nullptr,alpha);
+        pixelBlock(particleVertices,camera,x-dx*back,y-dy*back,z-dz*back,0.55f,step/0.55f,color,false,&dropAlbedo,true,nullptr,alpha,1,1,MODE_PARTICLE_DAYLIT);
     }
 }
 // A drop landing at (x, y, z): on a floor two specks jump aside over three
@@ -54,42 +75,59 @@ void splash(const Uniforms &camera,float x,float y,float z,float tics,const sect
         int count=4+2*tic;
         for(int n=0;n<count;++n) {
             float a=(n+hashUnit(n,tic,seed)*0.5f)*2*(float)doomPi/count;
-            pixelBlock(particleVertices,camera,x+std::cos(a)*radius,y+std::sin(a)*radius,z+0.3f,0.5f,1,color,true,nullptr,true,nullptr,0.55f-0.1f*tic);
+            pixelBlock(particleVertices,camera,x+std::cos(a)*radius,y+std::sin(a)*radius,z+0.3f,0.5f,1,color,true,nullptr,true,nullptr,0.55f-0.1f*tic,1,1,MODE_PARTICLE_DAYLIT);
         }
         return;
     }
     if(tic>2) return;
     float angle=hashUnit(5,6,seed)*2*(float)doomPi,out=1.0f+1.2f*tic,up=tic==1?1.5f:0.5f;
     for(int side=-1;side<=1;side+=2)
-        pixelBlock(particleVertices,camera,x+std::cos(angle)*out*side,y+std::sin(angle)*out*side,z+up,0.5f,1,color,true,nullptr,true,nullptr,0.6f);
+        pixelBlock(particleVertices,camera,x+std::cos(angle)*out*side,y+std::sin(angle)*out*side,z+up,0.5f,1,color,true,nullptr,true,nullptr,0.6f,1,1,MODE_PARTICLE_DAYLIT);
 }
+// The drops round the eye as worked out for this tic (buildRainDrops): the
+// clock is the tic's, so where each drop is, and whether it falls or
+// splashes, holds for every frame of the tic. Only what hangs on the view
+// (how far, behind the eye, how faint, the colour in the beam) is left to
+// each frame. Worked out again on a new tic, when the eye has gone more than
+// home units from where they were worked out from, or when anything they
+// hang on changes: the wind, how hard it falls, the shoves, the settings,
+// the level, and the heights as drawn while a sector moves (they blend
+// between tics then).
+struct Drop {
+    int gx,gy;float x0,y0;   // its cell and its place in it, for the view's tests
+    const sector_t *sector;
+    bool falling;            // a streak at x, y, z, else a splash at x, y on floor
+    float x,y,z,speed,alpha,floor,tics;
+    uint32_t own;
+};
+struct DropKey {
+    unsigned level,settings,shoves;int tic;uint32_t seed;
+    float now,fall,windX,windY,blend;
+    bool operator==(const DropKey &o) const {
+        return level==o.level&&settings==o.settings&&shoves==o.shoves&&tic==o.tic&&seed==o.seed&&now==o.now&&fall==o.fall&&
+               windX==o.windX&&windY==o.windY&&blend==o.blend;
+    }
+};
+std::vector<Drop> drops;
+DropKey dropsKey{};
+bool dropsMade=false;
+float dropsHome[2];
+constexpr float dropCell=16,dropReach=640,dropHome=64;
+// Whether any sector's height as drawn blends between tics this frame (sectorHeight).
+bool heightsBlend() {
+    size_t count=std::min(oldHeights.size(),(size_t)numsectors);
+    for(size_t i=0;i<count;++i)
+        if(oldHeights[i][0]!=units(sectors[i].floorheight)||oldHeights[i][1]!=units(sectors[i].ceilingheight))return true;
+    return false;
 }
-
-// The rain around the eye: one drop per 16-unit cell in a share of the
-// cells as heavy as the rain (the same cells first as it thickens, so it
-// grows rather than shuffles), out to 640 units, in sky sectors only, each
-// falling from the sky down its sector's height and splashing. A streak is
-// as long as the drop falls in a tic, so each tic's takes up where the last
-// left off and the fall reads unbroken rather than jumping, and it fades
-// with distance into the far sheet sky.frag draws past the map's sky, which
-// takes on the colour of the farthest drops. Then the broken windows the
-// wind blows it in by.
-void buildRainDrops(const Uniforms &camera,const std::array<float,3> &albedo,float glow) {
-    dropAlbedo=albedo;dropGlow=glow;
-    const uint32_t levelSeed=weatherSeed();
-    constexpr float cell=16,reach=640;
-    float now=std::floor(gameSeconds()*TICRATE)/TICRATE;
+void makeDrops(float ex,float ey,uint32_t levelSeed,float now) {
+    drops.clear();
     float density=0.7f*fallNow;
-    int gx0=(int)std::floor((camera.eye[0]-reach)/cell),gx1=(int)std::floor((camera.eye[0]+reach)/cell);
-    int gy0=(int)std::floor((camera.eye[1]-reach)/cell),gy1=(int)std::floor((camera.eye[1]+reach)/cell);
-    float flat=std::hypot(camera.forward[0],camera.forward[1]);
-    float fx=flat>1e-3f?camera.forward[0]/flat:0,fy=flat>1e-3f?camera.forward[1]/flat:0;
+    int gx0=(int)std::floor((ex-dropReach-dropHome)/dropCell),gx1=(int)std::floor((ex+dropReach+dropHome)/dropCell);
+    int gy0=(int)std::floor((ey-dropReach-dropHome)/dropCell),gy1=(int)std::floor((ey+dropReach+dropHome)/dropCell);
     for(int gy=gy0;gy<=gy1;++gy)for(int gx=gx0;gx<=gx1;++gx) {
         if(hashUnit(gx,gy,levelSeed)>=density) continue;
-        float x0=(gx+hashUnit(gx,gy,levelSeed^1u))*cell,y0=(gy+hashUnit(gx,gy,levelSeed^2u))*cell;
-        float dx=x0-camera.eye[0],dy=y0-camera.eye[1],distance=std::hypot(dx,dy);
-        // Behind the eye only near it, where a glance down still shows them.
-        if(distance>reach||(distance>96&&(dx*fx+dy*fy)<-0.3f*distance&&flat>0.5f)) continue;
+        float x0=(gx+hashUnit(gx,gy,levelSeed^1u))*dropCell,y0=(gy+hashUnit(gx,gy,levelSeed^2u))*dropCell;
         const sector_t *sector=sectorAt(x0,y0);
         if(!sector||!underSky(int(sector-sectors))) continue;
         float floor=floorZ(sector),top=skyFallTop(*sector,208),height=top-floor;
@@ -103,7 +141,7 @@ void buildRainDrops(const Uniforms &camera,const std::array<float,3> &albedo,flo
         // It lands in its cell, coming in on the wind from upwind of it; on
         // the way it may cross other open sky, or pass over a roof, never
         // through a room.
-        float lx=x0+(hashUnit(cycle,1,own)-0.5f)*cell*0.5f,ly=y0+(hashUnit(cycle,2,own)-0.5f)*cell*0.5f;
+        float lx=x0+(hashUnit(cycle,1,own)-0.5f)*dropCell*0.5f,ly=y0+(hashUnit(cycle,2,own)-0.5f)*dropCell*0.5f;
         float early=std::min(age,fall)-fall;
         float x=lx+windNow[0]*early,y=ly+windNow[1]*early;
         const sector_t *landing=sectorAt(lx,ly);
@@ -120,12 +158,52 @@ void buildRainDrops(const Uniforms &camera,const std::array<float,3> &albedo,flo
         if(age<fall) {
             float z=zHere;
             if(z<floor+1) continue;
-            float alpha=(0.32f+0.25f*hashUnit(cycle,3,own))*(1-0.45f*distance/reach);
-            auto color=rainColor(*sector,x,y,z);
-            if(distance>reach*0.5f) farFall.see(color);
-            streak(camera,x,y,z,windNow[0],windNow[1],-speed,speed/TICRATE,distance<320?3:distance<520?2:1,color,alpha*std::min(1.0f,fallNow*2));
+            drops.push_back({gx,gy,x0,y0,sector,true,x,y,z,speed,0.32f+0.25f*hashUnit(cycle,3,own),floor,0,own});
         }
-        else if(distance<384) splash(camera,lx,ly,floor,(age-fall)*TICRATE,*sector,own);
+        else drops.push_back({gx,gy,x0,y0,sector,false,lx,ly,0,speed,0,floor,(age-fall)*TICRATE,own});
+    }
+}
+}
+
+// The rain around the eye: one drop per 16-unit cell in a share of the
+// cells as heavy as the rain (the same cells first as it thickens, so it
+// grows rather than shuffles), out to 640 units, in sky sectors only, each
+// falling from the sky down its sector's height and splashing. A streak is
+// as long as the drop falls in a tic, so each tic's takes up where the last
+// left off and the fall reads unbroken rather than jumping, and it fades
+// with distance into the far sheet sky.frag draws past the map's sky, which
+// takes on the colour of the farthest drops. Then the broken windows the
+// wind blows it in by.
+void buildRainDrops(const Uniforms &camera,const std::array<float,3> &albedo,float glow) {
+    dropAlbedo=albedo;dropGlow=glow;
+    const uint32_t levelSeed=weatherSeed();
+    constexpr float reach=dropReach;
+    float now=std::floor(gameSeconds()*TICRATE)/TICRATE;
+    DropKey key={r_levelserial,settingsSerial,disturbanceSerial(),leveltime,levelSeed,now,fallNow,windNow[0],windNow[1],
+                 heightsBlend()?renderFraction:-1.0f};
+    if(!dropsMade||!(key==dropsKey)||std::abs(camera.eye[0]-dropsHome[0])>dropHome||std::abs(camera.eye[1]-dropsHome[1])>dropHome) {
+        makeDrops(camera.eye[0],camera.eye[1],levelSeed,now);
+        dropsMade=true;dropsKey=key;dropsHome[0]=camera.eye[0];dropsHome[1]=camera.eye[1];
+    }
+    int gx0=(int)std::floor((camera.eye[0]-reach)/dropCell),gx1=(int)std::floor((camera.eye[0]+reach)/dropCell);
+    int gy0=(int)std::floor((camera.eye[1]-reach)/dropCell),gy1=(int)std::floor((camera.eye[1]+reach)/dropCell);
+    float flat=std::hypot(camera.forward[0],camera.forward[1]);
+    float fx=flat>1e-3f?camera.forward[0]/flat:0,fy=flat>1e-3f?camera.forward[1]/flat:0;
+    for(const Drop &d:drops) {
+        if(d.gx<gx0||d.gx>gx1||d.gy<gy0||d.gy>gy1) continue;
+        float dx=d.x0-camera.eye[0],dy=d.y0-camera.eye[1],distance=std::hypot(dx,dy);
+        // Behind the eye only near it, where a glance down still shows them.
+        if(distance>reach||(distance>96&&(dx*fx+dy*fy)<-0.3f*distance&&flat>0.5f)) continue;
+        if(d.falling) {
+            float alpha=d.alpha*(1-0.45f*distance/reach);
+            std::array<float,3> unlit;
+            float lit=0;
+            auto color=rainColor(*d.sector,d.x,d.y,d.z,&unlit,&lit);
+            if(distance>reach*0.5f) farFall.see(unlit);
+            // (Thinner in the dark where no lamp lights it: a dark streak over a lit wall is no rain.)
+            streak(camera,d.x,d.y,d.z,windNow[0],windNow[1],-d.speed,d.speed/TICRATE,distance<320?3:distance<520?2:1,color,alpha*std::min(1.0f,fallNow*2)*(1-nightAlpha*rainNight()),lit);
+        }
+        else if(distance<384) splash(camera,d.x,d.y,d.floor,d.tics,*d.sector,d.own);
     }
     // Until any show on a level, the far sheet takes rain at the outdoors'
     // usual light.
@@ -164,7 +242,9 @@ void buildRainDrops(const Uniforms &camera,const std::array<float,3> &albedo,flo
             if(!at||(at!=&sectors[p.frame]&&at!=&sectors[p.inner>=0?p.inner:p.frame]&&at!=&sectors[p.outer])) continue;
             float floor=floorZ(at);
             if(z>floor+1) {
-                streak(camera,x,y,z,vx,vy,-fall,fall/TICRATE,2,rainColor(*at,x,y,z),0.45f);
+                float lit=0;
+                auto color=rainColor(*at,x,y,z,nullptr,&lit);
+                streak(camera,x,y,z,vx,vy,-fall,fall/TICRATE,2,color,0.45f,lit);
                 continue;
             }
             // Landed: when it reached the floor, then the splash from there.
@@ -184,7 +264,7 @@ void buildRainDrops(const Uniforms &camera,const std::array<float,3> &albedo,flo
         float hang=period-fall-0.15f;
         auto color=rainColor(sector,l.x,l.y,top);
         if(age<hang) {
-            if(age>hang*0.4f)pixelBlock(particleVertices,camera,l.x,l.y,top-0.6f,0.5f,1,color,false,nullptr,true,nullptr,0.6f);
+            if(age>hang*0.4f)pixelBlock(particleVertices,camera,l.x,l.y,top-0.6f,0.5f,1,color,false,nullptr,true,nullptr,0.6f,1,1,MODE_PARTICLE_DAYLIT);
         }
         else if(age<hang+fall) {
             float t=age-hang,z=top-400*t*t;

@@ -7,6 +7,9 @@ extern "C" {
 namespace doom3d {
 std::vector<SurfaceLight> surfaceLights;
 static std::map<SurfaceLightKey,int> surfaceGroups; // Tile key to visibility group (groupSurfaceLights).
+// Changes whenever a cell is grouped anew (keptMergedLights merges again then).
+static unsigned groupSerial=0;
+unsigned surfaceGroupSerial() {return groupSerial;}
 float surfaceEye[3];
 SurfaceLightSelection surfaceSelection;
 uint64_t surfaceLightTime;
@@ -40,6 +43,7 @@ static void groupSurfaceLights(std::vector<SurfaceLight> &tiles) {
         else {tile.group=0;stale.insert(surfaceCell(tile));}
     }
     if(stale.empty())return;
+    ++groupSerial;
     std::map<SurfaceLightKey,std::vector<SurfaceLight*>> cells;
     for(auto &tile:tiles) {
         SurfaceLight plain=tile;plain.group=0;
@@ -119,10 +123,16 @@ std::vector<SurfaceLight> mergedSurfaceLights(std::vector<SurfaceLight> tiles) {
 // count at their peak (their light thinker's maxlight), read once per level
 // with the low they drop to, so a save loaded mid-flicker lights like a
 // fresh start.
-struct LampRange { int low,peak; bool flickers,smooth,lamps; };
+struct LampRange { int low,peak; bool flickers,smooth,lamps;
+                   int lit=0;         // the level its lamps shine by: the peak, or where a switch left it (lampLevelsFollow)
+                   bool late=false; };// a swing begun after the level started
 static std::vector<LampRange> lampRanges;
+// Changes whenever a lamp's lit level does (readLampRanges, lampLevelsFollow):
+// the tiles' strengths follow it (surface_light_keep.cpp).
+static unsigned litSerial=0;
+unsigned lampLevelSerial() {return litSerial;}
 // A glowing texture other than a screen: a lamp the sector's swing is for.
-static bool isLamp(const Image &image) {return image.emissionWeight>0&&image.screens.empty();}
+static bool isLamp(const Image &image) {return image.emissionWeight>0&&image.screens.empty()&&!image.indicator;}
 // Whether a flickering sector shows a lamp texture: on its floor or
 // ceiling, or on the wall sections of its sides as the map starts.
 static void findLamps() {
@@ -144,6 +154,7 @@ static void findLamps() {
 }
 static void readLampRanges() {
     if(lampRanges.size()==(size_t)numsectors)return;
+    ++litSerial;
     lampRanges.resize(numsectors);
     for(int i=0;i<numsectors;++i)lampRanges[i]={sectors[i].lightlevel,sectors[i].lightlevel,false,false,false};
     Game_LightSwings([](int sector,int low,int high,int smooth,void*) {
@@ -151,13 +162,45 @@ static void readLampRanges() {
         LampRange &range=lampRanges[sector];
         range={low,std::max(range.peak,high),true,smooth!=0,false};
     },nullptr);
+    for(LampRange &range:lampRanges)range.lit=range.peak;
     findLamps();
 }
 static float lampLevel(int sector) {
     readLampRanges();
     if(sector<0||sector>=numsectors)return 1;
-    float f=std::clamp((lampRanges[sector].peak-96)/112.0f,0.0f,1.0f);
+    // F4 "Light by logic" (a test): a lamp shines by what it is, not by the level its mapper gave
+    // the room, every one in full; only a switch or a trap that took the light since still dims it.
+    if(lightByLogic()) {
+        float left=std::clamp(lampRanges[sector].lit/(float)std::max(1,lampRanges[sector].peak),0.0f,1.0f);
+        return left*left;
+    }
+    float f=std::clamp((lampRanges[sector].lit-96)/112.0f,0.0f,1.0f);
     return f*f;
+}
+// Whole-level lighting: a light switch, or a trap that takes the light, is the
+// lamps going off. The lamps of a sector that does not swing shine by its
+// level as it stands, by the rule that set them at the level's start
+// (lampLevel). True when any sector's changed; the re-bake follows
+// (relight.cpp). A swing begun since (a line that starts a strobe) is no
+// switch and is left alone.
+bool lampLevelsFollow() {
+    readLampRanges();
+    if(settings.lightModel!=1)return false;
+    bool changed=false,looked=false;
+    for(int i=0;i<numsectors;++i) {
+        LampRange &range=lampRanges[i];
+        if(range.flickers||range.late||range.lit==sectors[i].lightlevel)continue;
+        if(!looked) {
+            looked=true;
+            Game_LightSwings([](int sector,int,int,int,void*) {
+                if(sector>=0&&sector<numsectors&&!lampRanges[sector].flickers)lampRanges[sector].late=true;
+            },nullptr);
+            if(range.late)continue;
+        }
+        range.lit=sectors[i].lightlevel;changed=true;
+    }
+    if(changed)++litSerial;
+    return changed;
 }
 // Lamps in a flickering sector follow it. Blinking and strobing sectors
 // switch them, as a shot-out lamp sputters: out while the sector stands in
@@ -185,6 +228,11 @@ float lampShine(int sector) {
     return now*2<range.low+range.peak?0.0f:1.0f;
 }
 bool lampOut(int sector,const Image &image) {return lampFlickers(sector,image)&&!lampRanges[sector].smooth&&lampShine(sector)<=0;}
+// A sector's steady light level: its own, or the top of its light swing.
+int lampPeakLevel(int sector) {
+    readLampRanges();
+    return sector>=0&&sector<numsectors?lampRanges[sector].peak:255;
+}
 int lampLightLevel(const sector_t *sector) {
     int index=int(sector-sectors);
     if(!lampGroupSector(index))return sector->lightlevel;
@@ -199,11 +247,15 @@ void lampGlow(std::vector<Vertex> &out,size_t first,const sector_t *sector,const
     for(size_t n=first;n<out.size();++n)out[n].lampTint=(out[n].lampTint&0xFFFFFFu)|alpha<<24;
 }
 static void surfaceLight(const SurfaceLightKey &key,int sector,float x,float y,float z,const Image &image,int facing,float radius=224,float extent=0,
-                         float crowd=1) {
+                         float crowd=1,int levelSector=-1) {
     if(!settings.emissive || image.emissionWeight==0 || tileDark(key)) return;
     // Lamps too dim to light stay listed (strength 0), and so do lamps
     // switched off: shots still find them.
-    SurfaceLight light={key,x,y,z,radius,1.65f*image.emissionWeight*lampLevel(sector)*crowd,image.emissionColor,facing,extent};
+    // Whole-level lighting: a strongly coloured lamp shines a little less than a white one of the
+    // same paint. Its colour is kept at full in its brightest channel, which for blue is nearly
+    // all there is of it, and a blue lamp so lit its room as hard as a white one would, in blue alone.
+    float coloured=settings.lightModel==1?0.45f+0.55f*std::sqrt(std::clamp(luminance(image.emissionColor.data()),0.0f,1.0f)):1.0f;
+    SurfaceLight light={key,x,y,z,radius,1.65f*image.emissionWeight*lampLevel(levelSector>=0?levelSector:sector)*crowd*coloured,image.emissionColor,facing,extent};
     if(lampFlickers(sector,image)) {light.flickerSector=sector;light.shine=lampShine(sector);}
     surfaceLights.push_back(light);
 }
@@ -246,7 +298,7 @@ void collectFlatLights() {
         int lump=firstflat+flat,grey=0,glow=8;
         // Phobos: a pool icing over glows from its stilled frame, then its frozen one as the glow dies.
         bool frozen=!ceiling&&frozenLook(i,grey,glow),still=!ceiling&&!frozen&&poolIce(i).ice>0;
-        const Image &image=frozen?frozenFlat(lump,grey,glow):still?stillFlat(lump):lumpImage(lump,true);
+        const Image &image=frozen?frozenFlat(lump,grey,glow):still?stillFlat(lump):litPaint(i,ceiling)?litPaintFlat(lump):lumpImage(lump,true);
         if(image.emissionWeight==0)continue;
         float z=sectorHeight(&sector,ceiling)+(ceiling?-8:8);
         for(const auto &sample:flatSamples(i,lump,image))
@@ -263,8 +315,15 @@ void collectSurfaceLights() {
         // fog-only lights so the glow around torches and pools remains.
         surfaceSelection.clear();
         if(!settings.fog)return;
-        if(settings.emissive)for(const auto &light:mergedSurfaceLights(surfaceLights))
-            staticFog.push_back({light.x,light.y,light.z,light.radius,light.strength,light.color});
+        // As their dynamic copies shine: ahead of their wall only (panelNormal), and dimmed or
+        // out with a flickering or shot-out lamp (shine). As full spheres at full strength
+        // they hazed up the air on both sides of every lamp wall.
+        if(settings.emissive)for(const auto &light:keptMergedLights()) {
+            if(light.strength<=0||light.shine<=0)continue;
+            auto n=panelNormal(light);
+            staticFog.push_back({light.x,light.y,light.z,light.radius,light.strength*light.shine,light.color,
+                                 {std::min(light.extent,light.radius),n[0],n[1],0}});
+        }
         std::vector<std::pair<float,size_t>> scored;
         for(size_t n=0;n<staticFog.size();++n) {
             const StaticFog &f=staticFog[n];
@@ -274,19 +333,20 @@ void collectSurfaceLights() {
         std::sort(scored.begin(),scored.end(),[](const auto &a,const auto &b){return a.first>b.first;});
         for(size_t n=0;n<std::min(size_t(4),scored.size())&&flashes.count<maxLights;++n) {
             const StaticFog &f=staticFog[scored[n].second];
-            appendLight(f.x,f.y,f.z,f.radius,f.strength,f.color,nullptr,0.75f,false);
+            appendLight(f.x,f.y,f.z,f.radius,f.strength,f.color,nullptr,0.75f,false,0,f.spot);
             fogOnly[flashes.count-1]=true;
         }
         return;
     }
     if(!settings.emissive) {surfaceSelection.clear();return;}
     surfaceSelection.capacity=settings.fewerSurfaceLights?8:24;
-    std::vector<SurfaceLight> lit=mergedSurfaceLights(surfaceLights);
+    static std::vector<SurfaceLight> lit;
+    lit=keptMergedLights();
     lit.erase(std::remove_if(lit.begin(),lit.end(),[](const SurfaceLight &l){return l.strength<=0;}),lit.end());
     surfaceSelection.update(lit,surfaceEye,seconds);
     // Surface lights reach a short way, but walls still stop them: the bake
     // subtracts only their flat share, so their gloss would otherwise show on
-    // shiny surfaces through walls. The Performance switch skips the tests.
+    // shiny surfaces through walls. The F4 Lighting switch skips the tests.
     // A flickering lamp's copy dims and goes out with its baked light.
     for(const auto &slot:surfaceSelection.slots) {
         const auto &p=slot.light;
@@ -368,6 +428,59 @@ static float glowCrowding(float x,float y) {
     float crowd=(cell(x0,y0)*(1-tx)+cell(x1,y0)*tx)*(1-ty)+(cell(x0,y1)*(1-tx)+cell(x1,y1)*tx)*ty;
     return crowd>glowCrowdRef?std::sqrt(glowCrowdRef/crowd):1.0f;
 }
+// Each glowing image's glow summed over every rectangle from its top left corner ((width+1) by
+// (height+1), whole numbers, 64-bit so no texture size overflows them): a part's share in four
+// lookups, the same share to the bit. Summing the texels themselves for every piece that shows
+// part of a repeat cost 1.9 ms each time the tiles were collected (E1M7, about a hundred such
+// pieces), and they are collected every frame a lift beside a lamp moves.
+// Kept by image while its glow is the same: the same buffer, size and glow centre and coverage
+// (an image made anew, as F4 Re-brick does, may land where the old one was; its glow's own
+// numbers tell them apart). Dropped with the level's tiles.
+struct GlowSums {
+    const byte *data=nullptr;size_t size=0;std::array<float,3> shape={};
+    std::vector<uint64_t> sums;
+};
+static std::unordered_map<const Image*,GlowSums> glowSums;
+static const std::vector<uint64_t> &glowSumsOf(const Image &image) {
+    GlowSums &kept=glowSums[&image];
+    std::array<float,3> shape={image.emissionU,image.emissionV,image.emissionCoverage};
+    if(kept.data!=image.emission.data()||kept.size!=image.emission.size()||kept.shape!=shape||
+       kept.sums.size()!=(size_t)(image.width+1)*(image.height+1)) {
+        int w=image.width,h=image.height;
+        kept.data=image.emission.data();kept.size=image.emission.size();kept.shape=shape;
+        kept.sums.assign((size_t)(w+1)*(h+1),0);
+        for(int y=0;y<h;++y) {
+            uint64_t row=0;
+            for(int x=0;x<w;++x) {
+                row+=image.emission[(size_t)y*w+x];
+                kept.sums[(size_t)(y+1)*(w+1)+x+1]=kept.sums[(size_t)y*(w+1)+x+1]+row;
+            }
+        }
+    }
+    return kept.sums;
+}
+GlowTiles glowTiles(const Image &image,float u,float len,float anchor,float bottom,float top) {
+    float w=(float)image.width,h=(float)image.height;
+    GlowTiles t;
+    t.firstU=(int)std::ceil((u-image.emissionU)/w);t.lastU=(int)std::floor((u+len-image.emissionU)/w);
+    t.firstV=(int)std::ceil((anchor-top-image.emissionV)/h);t.lastV=(int)std::floor((anchor-bottom-image.emissionV)/h);
+    t.share=1;t.missU=t.firstU>t.lastU;t.missV=t.firstV>t.lastV;
+    if(!t.missU&&!t.missV)return t;
+    if(image.emission.size()!=(size_t)image.width*image.height)return t;
+    if(t.missU)t.firstU=t.lastU=(int)std::lround((u+len*0.5f-image.emissionU)/w);
+    if(t.missV)t.firstV=t.lastV=(int)std::lround((anchor-(top+bottom)*0.5f-image.emissionV)/h);
+    // The part of that repeat on the piece, in its texels.
+    int x0=0,x1=image.width,y0=0,y1=image.height;
+    if(t.missU) {x0=std::clamp((int)std::floor(u-t.firstU*w),0,image.width);x1=std::clamp((int)std::ceil(u+len-t.firstU*w),0,image.width);}
+    if(t.missV) {y0=std::clamp((int)std::floor(anchor-top-t.firstV*h),0,image.height);y1=std::clamp((int)std::ceil(anchor-bottom-t.firstV*h),0,image.height);}
+    x1=std::max(x1,x0);y1=std::max(y1,y0);
+    const std::vector<uint64_t> &sums=glowSumsOf(image);
+    auto at=[&](int x,int y){return (double)sums[(size_t)y*(image.width+1)+x];};
+    double all=at(image.width,image.height),shown=at(x1,y1)-at(x0,y1)-at(x1,y0)+at(x0,y0);
+    t.share=all>0?(float)(shown/all):0;
+    if(t.share<0.05f) {t.firstU=t.firstV=1;t.lastU=t.lastV=0;}
+    return t;
+}
 void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float top,int tex,float anchor,int span) {
     if(!settings.emissive||tex<=0||top<=bottom)return;
     int grey=0;float glow=1;
@@ -377,24 +490,33 @@ void wallLights(const line_t &line,int side,Point a,Point b,float bottom,float t
     if(image.emissionWeight<=0||len<=0)return;
     float nx=(b.y-a.y)/len,ny=-(b.x-a.x)/len;
     int facing=2+((int)std::lround(std::atan2(ny,nx)/(float)(M_PI/4))+8)%8;
-    int firstU=(int)std::ceil((u-image.emissionU)/image.width);
-    int lastU=(int)std::floor((u+len-image.emissionU)/image.width);
-    int firstV=(int)std::ceil((anchor-top-image.emissionV)/image.height);
-    int lastV=(int)std::floor((anchor-bottom-image.emissionV)/image.height);
+    // A piece that shows a glow without its centre is lit from its own middle, by the share it shows
+    // (glowTiles): the end of a light grid under a low ceiling glowed and blinked and lit nothing.
+    const GlowTiles tiles=glowTiles(image,u,len,anchor,bottom,top);
     int stepV=std::max(1,64/image.height);
-    for(int tileU=firstU;tileU<=lastU;tileU+=std::max(1,64/image.width)) {
-        float along=image.emissionU+tileU*image.width-u,t=along/len;
-        for(int tileV=firstV;tileV<=lastV;tileV+=stepV) {
+    // A fixture on a step or a lowered block (an upper or lower piece) is that block's: it
+    // shines by the brighter of the two sectors. MAP03's strip-lit pillar stands in a room
+    // at 112 and is itself at 144; by the room's level alone it glowed and lit nothing.
+    int own=int(sides[line.sidenum[side]].sector-sectors),levelSector=own;
+    if(line.backsector&&tex!=sides[line.sidenum[side]].midtexture) {
+        int other=int((sides[line.sidenum[side]].sector==line.frontsector?line.backsector:line.frontsector)-sectors);
+        if(lampLevel(other)>lampLevel(own))levelSector=other;
+    }
+    for(int tileU=tiles.firstU;tileU<=tiles.lastU;tileU+=std::max(1,64/image.width)) {
+        float along=tiles.missU?len*0.5f:image.emissionU+tileU*image.width-u,t=along/len;
+        for(int tileV=tiles.firstV;tileV<=tiles.lastV;tileV+=stepV) {
             // Each sample stands for the rows of tiles it skips, within the wall piece.
-            float z=anchor-image.emissionV-tileV*image.height;
+            float z=tiles.missV?(top+bottom)*0.5f:anchor-image.emissionV-tileV*image.height;
             float extent=std::max(0.0f,std::min({image.height*stepV*0.5f,top-z,z-bottom}));
             float x=a.x+(b.x-a.x)*t+nx*DOOM_PANEL_OFFSET,y=a.y+(b.y-a.y)*t+ny*DOOM_PANEL_OFFSET;
-            surfaceLight({1,(int)(&line-lines),side,tileU,tileV,span},int(sides[line.sidenum[side]].sector-sectors),
-                x,y,z,image,facing,224,extent,glowCrowding(x,y));
+            surfaceLight({1,(int)(&line-lines),side,tileU,tileV,span},own,
+                x,y,z,image,facing,224,extent,glowCrowding(x,y)*tiles.share,levelSector);
         }
     }
 }
 void clearSurfaceLights() {
     surfaceLights.clear();surfaceSelection.clear();flatLightSamples.clear();surfaceGroups.clear();lampRanges.clear();surfaceLightTime=0;
+    glowSums.clear();
+    ++groupSerial;++litSerial;forgetKeptSurfaceLights();
 }
 } // namespace doom3d

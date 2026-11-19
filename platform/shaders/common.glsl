@@ -22,7 +22,9 @@ struct LightBlocker { vec4 line,opening; };
 // glass.frag) and of the haze sand and ash raise over the sky, w 1 when fallColor.w holds
 // the dry ice top outside.
 // phobos: x 1 when there is no air outside (sky.frag draws space), y how plainly its stars
-// show, z how far frost has crept over the helmet's visor (present.frag), w unused.
+// show, z how far frost has crept over the helmet's visor (present.frag), w how many times
+// the level's light daylight is drawn at (2 with eye adaptation in whole-level lighting, which
+// exposes for it and bends the picture over toneCurve; scene3d/exposure.cpp's daylightScale).
 // bank: the fog bank (WEATHER_FOG, WEATHER_DRY_ICE; scene3d/fog.cpp, fog_bank.glsl) where
 // the eye stands: x the bank's top there, y how much of it there is (0-1), z the light
 // there, w the bank's density (0: none). bankColor: rgb the fog's colour as lit outdoors,
@@ -34,6 +36,16 @@ struct LightBlocker { vec4 line,opening; };
 // sky light level (0: off), sun yaw, sun disc strength (0: off); texFilter:
 // sharp bilinear edge softness in texels, palette mipmaps (0: off);
 // flicker: the current light of the baked flicker groups, group 0 steady.
+// shadowSkip: the redraw of what lies in a light's shadow volumes (gpu3d/frame.cpp's
+// drawShadowVolumes). x: the dynamic light left out, as its index plus one (0: none). y: 2 or
+// 3 or 4: the surface writes no colour but what is left of its light without the baked
+// light's directed part (2; 4: a third of that, a glowing pool's wide light) or without the
+// sun (3), over what it has with it, and the pass multiplies the picture by that.
+// z: 1 while the view is drawn into a float target for HDR (F4 "HDR in the scene",
+// gpu3d/hdr_output.cpp): light past white is kept there, not cut off (toneCurve).
+// w: 1 in the sprites' round of that redraw. To the fragment shader: the sprites that stand in
+// a volume are drawn again (world.frag). To the vertex shader, while the volumes are counted
+// for that round: their near corners step back behind the thing that casts them (world.vert).
 #define WEATHER_RAIN 1.0
 #define WEATHER_SNOW 2.0
 #define WEATHER_NUKAGE 3.0
@@ -41,7 +53,8 @@ struct LightBlocker { vec4 line,opening; };
 #define WEATHER_ASH 5.0
 #define WEATHER_FOG 6.0
 #define WEATHER_DRY_ICE 7.0
-#define CAMERA_BLOCK { vec4 eye,right,forward,up,projection,effects,materials,flashlightTint,fog,map,water,sun,bake,fx,fx2,texFilter,outdoor,haze,mood,weather,phobos,weatherTint,fallColor,settleColor,bank,bankColor,climate,beam,beamAim,beamLight,farFog,farFogRange; vec4 flicker[4]; vec4 clearing[8]; vec4 rush; vec4 eyes; }
+#define WEATHER_FIRESTORM 8.0
+#define CAMERA_BLOCK { vec4 eye,right,forward,up,projection,effects,materials,flashlightTint,fog,map,water,sun,bake,fx,fx2,texFilter,outdoor,haze,mood,weather,phobos,weatherTint,fallColor,settleColor,bank,bankColor,climate,beam,beamAim,beamLight,farFog,farFogRange; vec4 flicker[4]; vec4 clearing[8]; vec4 rush; vec4 eyes; vec4 skyLayers; vec4 skyShape; vec4 skyExtent; vec4 skyWind; vec4 skyCloud; vec4 skyState; vec4 shadowSkip; }
 #define FLASH_BLOCK { uint flashCount,flashReserved0,flashReserved1,flashReserved2; Flash lights[63]; }
 // count, then four light indices, then padding (see doom3d::FogLights).
 #define FOG_BLOCK { uvec4 fogA,fogB; }
@@ -78,6 +91,21 @@ layout(location=9) flat VARYING uint vLampTint;
 layout(location=10) flat VARYING float vLift;
 
 float saturate(float x) {return clamp(x,0.0,1.0);}
+// The exposed picture, where daylight is drawn above the level's light (day: c.phobos.w over 1):
+// plain up to 0.7, then a shoulder up to white, so what is too bright for the eye as it stands
+// (the yard through a door, the sky in a window) burns out softly and keeps its shape.
+// A colour with one channel far past white (a wall under a blue lamp) first pales toward
+// white by a fifth of what it is over, as film does: cut off at white it stood as one flat
+// blue with the artwork gone from it.
+// overWhite (HDR in the scene): what burns out goes on rising past white, half as fast, for
+// the display's headroom (present.frag eases it in); below white the curve is the same.
+vec3 toneCurve(vec3 color,float day,bool overWhite) {
+    if(day<=1.0) return color;
+    float peak=max(color.r,max(color.g,color.b));
+    color=mix(color,vec3(peak),saturate((peak-1.0)*0.2));
+    vec3 curved=min(color,vec3(0.7))+0.3*(1.0-exp(-max(color-0.7,0.0)/0.3));
+    return overWhite?curved+0.5*max(color-1.0,0.0):curved;
+}
 vec3 saturate(vec3 x) {return clamp(x,vec3(0.0),vec3(1.0));}
 // GLSL leaves % undefined for negative operands.
 ivec2 wrapTexel(ivec2 p,ivec2 size) {return p-size*ivec2(floor(vec2(p)/vec2(size)));}

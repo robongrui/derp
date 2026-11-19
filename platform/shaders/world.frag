@@ -3,7 +3,42 @@
 // World and sprite shading; OPAQUE enables early depth for full-coverage
 // textures. Masked walls (bars, fences) are drawn twice: COVERAGE writes
 // depth where they cover, without light, then CUTOUT shades with early depth
-// against it, so only the frontmost layer pays for lighting.
+// against it, so only the frontmost layer pays for lighting. CORE is COVERAGE
+// for the texels that cover wholly, drawn before the opaque world: what lies
+// behind a bar is then not shaded at all (through a grate the world was
+// shaded in full and the grate over it). Their soft edges wait for COVERAGE,
+// after the world and the sky they blend over.
+// Surface classes of the opaque world (PLAN-metal-shader-split.md): PLAIN leaves out what only
+// some textures need (screen glass and LED readouts, stained glass, liquid pools with their
+// ripples, mirrors and ice, blood decals), CLEAR_AIR what only weather and fog banks need
+// (per frame, beside the shapes), QUIET what only lit triangles and shores need, and WALLS or
+// FLATS the other shape's code (in main).
+// The CPU picks the variant per batch (gpu3d/draw.cpp drawOpaque); the full OPAQUE shader takes
+// everything else. A new effect that only some surfaces need goes behind
+// one of these, and its class's test in opaqueVariant.
+#if defined(OPAQUE)&&defined(PLAIN)
+#define HAS_SCREENS false
+#define HAS_LIQUID false
+#define HAS_BLOOD false
+#else
+#define HAS_SCREENS true
+#define HAS_LIQUID true
+#define HAS_BLOOD true
+#endif
+#if defined(OPAQUE)&&defined(CLEAR_AIR)
+#define HAS_AIR false
+#else
+#define HAS_AIR true
+#endif
+// QUIET: triangles no dynamic light reaches (vLightMask zero) and lying far from any liquid, so
+// the caustics, damp shores and glowing edges find nothing there (drawOpaque's quiet ranges).
+#if defined(OPAQUE)&&defined(QUIET)
+#define HAS_SHORE false
+#define HAS_DYNAMIC false
+#else
+#define HAS_SHORE true
+#define HAS_DYNAMIC true
+#endif
 #if defined(OPAQUE)||defined(CUTOUT)
 layout(early_fragment_tests) in;
 #elif !defined(COVERAGE)&&!defined(OVERLAY)
@@ -69,7 +104,8 @@ layout(std140,set=3,binding=2) uniform Fog FOG_BLOCK;
 // frameMean.a is 1 on ice floors (iceFlat): deep grooves, glassy shine;
 // worn plates add 16 to it (wornPlate in scene3d/scene.cpp), metal 32
 // (metalSurface).
-layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 frameMean; vec4 cycleMean; };
+layout(std140,set=3,binding=3) uniform Blend { float blend; vec4 weaponProbe[6]; vec4 frameMean; vec4 cycleMean; vec4 ripple; vec4 rippleShape; };
+// ripple, rippleShape: a liquid's shore ripples (world/shore.glsl's shoreRipple), zero for none.
 layout(location=0) out vec4 outColor;
 #define BLOCKERS
 #include "indexed.glsl"
@@ -81,6 +117,7 @@ layout(location=0) out vec4 outColor;
 
 // The parts of the shading main() runs, by topic.
 #include "world/tiles.glsl"
+#include "world/brick_wear.glsl"
 #include "world/surface.glsl"
 #include "world/glass.glsl"
 #include "world/bake.glsl"
@@ -95,9 +132,15 @@ layout(location=0) out vec4 outColor;
 #include "world/fog_march.glsl"
 // The classic flashlight's light, gathered apart from pulse (classicBeam).
 vec3 beamLight=vec3(0);
+// How squarely a detail sprite's silhouette normal faces the eye, for the
+// hero light (billboardLight sets it; flat sprites face it fully).
+float spriteFacing=1.0;
 // What dynamic lights add to walls and flats on top of the static light, for
 // the saturation lift and highlight rolloff.
 vec3 addedLight=vec3(0);
+// The light a shadow volume's redraw takes away (c.shadowSkip.y): the baked lamp's part of the
+// static light (surface_light.glsl) or the sun's part of the level.
+vec3 shadowRemoved=vec3(0);
 // What the baked lamps and their bounce add to walls and flats, for the
 // saturation lift alone.
 vec3 lampLight=vec3(0);
@@ -107,10 +150,19 @@ float plateWear=-1.0;
 float snowWear=0.0;
 // Water frozen in the cold here (world/water_ice.glsl's band, -1 none).
 float coldIce=-1.0;
+#include "world/blood_material.glsl"
 #include "world/sprite_light.glsl"
+#include "world/pickup_glint.glsl"
 #include "world/surface_light.glsl"
 void main() {
+#ifdef OPAQUE
+    // The opaque world never draws a sprite (opaqueBatch in gpu3d/draw.cpp; the weapon, wounds
+    // and wet sprites are sprites too): a constant here, so their code is left out of this
+    // variant, and the registers it held with it (PLAN-metal-shader-split.md).
+    const bool sprite=false;
+#else
     bool sprite=(vMode&MODE_SPRITE)!=0u;
+#endif
     bool wound=sprite&&(vMode&MODE_WOUND)!=0u;
     vec3 dp1=dFdx(vWorld),dp2=dFdy(vWorld);vec2 duv1=dFdx(vUV),duv2=dFdy(vUV);
     float footprint=max(length(duv1),length(duv2));
@@ -122,15 +174,32 @@ void main() {
     // normal; orient it toward the eye because either side may be drawn.
     vec3 normal=normalize(cross(dp1,dp2));
     if(dot(normal,c.eye.xyz-vWorld)<0.0) normal=-normal;
+#if defined(OPAQUE)&&defined(WALLS)
+    // Only walls (drawOpaque's batch shapes): DOOM's walls stand upright, so the normal has no
+    // height, only rounding. Known to be zero here, every test on normal.z settles at compile
+    // time and the flats' code leaves this variant (the opaque world 40% faster on the Mac).
+    normal=normalize(vec3(normal.xy,0.0));
+#elif defined(OPAQUE)&&defined(FLATS)
+    // Only floors and ceilings: they lie level, facing straight up or down.
+    normal=vec3(0.0,0.0,normal.z<0.0?-1.0:1.0);
+#elif defined(OPAQUE)
+    // The same upright and level normals the WALLS and FLATS variants know beforehand, so every
+    // opaque variant draws a surface alike to the last bit (without it a few pixels a frame,
+    // on a rounding step, came out one level apart).
+    if(abs(normal.z)<1e-3) normal=normalize(vec3(normal.xy,0.0));
+    else if(abs(normal.z)>0.999) normal=vec3(0.0,0.0,normal.z<0.0?-1.0:1.0);
+#endif
     // MODE_BLOOD: blood decals. vTint carries wetness (shine), how far the
     // color has darkened while drying, and the rain on it (blood.cpp
     // rainWash): its pale step (0-4) times two plus how much is washed away.
-    bool blood=(vMode&MODE_BLOOD)!=0u;
+    bool blood=HAS_BLOOD&&(vMode&MODE_BLOOD)!=0u;
+    // MODE_WET_SPRITE: airborne blood and wet wounds, the same material (world/blood_material.glsl).
+    bool wetSprite=sprite&&(vMode&(MODE_WET_SPRITE|MODE_RELIT))==(MODE_WET_SPRITE|MODE_RELIT)&&(vMode&MODE_SCREEN)==0u;
     uint bakeFlags=uint(c.flashlightTint.w);
     // FEATURE_GLOSSY_SCREENS: monitor glass in computer textures. Its curved CRT dome
     // shapes light highlights and an edge sheen, and like a weak lens it
     // enlarges the picture's middle slightly (edges still meet the rim).
-    bool glassy=!sprite&&!blood&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&isGlass(vUV);
+    bool glassy=HAS_SCREENS&&!sprite&&!blood&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&isGlass(vUV);
     vec3 screenNormal=normal;vec2 screen=vec2(0),uv=vUV;
     bool dead=!sprite&&(vMode&MODE_DEAD_GLOW)!=0u;
     float crack=0.0;
@@ -157,7 +226,7 @@ void main() {
     // screen's broken glass. Its colored panes (the glow mask) are the
     // shards; each leans its own way (the leaded relief, withLeadedRelief)
     // and so takes its own highlights and sheen; the lead stays a matte wall.
-    if(!sprite&&!glassy&&(vMode&MODE_STAINED_GLASS)!=0u&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&
+    if(HAS_SCREENS&&!sprite&&!glassy&&(vMode&MODE_STAINED_GLASS)!=0u&&(bakeFlags&FEATURE_GLOSSY_SCREENS)!=0u&&c.effects.z==0.0&&
        maskAt(image,vUV,false)>0.0) {
         vec3 tangent,bitangent;textureFrame(normal,dp1,dp2,duv1,duv2,tangent,bitangent);
         vec2 lean=(texelFetch(relief,wrapTexel(ivec2(floor(vUV)),textureSize(relief,0)),0).rg*255.0-128.0)/127.0;
@@ -166,7 +235,7 @@ void main() {
     }
     // FEATURE_LIVE_READOUTS: LED readouts switch their lamps (readoutCell);
     // a shot-out panel's stay dark and still.
-    if(!sprite&&!blood&&!glassy&&!dead&&(bakeFlags&FEATURE_LIVE_READOUTS)!=0u&&c.effects.z==0.0)
+    if(HAS_SCREENS&&!sprite&&!blood&&!glassy&&!dead&&(bakeFlags&FEATURE_LIVE_READOUTS)!=0u&&c.effects.z==0.0)
         uv=readoutCell(uv,vStatic);
     vec4 color;
     if(sprite) color=indexed(image,palette,uv,c.effects.w==1.0,false);
@@ -178,17 +247,20 @@ void main() {
     // water reads as one body instead of a tiled floor and no longer pulses
     // as the frames change. Grazing views fade it sooner. poolTone varies
     // the whole body a little across calm and rough stretches.
-    if(!sprite&&cycleMean.a>0.0&&c.effects.z==0.0) {
+    if(HAS_LIQUID&&!sprite&&cycleMean.a>0.0&&c.effects.z==0.0) {
         float facing=abs(normalize(c.eye.xyz-vWorld).z);
         float reach=vDistance*mix(2.5,1.0,saturate(facing*2.5));
         float detail=mix(1.0,cycleMean.a,smoothstep(192.0,1024.0,reach));
         color.rgb=max(cycleMean.rgb+(color.rgb-frameMean.rgb)*detail,vec3(0))*poolTone(vWorld.xy);
     }
     if(color.a<0.45) discard;
+#ifdef CORE
+    if(color.a<0.99) discard;
+#endif
     // Phobos (scene3d/decompression.cpp poolIce): a pool's ice sheet, vTint how far it has
     // formed, the slime's glow left and how grey it has gone. It freezes in patches, whole
     // texels, the liquid showing through the gaps until it closes.
-    bool iceSheet=!sprite&&!blood&&vTint.r>0.0&&normal.z>0.5;
+    bool iceSheet=HAS_LIQUID&&!sprite&&!blood&&vTint.r>0.0&&normal.z>0.5;
     // Water frozen in the cold (scene3d/water_ice.cpp, vTint.r 2): the same sheet laid over
     // it, cut texel by texel into floes, thin ice and the white sheet (world/water_ice.glsl).
     if(iceSheet&&vTint.r>1.5) {
@@ -260,11 +332,25 @@ void main() {
     // the same bits for their palette paint and never decode a sector.
     bool mapped=(vMode>>MODE_SECTOR_SHIFT)>0u&&!sprite&&c.effects.z==0.0;
     uint sector=mapped?(vMode>>MODE_SECTOR_SHIFT)-1u:0u;
-    SectorLit lit=sectorLighting(normal,mapped,sector,bakeFlags);
-    float light=lit.light;
     // Weather and wear (world/wear.glsl): streaks, wet ground and snow.
     Wear wear=Wear(0.0,0.0,false,0.0,0.0,0.0,0.0,0.0,false,0.0,vec2(0.0));
-    if(mapped&&!blood&&!glassy&&cycleMean.a==0.0) {wear=surfaceWear(vWorld-vec3(0.0,0.0,vLift),normal,vUV.x,sector,bakeFlags);snowWear=wear.snow;}
+    if(mapped&&!blood&&!glassy&&(!HAS_LIQUID||cycleMean.a==0.0)) {
+        // Which way u runs along a wall (wear.glsl's drifts): the frame's
+        // sign turned by how u actually changes on screen, as the normal
+        // here faces the eye whichever side the frame expects.
+        vec3 uDir,vDir;textureFrame(normal,dp1,dp2,duv1,duv2,uDir,vDir);
+        wallAlong=normalize(uDir.xy+vec2(1e-6,0.0));
+        if(dot(wallAlong,dp1.xy)*duv1.x+dot(wallAlong,dp2.xy)*duv2.x<0.0) wallAlong=-wallAlong;
+        wear=surfaceWear(vWorld-vec3(0.0,0.0,vLift),normal,vUV.x,sector,bakeFlags);snowWear=wear.snow;
+    }
+    // Each painted brick of a wall its own tone (world/brick_wear.glsl).
+    if(mapped&&!blood&&!glassy&&(!HAS_LIQUID||cycleMean.a==0.0)&&abs(normal.z)<=0.5&&(bakeFlags&FEATURE_UNEVEN_WALLS)!=0u) color.rgb=brickTone(color.rgb,uv);
+    // What lies heaped against a wall's foot (wear.glsl's drifts) is a slope
+    // facing up: lit as the ground it grows from, half a unit out in front,
+    // so it carries the ground's tone up the wall instead of the wall's shade.
+    bool drift=wallDrift;
+    SectorLit lit=sectorLighting(drift?vWorld+vec3(normal.xy*0.5,0.0):vWorld,drift?vec3(0.0,0.0,1.0):normal,mapped,sector,bakeFlags);
+    float light=lit.light;
     // Worn plates (frameMean.a +16, wornPlate in scene3d/scene.cpp).
     if(mapped&&!blood&&!glassy&&(uint(round(frameMean.a))&16u)!=0u) {wear.grime=plateGrime(vUV,vWorld-vec3(0.0,0.0,vLift),normal,sector,vStatic);plateWear=wear.grime;}
     // Grounding: things resting on the floor darken over their lowest 24
@@ -275,7 +361,7 @@ void main() {
     light*=grounding;
     // MODE_SCREEN|MODE_RELIT: the relit weapon (weapon.glsl).
     bool weapon=sprite&&(vMode&(MODE_SCREEN|MODE_RELIT))==(MODE_SCREEN|MODE_RELIT)&&c.effects.z==0.0;
-    Weapon relit=Weapon(vec3(0),vec3(0),vec3(0),0.0);
+    Weapon relit=Weapon(vec3(0),vec3(0),vec3(0),0.0,0.0);
     if(weapon) relit=weaponSurface(light);
     // Preserve the sprite's painted shading with one RGB increment for the
     // whole billboard; world surfaces evaluate colored lighting per pixel.
@@ -287,11 +373,24 @@ void main() {
     // by bounce take their color, not the flat level's grey. Sprites and the
     // weapon bring theirs from the CPU (lampTint in baked_lighting.h).
     vec3 lampTint=unpackUnorm4x8(vLampTint).rgb;
-    if(mapped&&c.bake.x>0.0&&c.effects.z==0.0) {
+    // Not with whole-level lighting (c.bake.x 2): what is left of the level there is the room's
+    // fill or, outside, the sky's light, and a pool of nukage dyed the daylight green.
+    if(mapped&&c.bake.x>0.0&&c.bake.x<1.5&&c.effects.z==0.0) {
         vec3 colored=lit.baked.rgb+lit.bounce*c.bake.y*c.bake.w;float peak=max(colored.r,max(colored.g,colored.b));
         if(peak>0.0) lampTint=mix(vec3(1),colored/peak,peak/(peak+lit.shown));
         lampTint=settledLight(lampTint,snowWear);   // on snow its brightness only (world/wear.glsl)
     }
+    // The tint changes the sector light's colour, not its brightness: scaled
+    // to its brightest channel alone, a saturated lamp cut the channels that
+    // carry the brightness (a blue screen took a fifth off the wall it
+    // tinted, and the wall beside it that it missed read as lit from
+    // nowhere). So it is brought back up to the untinted brightness. A pure
+    // blue would need its blue nearly nine times over, a wall glowing blue:
+    // a tint darker than 1/1.6 pales toward white first, as far as it takes,
+    // so the brightness always holds and only the deepest hues tint less.
+    float tintLight=dot(lampTint,vec3(0.299,0.587,0.114));
+    if(tintLight<0.625) {lampTint=mix(lampTint,vec3(1),(0.625-tintLight)/max(1.0-tintLight,0.001));tintLight=0.625;}
+    lampTint/=tintLight;
     vec3 illumination=vec3(light)*lampTint*mix(vec3(1),c.sun.rgb,lit.sunShare)*mix(vec3(1),c.fx.yzw,lit.skyShare),specular=vec3(0);
     if(c.effects.z==0.0) {
         // Sprites carry their baked light (and, without detail, their
@@ -300,11 +399,88 @@ void main() {
         if(sprite&&(vMode&(MODE_SCREEN|MODE_RELIT))==MODE_RELIT) billboardLight(color,pulse,specular);
         if(weapon) weaponLight(relit,light,pulse,specular);
         if(!sprite) surfaceLight(lit,mapped,normal,screenNormal,glassy,blood,color,dp1,dp2,duv1,duv2,pulse,specular);
+        illumination*=daylightShade;   // the sun's and sky's share on the bump detail (surface_light.glsl)
         illumination=clamp(illumination+pulse+c.flashlightTint.rgb,vec3(0),vec3(2.2));
+        // A sprite in the redraw of what stands in a light's shadow volumes (c.shadowSkip.w): only
+        // what is lit by its silhouette normals (a monster, a corpse, a barrel), nothing that glows
+        // by itself, dissolves or is a spectre's fuzz. In a dynamic light's it is drawn again
+        // without that light (lightFalloff) and goes on below. In the baked light's it writes the
+        // share of its light that is left, as a surface does: the baked tint's directed part gone
+        // (as one-sided as the light is where the thing stands, vStatic's alpha), a third kept at
+        // the least. Its wounds are left out there (drawn over the same texels, they would darken
+        // them twice). The sun's share is not known apart on a sprite: it keeps the sun.
+        if(sprite&&c.shadowSkip.w>0.0) {
+            if((vMode&(MODE_RELIT|MODE_SCREEN|MODE_SOFT|MODE_FUZZ))!=MODE_RELIT) discard;
+            if(c.shadowSkip.y>1.5) {
+                if(wound||(c.shadowSkip.y>2.5&&c.shadowSkip.y<3.5)||c.bake.z<=0.0||vStatic==0u) discard;
+                vec3 gone=vTint*grounding*unpackUnorm4x8(vStatic).a*(c.shadowSkip.y>3.5?0.33:0.8);
+                vec3 left=clamp((illumination-gone)/max(illumination,vec3(1e-3)),vec3(0.33),vec3(1));
+#if !defined(OPAQUE)&&!defined(CUTOUT)&&!defined(COVERAGE)&&!defined(OVERLAY)
+                gl_FragDepth=gl_FragCoord.z;
+#endif
+                outColor=vec4(mix(vec3(1),left,color.a),1.0);return;
+            }
+        }
+        // In a baked lamp's or the sun's shadow volume: only the share of the light that is left.
+        if(c.shadowSkip.y>1.5&&!sprite) {
+            if(c.shadowSkip.y>2.5&&c.shadowSkip.y<3.5) shadowRemoved=vec3(light)*lampTint*c.sun.rgb*lit.sunShare*daylightShade;
+            // (A baked light's shadow keeps a third of the light at the least: something always comes round.)
+            // What gives light itself is not darkened by a shadow: a lamp's tube, a lit panel, a
+            // screen show at their own glow whatever falls on them (the glow mask, as below), so
+            // the share kept is reckoned on the brighter of the light and the glow, before and after.
+            float glow=0.0;
+            if(c.materials.x>0.0&&!dead) {
+                vec2 at=c.effects.x==2.0?sharpen(uv,texelPixel+c.texFilter.x):uv;
+                glow=maskAt(image,at,c.effects.x>0.0);
+                if(blend>0.0) glow=mix(glow,maskAt(nextImage,at,c.effects.x>0.0),blend);
+                glow*=unpackUnorm4x8(vLampTint).a;
+                if(iceSheet) glow*=vTint.g;
+            }
+            vec3 before=max(illumination,vec3(glow)),after=max(illumination-shadowRemoved,vec3(glow));
+            outColor=vec4(clamp(after/max(before,vec3(1e-3)),vec3(c.shadowSkip.y>2.5&&c.shadowSkip.y<3.5?0.0:0.33),vec3(1)),1.0);return;
+        }
         // Like extralight, the classic beam brightens toward a little past
         // the palette's own colors and never beyond that.
         vec3 beam=beamLight*max(BEAM_CEILING-illumination,vec3(0));
         illumination+=beam;addedLight+=beam;
+        // F4 "Hero light" (c.farFogRange.w, its ceiling): a help in the dark,
+        // not a lamp. It sits at the eye, where no shadow it cast could be
+        // seen, and lifts what is near and nearly black toward a low floor in
+        // the beam's 1/8 steps, judged at the texel's middle so a step follows
+        // the artwork's pixels; what the room's own light lifts past the floor
+        // gets nothing. Not addedLight, not the weapon: nothing takes it for a
+        // light to glint or relight by.
+        if(c.farFogRange.w>0.0&&(vMode&MODE_SCREEN)==0u) {
+            vec2 off=floor(vUV)+0.5-vUV;
+            float det=duv1.x*duv2.y-duv2.x*duv1.y;
+            vec3 at=vWorld;
+            if(abs(det)>1e-8) {
+                vec2 s=vec2(duv2.y*off.x-duv2.x*off.y,duv1.x*off.y-duv1.y*off.x)/det;
+                vec3 shift=dp1*s.x+dp2*s.y;
+                if(dot(shift,shift)<64.0) at+=shift;
+            }
+            vec3 toEye=c.eye.xyz-at;
+            float near=saturate(1.0-length(toEye)/HERO_REACH);
+            float facing=sprite?spriteFacing:saturate(dot(normal,normalize(toEye)));
+            float lift=beamSteps(near*(0.4+0.6*facing));
+            illumination+=lift*max(vec3(c.farFogRange.w)-illumination,vec3(0));
+        }
+        // Blood (world/blood_material.glsl): the light on it keeps part of its hue only. While wet, the sun
+        // glints on decals out under it.
+        if(blood||wetSprite) illumination=bloodLight(illumination);
+        // On metal the plate behind the film sends nothing back but its highlight: the blood is a
+        // deeper red there, so the highlight on it stands out (surface_light.glsl, bloodUnder).
+        if(blood&&bloodUnder(vTint.r)>0u) illumination*=BLOOD_FILM_BODY;
+        if(blood&&bloodWetness(vTint.r)>0.0) {
+            vec3 view=normalize(c.eye.xyz-vWorld);
+            float coat=bloodWetness(vTint.r)*bloodFresnel(normal,view,BLOOD_DECAL_FACING);
+            if(lit.sunShare>0.0) {
+                vec3 toSun=vec3(cos(c.fx2.z)*cos(c.outdoor.w),sin(c.fx2.z)*cos(c.outdoor.w),sin(c.outdoor.w));
+                float h=pow(saturate(dot(normal,normalize(toSun+view))),BLOOD_DECAL_SHARP);
+                h=h>0.6?1.0:h>0.3?0.5:0.0;
+                specular+=bloodCoat(c.sun.rgb*lit.light*lit.sunShare,color.rgb)*h*coat*0.6*saturate(dot(normal,toSun)*4.0);
+            }
+        }
         if(glassy) {
             // Where the pane curves away from the eye it catches the room's
             // light as a thin sheen, in brightness only, in 1/16 steps.
@@ -317,7 +493,7 @@ void main() {
     // FEATURE_GLOW_EDGES: walls at a glowing liquid's edge take its painted
     // strip (edgeStrip in world/shore.glsl), glowing where the strip does.
     float edgeGlow=0.0;
-    if(mapped&&(bakeFlags&FEATURE_GLOW_EDGES)!=0u&&abs(normal.z)<=0.5) {
+    if(HAS_SHORE&&mapped&&(bakeFlags&FEATURE_GLOW_EDGES)!=0u&&abs(normal.z)<=0.5) {
         vec3 paint;float amount=edgeStrip(vWorld-vec3(0.0,0.0,vLift),normal,vUV.x,paint,edgeGlow);
         color.rgb=mix(color.rgb,paint,amount);
     }
@@ -327,6 +503,24 @@ void main() {
     if(sprite&&!wound&&(vMode&MODE_GLOWING_EYES)!=0u&&c.effects.z==0.0) {
         emission=eyeGlow(image,uv);
         illumination=max(illumination,vec3(emission*1.2));
+    }
+    // MODE_FIRING: the room lights a firing monster; its painted flash keeps
+    // the fullbright Doom gave the whole frame.
+    if(sprite&&!wound&&(vMode&(MODE_FIRING|MODE_SOFT|MODE_SCREEN|MODE_BLOOD))==MODE_FIRING&&c.effects.z==0.0&&firingFlash(image,uv)) {
+        emission=1.0;
+        illumination=max(illumination,vec3(1.0));
+    }
+    // MODE_LAMP_GLOW: a lamp post, a torch, a candle: the room lights it; what is painted bright on it glows.
+    if(sprite&&!wound&&(vMode&(MODE_PICKUP|MODE_SOFT|MODE_SCREEN|MODE_BLOOD|MODE_LAMP_GLOW))==MODE_LAMP_GLOW&&c.effects.z==0.0) {
+        emission=smoothstep(0.45,0.75,max(color.r,max(color.g,color.b)));
+        illumination=max(illumination,vec3(emission));
+    }
+    // MODE_PICKUP: a glint now and then over the artwork's brightest texels
+    // (world/pickup_glint.glsl): its core shows the paint at full and a little past.
+    if(sprite&&!wound&&(vMode&(MODE_PICKUP|MODE_SOFT|MODE_SCREEN|MODE_BLOOD))==MODE_PICKUP&&c.effects.z==0.0) {
+        float glint=pickupGlint(color.rgb,uv,(vMode>>MODE_PICKUP_SEED_SHIFT)&255u);
+        illumination=max(illumination,vec3(glint));
+        if(glint>0.75) specular+=color.rgb*0.35;
     }
     if(!sprite&&c.materials.x>0.0&&c.effects.z==0.0) {
         // The blue channel carries a mask, independent of palette/coverage.
@@ -346,12 +540,16 @@ void main() {
         if(iceSheet) emission*=vTint.g;   // a frozen pool's glow dying (Phobos)
         emission=max(emission,edgeGlow);
         illumination=max(illumination,vec3(emission));
+        // A shadow cannot darken what lights from within (the user): in the redraw of a dynamic
+        // light's shadow (c.shadowSkip.x: the flashlight's, a shot's) a glowing texel is left as
+        // it was drawn, in the light. The housing round the tube is not in the mask and takes the shadow.
+        if(c.shadowSkip.x>0.0&&emission>0.35) discard;
     }
     // FEATURE_DAMP_SHORES: damp walls and banks above liquids (shoreWet), darker and
     // a little stained by the liquid; glowing texels stay dry. Round a pool freezing
     // over (Phobos) the same rim is frost instead: white, taking the texels as their
     // glow dies.
-    if(mapped&&(bakeFlags&FEATURE_DAMP_SHORES)!=0u&&normal.z>-0.5) {
+    if(HAS_SHORE&&mapped&&(bakeFlags&FEATURE_DAMP_SHORES)!=0u&&normal.z>-0.5) {
         vec3 stain;vec2 rimIce;
         // The texel's own color, not the filtered or mipped one, so the line keeps to whole texels.
         float texelLuma=dot(surfaceLevel(image,floor(uv)+0.5,texelPixel,0).rgb,vec3(0.299,0.587,0.114));
@@ -395,13 +593,13 @@ void main() {
         }
     }
     color.rgb+=specular;
-    if(mapped&&(bakeFlags&FEATURE_CAUSTICS)!=0u&&(abs(normal.z)<=0.5||(normal.z<-0.5&&(bakeFlags&FEATURE_CEILING_CAUSTICS)!=0u))) color.rgb+=caustics(vWorld,normal,sector,false);
+    if(HAS_SHORE&&mapped&&(bakeFlags&FEATURE_CAUSTICS)!=0u&&(abs(normal.z)<=0.5||(normal.z<-0.5&&(bakeFlags&FEATURE_CEILING_CAUSTICS)!=0u))) color.rgb+=caustics(vWorld,normal,sector,false);
     // FEATURE_CAUSTICS_SPRITES: things in the world (not the weapon or effect sprites)
     // near liquids catch the caustics too, in their own colors so the painted
     // shading survives; the scale matches the walls' additive light.
     if(sprite&&(bakeFlags&(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES))==(FEATURE_CAUSTICS|FEATURE_CAUSTICS_SPRITES)&&(vMode&(MODE_SCREEN|MODE_SOFT))==0u&&c.effects.z==0.0)
         color.rgb+=albedo*(1.0-emission)*caustics(vWorld,normal,0u,true)*2.5;
-    if((vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
+    if(HAS_LIQUID&&(vMode&MODE_MIRROR_FLOOR)!=0u&&c.water.z>0.0&&c.effects.z==0.0) liquidMirror(color,albedo);
     // What hangs in the open air (a blizzard's whiteout, the outdoor haze, the
     // pall sand and ash raise) fades a point by how far the view to it runs
     // through the open air, not by where the point lies: eight points along
@@ -411,7 +609,7 @@ void main() {
     // The same points gather the flashlight's beam in that air (beam_air.glsl),
     // indoors as much as there is of the open air round the eye (c.climate.w).
     float airOutside=0.0;   // the view's share through the open air, for the weather's ground fog (weatherAir)
-    if((vMode&MODE_SCREEN)==0u&&(c.climate.z>0.0||c.haze.w>0.0||c.beamLight.w>0.0)) {
+    if(HAS_AIR&&(vMode&MODE_SCREEN)==0u&&(c.climate.z>0.0||c.haze.w>0.0||c.beamLight.w>0.0)) {
         // The open air: under the sky, or under a porch's roof (wear.glsl's sectorOpenAir).
         float way=length(vWorld-c.eye.xyz);float outside=mapped&&(sectorInfo[sector].w>0.0||sectorOpenAir(sector))?1.0:0.0,lit=0.0;
         uint yard=mapped&&sectorInfo[sector].w>0.0?sector:0xFFFFu;   // the sky the way ends in, for its enclosure
@@ -449,7 +647,7 @@ void main() {
         // the one behind (a window's frame, a door). A sector whose floor lies
         // above the point can't hold it (the wall under a sill): then the
         // eye's own bank. What glows cuts through.
-        if(c.bank.w>0.0) {
+        if(HAS_AIR&&c.bank.w>0.0) {
             vec2 toward=c.eye.xy-vWorld.xy,at=vWorld.xy+toward/max(length(toward),1.0)*1.5/max(c.map.z,1e-4);
             ivec2 cell=clamp(ivec2(floor((at-c.map.xy)*c.map.z)),ivec2(0),textureSize(seams,0)-1);
             uint own=uint(round(texelFetch(seams,cell,0).x*65535.0));
@@ -478,8 +676,9 @@ void main() {
             color.rgb=color.rgb*bank.a+bank.rgb;
         }
     }
-    // Eye adaptation: a stepped exposure while the view settles to new light.
-    if(c.effects.z==0.0) color.rgb*=c.fx.x;
+    // Eye adaptation: the exposure the view has settled to, and the tone curve over it.
+    // (In whole-level lighting always: its lamps reach past white whether the eye adapts or not.)
+    if(c.effects.z==0.0) color.rgb=toneCurve(color.rgb*c.fx.x,c.bake.x>1.5?2.0:c.phobos.w,c.shadowSkip.z>0.0);
     if(c.effects.z==32.0) color.rgb=1.0-color.rgb;
     // A distance fog as in Turok (DERPINFO farfog): everything fades to one
     // colour, which is also all there is behind it; past its far end nothing
@@ -500,7 +699,8 @@ void main() {
     if((vMode&MODE_SOFT)!=0u&&!wound) {
         vec4 info=sectorInfo[(vMode>>MODE_SECTOR_SHIFT)-1u];
         float room=min(vWorld.z-info.y,info.w>0.0?1e4:info.z-vWorld.z);
-        if(saturate(room/12.0)<bayer4(ivec2(floor(gl_FragCoord.xy/max(c.fx2.x,1.0))))) discard;
+        // (vSun.y at 1: no dissolve. The physical explosion's cards, explosions.cpp: their rays stop at the map themselves.)
+        if(vSun.y<0.5&&saturate(room/12.0)<bayer4(ivec2(floor(gl_FragCoord.xy/max(c.fx2.x,1.0))))) discard;
         float n=c.projection.z,f=c.projection.w,z=max(n,vDistance-vSun.x);
         depth=f/(f-n)-n*f/((f-n)*z);
     }
@@ -519,5 +719,8 @@ void main() {
         color.a=1.0-smoothstep(16.0,mix(256.0,1024.0,c.eye.w),along);
     }
 #endif
+    // Shore ripples drawn by the liquid itself (F4 "Shore ripples: In the liquid").
+    if(HAS_LIQUID&&ripple.x!=0.0&&!sprite&&!iceSheet&&normal.z>0.5&&cycleMean.a>0.0&&c.effects.z==0.0)
+        color.rgb=shoreRipple(color.rgb,vWorld,ripple,rippleShape,cycleMean.rgb,vDistance);
     outColor=color;
 }

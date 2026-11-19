@@ -5,6 +5,7 @@
 #include "../shaders/feature_flags.h"
 extern "C" {
 #include "../audio/sound_options.h"
+#include "../audio/gore_floor.h"
 }
 #include "../i_gamepad.h"
 #include "../settings_panel.h"
@@ -18,12 +19,13 @@ FogLights fogLights;
 std::vector<LightBlocker> lightBlockers;
 std::unordered_map<int,Image> images;
 std::map<int,std::vector<Vertex>> batches,shadowBatches,decalBatches,mirrorBatches;
-std::vector<Vertex> mistVertices,particleVertices,glowVertices,crestVertices,heatVertices,skyVertices,shaftVertices;
+std::vector<Vertex> mistVertices,particleVertices,glowVertices,crestVertices,heatVertices,skyVertices,shaftVertices,lampSheetVertices;
 GpuTextureRef seamTexture,contactTexture,cloudTexture,wallBakeTexture,flatLightTexture,causticTexture,causticPattern,shoreTexture;
 GpuTextureRef wallDirectionTexture,flatDirectionTexture;
 float reflectionPlane=0;
 bool reflectionActive=false;
 bool worldPending,screenshotPending,flashlightOn=false;
+static boolean flashlightLit() {return flashlightOn?(boolean)1:(boolean)0;}
 float pitch;
 unsigned levelSerial;
 static float oldEye[3], oldYaw;
@@ -46,7 +48,40 @@ bool ticSaved;
 static uint64_t titleTime;
 static int frameCount;
 static float fps;
-static std::unordered_map<const mobj_t*, std::array<float,3>> oldThings;
+// Each thing's place as the last tic began, by its address: a flat table
+// (open addressing, at most half full) filled anew each tic. A map of nodes
+// took an allocation per thing per tic. Empty after a level's end.
+struct OldPlace { const mobj_t *thing; std::array<float,3> at; };
+static std::vector<OldPlace> oldThings;
+static size_t oldSlot(const mobj_t *thing) {return (size_t)(((uint64_t)(uintptr_t)thing*0x9E3779B97F4A7C15ull)>>32)&(oldThings.size()-1);}
+static void fillOldThings(const std::vector<mobj_t*> &things) {
+    size_t want=16;
+    while(want<things.size()*2)want<<=1;
+    if(oldThings.size()<want)oldThings.assign(want,OldPlace{});
+    else for(OldPlace &p:oldThings)p.thing=nullptr;
+    for(const mobj_t *thing:things)
+        for(size_t i=oldSlot(thing);;i=(i+1)&(oldThings.size()-1)) {
+            if(oldThings[i].thing==thing)break;   // listed twice: the first place stays
+            if(oldThings[i].thing)continue;
+            oldThings[i]={thing,{units(thing->x),units(thing->y),units(thing->z)}};
+            break;
+        }
+}
+static const std::array<float,3> *oldPlace(const mobj_t *thing) {
+    if(oldThings.empty())return nullptr;
+    for(size_t i=oldSlot(thing);;i=(i+1)&(oldThings.size()-1)) {
+        if(oldThings[i].thing==thing)return &oldThings[i].at;
+        if(!oldThings[i].thing)return nullptr;
+    }
+}
+// The tic's things in the sectors' lists, in their order: walked once for
+// the watchers that look at them all (watchSpray, watchGlass), after the
+// bodies' watch, which may move a body to another sector's list.
+const std::vector<mobj_t*> *ticThings=nullptr;
+static void listThings(std::vector<mobj_t*> &things) {
+    things.clear();
+    for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)things.push_back(thing);
+}
 // What the game carried things by since the last tic began.
 static void worldShifted(float &dx,float &dy,float &dz) {
     Game_WorldShift(&dx,&dy,&dz);
@@ -54,9 +89,9 @@ static void worldShifted(float &dx,float &dy,float &dz) {
 }
 void interpolatedPosition(const mobj_t &thing,float fraction,float &x,float &y,float &z) {
     x=units(thing.x);y=units(thing.y);z=units(thing.z);
-    auto old=oldThings.find(&thing);
-    if(old==oldThings.end())return;
-    float oldX=old->second[0],oldY=old->second[1],oldZ=old->second[2];
+    const std::array<float,3> *old=oldPlace(&thing);
+    if(!old)return;
+    float oldX=(*old)[0],oldY=(*old)[1],oldZ=(*old)[2];
     if(Game_Carried(&thing)) {float dx,dy,dz;worldShifted(dx,dy,dz);oldX+=dx;oldY+=dy;oldZ+=dz;}
     if(std::hypot(x-oldX,y-oldY)<128) {
         x=oldX+(x-oldX)*fraction;
@@ -67,6 +102,7 @@ void interpolatedPosition(const mobj_t &thing,float fraction,float &x,float &y,f
 // -renderview x y angle [pitch] (map units, degrees; pitch up, needs free
 // look) puts the player there once per level, to aim -rendercheck frames.
 extern "C" boolean P_TeleportMove(mobj_t *thing,fixed_t x,fixed_t y);
+extern "C" int SlowMotion_Option;   // F4 Slow motion (slow_motion.c)
 static void renderViewPlace(player_t &player) {
     static unsigned placed=~0u;
     int view=M_CheckParm((char*)"-renderview");
@@ -79,11 +115,17 @@ static void renderViewPlace(player_t &player) {
     // The pitch may be negative (down): a number, not the next option.
     char *end=nullptr;
     float look=view+4<myargc?std::strtof(myargv[view+4],&end):0;
-    if(view+4<myargc&&end!=myargv[view+4]&&*end==0)pitch=std::clamp(look*(float)doomPi/180,-1.2f,1.2f);
+    if(view+4<myargc&&end!=myargv[view+4]&&*end==0) {
+        pitch=std::clamp(look*(float)doomPi/180,-1.2f,1.2f);
+        // A game that keeps its own look (Heretic's lookdir) takes it there,
+        // as far as its look keys reach.
+        float gameLook;
+        if(Game_LookPitch(&gameLook))Game_Look(pitch-gameLook);
+    }
 }
 static void beforeTic() {
     if(gamestate!=GS_LEVEL||!players[displayplayer].mo||paused) {ticSaved=false;return;}
-    uint64_t ticStart=statsTiming?SDL_GetTicksNS():0;   // DERP's share of the tic (the FPS readout)
+    uint64_t ticStart=(statsTiming||statsTracing)?SDL_GetTicksNS():0;   // Visual effects in the tic.
     followCarry();
     renderViewPlace(players[displayplayer]);
     mobj_t *mo=players[displayplayer].mo;
@@ -91,15 +133,18 @@ static void beforeTic() {
     oldYaw=(float)(mo->angle*(2.0*doomPi/4294967296.0));oldAngle=mo->angle;ticSaved=true;
     Game_WorldShift(&oldShift[0],&oldShift[1],&oldShift[2]);
     saveWeaponPlace();
-    oldThings.clear();
     oldHeights.resize(numsectors);
     for(int i=0;i<numsectors;++i) oldHeights[i]={units(sectors[i].floorheight),units(sectors[i].ceilingheight)};
-    for(int i=0;i<numsectors;++i) for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)
-        oldThings.emplace(thing,std::array<float,3>{units(thing->x),units(thing->y),units(thing->z)});
+    static std::vector<mobj_t*> things;
+    listThings(things);
+    fillOldThings(things);
     timed(Stat::Liquids,watchSplashes);
-    timed(Stat::Bodies,[]{ragdollTestTic();watchBodies();});
+    timed(Stat::Bodies,[]{ragdollTestTic();watchBodies();watchStrides();});
+    listThings(things);ticThings=&things;
     timed(Stat::Blood,watchSpray);
+    timed(Stat::Gore,[]{watchFlyingPieces();watchTears();});
     timed(Stat::Glass,watchGlass);
+    ticThings=nullptr;
     timed(Stat::Weather,watchWeather);
     timed(Stat::Drafts,watchDrafts);
     timed(Stat::Weather,watchWaterIce);   // water freezing in the cold (water_ice.cpp)
@@ -122,6 +167,20 @@ static void acceleratedView(player_t *player) {
         memset(v_overlaymask+y*SCREENWIDTH+viewwindowx,0,scaledviewwidth);
     }
 }
+// The game rules alone, as applySettings sets them (I_Render3DEarlySettings).
+// The Authored kick landing (R_KickLanded): what lies in its reach is kicked too (flying_piece.cpp); a sweep
+// reaches lower and a little less far.
+static void kickLanded(mobj_t *kicker,int sweep) {
+    if(!kicker)return;
+    float angle=(float)(kicker->angle*(2.0*doomPi/4294967296.0));
+    flyingPiecesKicked(units(kicker->x),units(kicker->y),units(kicker->z),angle,sweep?56.0f:64.0f,kicker->player?(int)(kicker->player-players):-1);
+}
+static void applyGameRules(const Settings &s) {
+    Game_SetPhobos(s.phobos);
+    Game_SetAuthored(s.authored);
+    Game_SetWeather(s.weather);
+    Game_SetPhobosRules(s.phobosPlayer,s.phobosEnemies,s.phobosAir,s.phobosRecoil);
+}
 void applySettings() {
     fitGame(settings);
     rebrickSwitched();
@@ -134,15 +193,19 @@ void applySettings() {
     R_PlaneImpact=settings.accelerated?planeImpact:nullptr;
     R_ShotPassed=settings.accelerated?glassShot:nullptr;
     R_GlassStruck=settings.accelerated?glassStruck:nullptr;
+    R_Flashlight=settings.accelerated?flashlightLit:nullptr;
+    R_Explosion=settings.accelerated?bodyExplosion:nullptr;
+    Gore_Underfoot=settings.accelerated?goreUnderfoot:nullptr;
+    Game_TraceShotsAlso(settings.accelerated?[](const mobj_t *shooter,const mobj_t *hit,float x1,float y1,float z1,float x2,float y2,float z2)
+        {goreShotTraced(shooter,hit,x1,y1,z1,x2,y2,z2);flyingPiecesShot(x1,y1,z1,x2,y2,z2);}:(game_shot_traced)nullptr);
+    R_KickLanded=settings.accelerated?kickLanded:nullptr;
     R_RainedIn=settings.accelerated?rainedIn:nullptr;
     freeaim=settings.accelerated&&settings.look;
     classicaim=settings.classicAim!=0;
     weaponbob=settings.weaponBob;
     classicmovement=settings.movement==1||M_CheckParm((char*)"-classicmovement");
     strafeboost=settings.movement==2;
-    Game_SetPhobos(settings.phobos);
-    Game_SetWeather(settings.weather);
-    Game_SetPhobosRules(settings.phobosPlayer,settings.phobosEnemies,settings.phobosAir,settings.phobosRecoil);
+    applyGameRules(settings);
     quickconfirm=settings.quickConfirm!=0;
     gamepad_options pad={settings.padLookX,settings.padLookY,settings.padDeadzone,settings.gyroSpeed,
                          settings.padBoost,settings.padSouthpaw,settings.gyro,
@@ -154,6 +217,11 @@ void applySettings() {
     R_SetViewSize(10,0);
     applyWindowSize();
     I_SetSoundOptions(settings.roomAcoustics,settings.reverbAmount,settings.muffleWalls,settings.muffleDistance,settings.naturalFalloff);
+    // The baked grid is only heard as the listener's room (room acoustics): without them it isn't baked.
+    I_SetLevelSound(settings.authored,settings.farRooms,settings.roomGrid&&settings.roomAcoustics);
+    // Traced tails ring in the listener's room and the space beyond (room acoustics) and in far rooms;
+    // with neither on nothing plays them, so they aren't traced.
+    I_SetRoomTails(settings.roomTails&&(settings.roomAcoustics||settings.farRooms>0));
     I_SetSoundOutput(settings.soundOutput);
     I_SetSfxPlayback(settings.sfxResampling,settings.sfxTreble);
     I_SetMadeSounds(settings.madeImpacts,settings.glassSound,settings.ambience,settings.ambienceAmount,settings.footsteps);
@@ -161,24 +229,42 @@ void applySettings() {
     Game_SetRandomPitch(settings.randomPitch);
     I_AmbienceShowGlass(settings.accelerated&&settings.windowGlass);
     I_SetMusicDevice(settings.musicDevice);
+    I_SetSoundtrack(settings.soundtrack);
     // The authored episode's mood is baked into the sun, lamps, bounce and
     // sky light (levelMood): switching it re-bakes them all.
     // So is Phobos' (levelMood, Game_Sun, skyColor), and the player's hour
     // and heat (climate.cpp), which place the sun anew too. And the weather
     // and its wind: its overcast and what it leaves on the ground change the bounce
     // (under Clear the wind leaves nothing: it is only heard).
-    static int bakedAuthored=-1,bakedPhobos=-1,bakedClimate=-1,bakedWeather=-1;
-    int phobos=Game_Phobos(),climate=settings.timeOfDay*1000+settings.temperature+100,weather=settings.weather*64+(settings.weather?settings.wind:0);
+    static int bakedAuthored=-1,bakedPhobos=-1,bakedClimate=-1,bakedWeather=-1,bakedFast=-1;
+    // Sky depth swings the sun round with the hour (sun.cpp's placeSun): part of the climate here.
+    // The settings as picked, not climateNow: Random's roll changes only with the map, which bakes anew anyway.
+    int phobos=Game_Phobos(),climate=settings.timeOfDay*1000+settings.temperature+100+settings.skyLayers*100000,weather=settings.weather*64+(settings.weather?settings.wind:0);
     bool climateChanged=bakedClimate>=0&&bakedClimate!=climate;
     if((bakedAuthored>=0&&bakedAuthored!=settings.authored)||(bakedPhobos>=0&&bakedPhobos!=phobos)||climateChanged||
        (bakedWeather>=0&&bakedWeather!=weather)) {sunBaked=false;lightBakeKey=-1;bounceKey=-1;ambientKey=-1;flowKey=-1;}
-    if(climateChanged)weatherSunAgain();
+    // DERP mode brings its authored look (mapInfo): its sun and hour too.
+    if(climateChanged||(bakedAuthored>=0&&bakedAuthored!=settings.authored))weatherSunAgain();
     bakedAuthored=settings.authored;bakedPhobos=phobos;bakedClimate=climate;bakedWeather=weather;
+    // Quick bakes (Settings::fastBakes) re-bake the sky light and bounce.
+    if(bakedFast>=0&&bakedFast!=settings.fastBakes) {bounceKey=-1;ambientKey=-1;}
+    bakedFast=settings.fastBakes;
+    // Light by logic (internal.h's lightByLogic) changes the lamps' strength and the daylight: everything re-bakes.
+    static int bakedLogic=-1;
+    if(bakedLogic>=0&&bakedLogic!=settings.lightByLogic) {sunBaked=false;lightBakeKey=-1;bounceKey=-1;ambientKey=-1;}
+    bakedLogic=settings.lightByLogic;
+    // Bumps in all baked light (Settings::bakedBumps): the lamps and bounce bake the HL2 basis.
+    static int bakedBumps=-1;
+    if(bakedBumps>=0&&bakedBumps!=settings.bakedBumps) {lightBakeKey=-1;bounceKey=-1;}
+    bakedBumps=settings.bakedBumps;
+}
+static void pickGraphicsConfig() {
+    int config=M_CheckParm((char*)"-graphics");
+    if(config&&config+1<myargc) {graphicsConfig=myargv[config+1];graphicsConfigNamed=true;}
 }
 void sceneInit(SDL_Window *window) {
     gameWindow=window;
-    int config=M_CheckParm((char*)"-graphics");
-    if(config&&config+1<myargc)graphicsConfig=myargv[config+1];
+    pickGraphicsConfig();
     loadSettings();if(M_CheckParm((char*)"-classic"))settings.accelerated=0;
     if(M_CheckParm((char*)"-rendercheck"))settings.accelerated=1;
     int fov=M_CheckParm((char*)"-fov");if(fov&&fov+1<myargc)settings.fov=std::clamp((float)atof(myargv[fov+1]),60.0f,120.0f);
@@ -191,15 +277,25 @@ void sceneInit(SDL_Window *window) {
     int paletteOption=M_CheckParm((char*)"-palette");
     if(paletteOption&&paletteOption+1<myargc)settings.palette=atoi(myargv[paletteOption+1])!=0;
 }
+// Read on a copy: sceneInit reads them again for the rest, once the game is known.
+void earlySettings() {
+    Settings saved=settings;
+    pickGraphicsConfig();
+    loadSettings();
+    Settings early=settings;
+    settings=saved;
+    fitGame(early);
+    applyGameRules(early);
+}
 void sceneShutdown() {
     stopRelight();
-    R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_BloodSpilled=nullptr;R_DamageHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;R_GlassStruck=nullptr;R_RainedIn=nullptr;r_uncapped=0;v_overlayactive=0;
+    R_Flashlight=nullptr;R_AcceleratedView=nullptr;R_BeforeTic=nullptr;R_MuzzleFlash=nullptr;R_WallImpact=nullptr;R_BloodHit=nullptr;R_BloodSpilled=nullptr;R_DamageHit=nullptr;R_PlaneImpact=nullptr;R_ShotPassed=nullptr;R_GlassStruck=nullptr;R_Explosion=nullptr;Gore_Underfoot=nullptr;R_RainedIn=nullptr;r_uncapped=0;v_overlayactive=0;
     lightBlockers.clear();flashes={};oldThings.clear();oldHeights.clear();
     batches.clear();shadowBatches.clear();decalBatches.clear();mirrorBatches.clear();particleVertices.clear();glowVertices.clear();
-    mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();
-    imagesShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();glassLightShutdown();exposureShutdown();spaceShutdown();
-    bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();
-    impactsShutdown();bloodShutdown();puddlesShutdown();splashesShutdown();bodyMotionShutdown();glassShutdown();shotLightsShutdown();
+    mistVertices.clear();skyVertices.clear();shaftVertices.clear();heatVertices.clear();lampSheetVertices.clear();
+    imagesShutdown();skeletonsShutdown();mapShutdown();causticsShutdown();clearSurfaceLights();lightsShutdown();glassLightShutdown();exposureShutdown();spaceShutdown();skyLayersShutdown();skyLightShutdown();
+    bakeAtlasShutdown();sunShutdown();lightBakeShutdown();clearStaticGrid();indirectShutdown();gpuTraceShutdown();
+    impactsShutdown();explosionsShutdown();bloodShutdown();puddlesShutdown();splashesShutdown();bodyMotionShutdown();glassShutdown();shotLightsShutdown();
     weatherShutdown();wearShutdown();draftsShutdown();blownInShutdown();disturbancesShutdown();groundDentsShutdown();fogShutdown();waterIceShutdown();
 }
 // A new level, or the first after shutdown: each part forgets the last
@@ -219,12 +315,13 @@ static void startLevel() {
     findDoors();
     prepareFalls();
     prepareRagdolls();
+    prepareSkeletons();
     levelSerial=r_levelserial;
 }
 static bool levelPending() {return levelSerial!=r_levelserial||floors.empty();}
 bool bakesPending() {
     return (settings.bakedLights&&lightBakeKey!=lightBakeInputs())||(settings.bounce&&bounceKey!=bounceInputs())||
-        ((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)||(settings.lightFlow&&flowKey!=flowInputs())||(settings.sun&&!sunBaked);
+        ((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)||(flowWanted()&&flowKey!=flowInputs())||(settings.sun&&!sunBaked);
 }
 bool loadPending() {return worldPending&&(levelPending()||settings.thingShadows!=bakeThingsKey||bakesPending());}
 // What this frame builds and bakes, for the loading bar. A new level resets
@@ -237,7 +334,7 @@ static void planStages(bool level) {
     planLoading(LoadStage::Grid,settings.bakedLights&&settings.gridSpriteLight&&(lights||staticSerial!=lightBakeSerial));
     planLoading(LoadStage::Bounce,settings.bounce&&(level||lights||bounceKey!=bounceInputs()));
     planLoading(LoadStage::Ambient,(settings.skyLight||settings.bakedAO)&&(level||ambientKey!=bakeThingsKey));
-    planLoading(LoadStage::Flow,settings.lightFlow&&(level||flowKey!=flowInputs()));
+    planLoading(LoadStage::Flow,flowWanted()&&(level||flowKey!=flowInputs()));
 }
 // What frameMean's alpha tells surfaceLight about a texture's material:
 // 0 DOOM's palette ramps (3, stone, for Game_MatteTexture), 1 ice
@@ -251,6 +348,7 @@ static_assert(GAME_SURFACE_STONE==0&&GAME_SURFACE_METAL==1&&GAME_SURFACE_WOOD==2
 static float surfaceMaterial(int key,int pic,bool flat) {
     if((flat&&iceFlat(pic))||isFrozenFlatKey(key))return 1;
     if(isStillFlatKey(key)) {int lump=-1-key-stillFlatOffset;return surfaceMaterial(-1-lump,lump-firstflat,true);}
+    if(isLitPaintKey(key)) {int lump=-1-key-stillFlatOffset-(1<<27);return surfaceMaterial(-1-lump,lump-firstflat,true);}
     static std::unordered_map<int,float> known;
     auto found=known.find(key);
     if(found!=known.end())return found->second;
@@ -324,6 +422,23 @@ SurfaceBinding surfaceBinding(int key) {
         }
         binding.cycleMean[3]=floor;
     }
+    // Shore ripples in the liquid's own shader (F4 "Shore ripples: In the liquid";
+    // world/shore.glsl's shoreRipple): the numbers liquids.cpp's drawn ripples go
+    // by, per look, and the same clock in the same steps of four tics. Drawn as
+    // blocks they were some 3,000 quads a frame where a view holds much shore.
+    if(flat&&settings.shoreRipples==2&&shoreTexture) {
+        float wavelength=0,period=1,reach=0,width=0,strength=0;
+        switch(liquidLook(pic)) {
+        case LIQUID_LOOK_WATER: wavelength=4.5f;period=0.9f;reach=21;width=0.8f;strength=0.75f;break;
+        case LIQUID_LOOK_THICK: wavelength=7;period=2.4f;reach=23;width=1.8f;strength=0.6f;break;
+        case LIQUID_LOOK_HOT: wavelength=8;period=3.2f;reach=23;width=2.0f;strength=0.85f;break;
+        case LIQUID_LOOK_BLOOD: wavelength=-1;width=0.8f;break;   // only a still dark line
+        default: break;
+        }
+        float now=std::floor(gameSeconds()*TICRATE/4)*4/TICRATE;
+        binding.ripple={wavelength,std::fmod(now/period,1024.0f),reach,strength};
+        binding.rippleShape={width,0,0,0};
+    }
     return binding;
 }
 void screenQuad(std::vector<Vertex> &out,float x,float y,float w,float h,float u0,float v0,float u1,float v1,float light,unsigned mode) {
@@ -347,6 +462,7 @@ static void recordProfile() {
         for(unsigned i=0;i<flashes.count;++i) if(mask[i/32]&(1u<<(i%32))) {++frame.light[i].triangles;++frame.lightTriangles;}
     }
 }
+void muzzleFireFrame(float uiX,float uiY,float uiW,float uiH,float worldX,float worldY,float worldW,float worldH);   // muzzle_fire.cpp
 FrameView prepareFrame(int w,int h) {
     FrameView view={};Uniforms &camera=view.camera;
     uint64_t prepareStart=profileStart();
@@ -358,11 +474,12 @@ FrameView prepareFrame(int w,int h) {
     // A carried torch's colormap (Game_Torch) becomes real light (lights.cpp).
     float torchFlame;
     camera.effects[2]=Game_Torch(&torchFlame)?0:players[displayplayer].fixedcolormap;
+    SlowMotion_Option=settings.slowMotion;
     camera.effects[3]=settings.spriteFilter;camera.materials[0]=settings.emissive;
     unsigned features=(settings.detail?FEATURE_SURFACE_DETAIL:0)|(settings.retroReflections?FEATURE_RETRO_REFLECTIONS:0)|
         (settings.caustics&&causticTexture?FEATURE_CAUSTICS:0)|(settings.texelLight?FEATURE_TEXEL_BAKE:0)|
         (settings.caustics&&settings.ceilingCaustics&&causticTexture?FEATURE_CEILING_CAUSTICS:0)|
-        (settings.lightFlow&&flowKey>=0&&flowKey==flowInputs()?FEATURE_LIGHT_FLOW:0)|
+        (settings.lightFlow&&settings.lightModel==0&&flowKey>=0&&flowKey==flowInputs()?FEATURE_LIGHT_FLOW:0)|
         (settings.bakedAO&&ambientKey>=0&&ambientKey==bakeThingsKey?FEATURE_BAKED_OCCLUSION:0)|
         (settings.glossyScreens?FEATURE_GLOSSY_SCREENS:0)|(settings.causticsComputed?FEATURE_CAUSTICS_COMPUTED:0)|
         (settings.causticsGrow?FEATURE_CAUSTICS_GROW:0)|(settings.causticsAngle?FEATURE_CAUSTICS_ANGLE:0)|
@@ -375,6 +492,11 @@ FrameView prepareFrame(int w,int h) {
         (settings.glowEdges&&shoreTexture&&causticPattern?FEATURE_GLOW_EDGES:0)|
         (settings.windowStreaks?FEATURE_WINDOW_STREAKS:0)|(settings.liveReadouts?FEATURE_LIVE_READOUTS:0);
     camera.flashlightTint[3]=(float)features; // see shaders/feature_flags.h
+    // F4 "Quick baked light reads" (bake.glsl's fast path); the feature bits are all taken, so it rides in farFogRange.z.
+    static const bool deck=[]{const char *d=getenv("SteamDeck");return d&&!strcmp(d,"1");}();
+    camera.farFogRange[2]=settings.texelLight&&(settings.fastBakeReads==1||(settings.fastBakeReads==0&&deck))?1.0f:0.0f;
+    // F4 "Hero light": the floor it lifts dark surfaces toward (world.frag); 0 off. Also in farFogRange, for want of a bit.
+    camera.farFogRange[3]=settings.heroLight==2?0.5f:settings.heroLight==1?0.3f:0.0f;
     camera.map[0]=mapOrigin[0];camera.map[1]=mapOrigin[1];camera.map[2]=1/mapCell;
     camera.map[3]=settings.softLight&&seamTexture&&worldPending;
     camera.materials[2]=settings.fog&&worldPending;
@@ -387,12 +509,13 @@ FrameView prepareFrame(int w,int h) {
     // The episode's mood: a dark outdoors dims its sky, a little less than the ground.
     camera.mood[0]=worldPending?1+(levelMood().outdoor-1)*0.85f:1;
     for(int c=0;c<3;++c)camera.mood[1+c]=worldPending?levelMood().skyTint[c]:1; // Its sky's tint.
-    float uiWidth=std::min((float)w,h*4.0f/3),uiHeight=uiWidth*0.75f,uiX=(w-uiWidth)/2;
-    float uiY=worldPending&&settings.widescreen?h-uiHeight:(h-uiHeight)/2;
+    // The 320x200 frame and the status bar (status_bar.cpp): the view's place in the frame.
+    const ScreenLayout layout=screenLayout(w,h);
+    float uiX=layout.uiX,uiY=layout.uiY,uiWidth=layout.uiWidth,uiHeight=layout.uiHeight;
     float worldX=uiX+uiWidth*viewwindowx/320,worldY=uiY+uiHeight*viewwindowy/200.0f;
     float worldW=uiWidth*scaledviewwidth/320,worldH=uiHeight*viewheight/200.0f;
     if(settings.widescreen&&scaledviewwidth==320)
-    { worldX=0;worldY=0;worldW=w;worldH=h-uiHeight*(1-viewheight/200.0f); }
+    { worldX=0;worldY=0;worldW=w;worldH=layout.bar.apart?uiY+worldH:h-uiHeight*(1-viewheight/200.0f); }
     float referenceAspect=(4.0f/3)*(scaledviewwidth/320.0f)/(viewheight/200.0f);
     camera.projection[1]=referenceAspect/tan(settings.fov*doomPi/360);
     camera.projection[0]=camera.projection[1]/(worldW/std::max(1.0f,worldH));
@@ -423,13 +546,16 @@ FrameView prepareFrame(int w,int h) {
         bakeOnlyActive=bakedLightsActive&&(lightBakeKey&2);
         // bake.z: 1 bake-only lights (directions and flicker groups), -1
         // flicker groups only, for lamps that switch with their sector.
-        bool directions=wallDirectionTexture&&flatDirectionTexture;
-        camera.bake[0]=bakedLightsActive;camera.bake[2]=directions?(bakeOnlyActive?1.0f:lampGroupCount>0?-1.0f:0.0f):0.0f;
+        bool directions=bakeDirected&&wallDirectionTexture&&flatDirectionTexture;
+        // bake.x: 2 with whole-level lighting.
+        camera.bake[0]=bakedLightsActive?(settings.lightModel==1?2.0f:1.0f):0.0f;
+        camera.bake[2]=directions?(bakeOnlyActive?1.0f:lampGroupCount>0?-1.0f:0.0f):0.0f;
         if(const mobj_t *viewer=players[displayplayer].mo) {
             float at[3]={units(viewer->x),units(viewer->y),0};
             updateLampGroups(at);
         }
         for(int g=0;g<flickerGroups;++g)camera.flicker[g/4][g%4]=groupFlicker(g);
+        screenTextUpdate();   // text running down dim monitors (screen_text.cpp)
         player_t *player=&players[displayplayer];mobj_t *mo=player->mo;
         camera.eye[0]=units(mo->x);camera.eye[1]=units(mo->y);camera.eye[2]=units(player->viewz);
         // Phobos: the player's body turned by his guns' kicks takes the view with it (F4, off
@@ -484,6 +610,18 @@ FrameView prepareFrame(int w,int h) {
         camera.forward[0]=cos(yaw)*cos(look);camera.forward[1]=sin(yaw)*cos(look);camera.forward[2]=sin(look);
         camera.up[0]=-cos(yaw)*sin(look);camera.up[1]=-sin(yaw)*sin(look);camera.up[2]=cos(look);
         if(Game_ViewFlipped())for(int c=0;c<3;++c) {camera.right[c]=-camera.right[c];camera.up[c]=-camera.up[c];}
+        // Authored's slide (p_moves.c): the view tips over a few degrees, his weight on one hip, and
+        // widens, as speed does to a view.
+        if(float slide=demoplayback?0:Game_SlideView(displayplayer,fraction)) {
+            constexpr float slideRoll=0.07f,slideWiden=12;
+            float c=cos(slideRoll*slide),s=sin(slideRoll*slide);
+            for(int k=0;k<3;++k) {
+                float r=camera.right[k],u=camera.up[k];
+                camera.right[k]=r*c+u*s;camera.up[k]=u*c-r*s;
+            }
+            float wider=tan(settings.fov*doomPi/360)/tan((settings.fov+slideWiden*slide)*doomPi/360);
+            camera.projection[0]*=wider;camera.projection[1]*=wider;
+        }
         // Phobos grav boots: upside down on a ceiling the view rolls over about where he
         // looks, eased (a spring, by the clock: smooth at any frame rate).
         {
@@ -501,11 +639,34 @@ FrameView prepareFrame(int w,int h) {
                 }
             }
         }
-        camera.fog[0]=0.00045f*(player->mo->subsector->sector->ceilingpic==skyflatnum?0.35f:1.0f);
+        // The air's fog thins under the open sky (to 0.35). By how much of the sky the ground
+        // under the player sees (the sky bake's share), eased over half a second: by whether
+        // his sector had a sky ceiling, one step under a porch's roof tripled it at once, and
+        // the yard he had just stood in went dull and flat before his eyes.
+        {
+            static float openAir=-1;static unsigned airSerial=~0u;static uint64_t airTime=0;
+            const sector_t *own=player->mo->subsector->sector;
+            float open=own->ceilingpic==skyflatnum?1.0f:0.0f;
+            if(settings.skyLight&&ambientKey==bakeThingsKey&&!flatLightCells.empty()&&mapWidth>0) {
+                int cx=std::clamp((int)std::floor((units(player->mo->x)-mapOrigin[0])/mapCell),0,mapWidth-1);
+                int cy=std::clamp((int)std::floor((units(player->mo->y)-mapOrigin[1])/mapCell),0,mapHeight-1);
+                // Half the sky or more counts as open air.
+                open=std::clamp((flatCell(floorBounce,(size_t)cy*mapWidth+cx)[3]>>4)/15.0f*2,0.0f,1.0f);
+            }
+            uint64_t now=SDL_GetTicksNS();
+            if(airSerial!=r_levelserial||openAir<0) {airSerial=r_levelserial;openAir=open;}
+            else openAir+=(open-openAir)*(1-std::exp(-std::min((now-airTime)/1e9f,0.25f)/0.5f));
+            airTime=now;
+            camera.fog[0]=0.00045f*(1-0.65f*openAir);
+        }
+#ifdef DOOM_DEVTOOLS
+        // DERP_FOGOUT=0|1: the fog as if the player stood under a roof (0) or under the sky (1), to see what that switch does.
+        if(const char *held=getenv("DERP_FOGOUT"))camera.fog[0]=0.00045f*(atoi(held)?0.35f:1.0f);
+#endif
         camera.fog[1]=0.012f;camera.fog[2]=fogReferenceHeight;
         camera.fog[3]=levelSeconds(fraction);
         // DERPINFO farfog: Turok's distance fog (world.frag), and the backdrop in its colour (sky.frag).
-        const derp_map &info=DerpInfo_Map;
+        const derp_map &info=mapInfo();
         farFogActive=info.farFogFar>info.farFogNear&&info.farFogNear>=0;
         if(farFogActive) {
             int rgb=info.farFogColor>=0?info.farFogColor:0x060608;
@@ -519,24 +680,24 @@ FrameView prepareFrame(int w,int h) {
         // Weather and wear (weather.cpp, wear.cpp): where wear.glsl finds its
         // records, how wet the windows and the ground under the sky are.
         camera.right[3]=wearBase();
-        camera.forward[3]=settings.weather?glassWetNow:0;
-        camera.up[3]=settings.weather?wetNow:0;
+        camera.forward[3]=climateNow().weather?glassWetNow:0;
+        camera.up[3]=climateNow().weather?wetNow:0;
         // The far rain or snow sky.frag draws over the sky (weather.cpp's
         // stops at the map's sky); which kind falls (Weather), for the
         // ground and glass too.
-        camera.weather[0]=settings.weather&&camera.effects[2]==0?fallNow:0;
+        camera.weather[0]=climateNow().weather&&camera.effects[2]==0?fallNow:0;
         // The wind only for what falls: with nothing falling no shader works it.
-        camera.weather[3]=settings.weather?(float)falling():0;
+        camera.weather[3]=climateNow().weather?(float)falling():0;
         camera.weather[1]=camera.weather[3]!=0?windNow[0]:0;camera.weather[2]=camera.weather[3]!=0?windNow[1]:0;
         {
-            const WeatherKind &kind=weatherKind(settings.weather?falling():WEATHER_NONE);
+            const WeatherKind &kind=weatherKind(climateNow().weather?falling():WEATHER_NONE);
             std::array<float,3> tint=kind.tint?kind.tint():std::array<float,3>{0,0,0};
             for(int c=0;c<3;++c)camera.weatherTint[c]=tint[c];
             camera.weatherTint[3]=kind.tint?1:0;
             // The far sheets in the colour of the farthest near ones (farFall),
             // what settles in its own (snow's white unless the kind says).
-            Weather now=settings.weather?falling():WEATHER_NONE;
-            bool far=now==WEATHER_RAIN||now==WEATHER_NUKAGE||now==WEATHER_SAND||now==WEATHER_ASH;
+            Weather now=climateNow().weather?falling():WEATHER_NONE;
+            bool far=now==WEATHER_RAIN||now==WEATHER_NUKAGE||now==WEATHER_SAND||now==WEATHER_ASH||now==WEATHER_FIRESTORM;
             std::array<float,3> lies=kind.lies?kind.lies():std::array<float,3>{0.8f,0.82f,0.87f};
             for(int c=0;c<3;++c) {camera.fallColor[c]=far?farFall.color[c]:0;camera.settleColor[c]=lies[c];}
             camera.fallColor[3]=camera.settleColor[3]=0;
@@ -547,6 +708,7 @@ FrameView prepareFrame(int w,int h) {
         // the frost on the helmet's visor (present.frag).
         camera.phobos[0]=Game_Phobos()?1:0;camera.phobos[1]=Game_Phobos()?starVisibility():0;
         camera.phobos[2]=visorFrost();
+        camera.phobos[3]=daylightScale();
         renderFraction=fraction;
         // Caustics follow the liquid's frame and crossfade like its floor (surfaceBinding).
         if(!causticFrames.empty()&&causticSpeed>0&&leveltime>0) {
@@ -555,7 +717,7 @@ FrameView prepareFrame(int w,int h) {
             camera.texFilter[3]=((leveltime-1)%causticSpeed+fraction)/causticSpeed;
         }
         uint64_t geometryStart=profileStart();
-        if(level)loadingStage(LoadStage::Textures);
+        if(level) {loadingStage(LoadStage::Textures);precacheSprites();precacheWalls();}
         geometry(camera,fraction);
         profileAdd(profile.frame.geometryMs,geometryStart);
         if(profile.enabled)skipProfiledLights();
@@ -563,10 +725,13 @@ FrameView prepareFrame(int w,int h) {
         timed(Stat::Bakes,[&]{
             if(settings.bakedLights&&(poolRebakeWanted()||lightBakeKey!=lightBakeInputs()))bakeLights();
             if(settings.bakedLights&&settings.gridSpriteLight&&lightBakeKey==lightBakeInputs()&&staticSerial!=lightBakeSerial)bakeStaticGrid();
-            if(settings.bounce&&bounceKey!=bounceInputs())bakeBounce();
+            // The sky share first: the bounce reads it (whole-level lighting, bake_bounce.cpp).
             if((settings.skyLight||settings.bakedAO)&&ambientKey!=bakeThingsKey)bakeAmbient();
-            if(settings.lightFlow&&flowKey!=flowInputs())bakeFlow();
+            if(settings.bounce&&bounceKey!=bounceInputs())bakeBounce();
+            if(flowWanted()&&flowKey!=flowInputs())bakeFlow();
         });
+        gpuTraceCheck();     // DERP_GPUTRACECHECK only (gpu_trace_check.cpp)
+        bakeCacheFinish();   // what this frame baked to disk, before play changes any of it (bake_cache.cpp)
         camera.bake[1]=settings.bounce&&bounceKey>=0?bounceStrength:0;
         camera.bake[3]=camera.bake[1]>0?settings.bounceTint:0;
         bool ambient=ambientKey==bakeThingsKey;
@@ -579,9 +744,11 @@ FrameView prepareFrame(int w,int h) {
         // Outdoor haze in the sky's horizon color (Game_Sun), with the fog.
         for(int c=0;c<3;++c)camera.haze[c]=horizon[c]*camera.mood[0]*camera.mood[1+c];
         camera.haze[3]=settings.fog?game.haze:0;
+        skyLayersUniforms(camera);   // the sky's ridges and mist by distance (sky_layers.cpp)
         climateUniforms(camera);   // the heat's glare and warm haze, the cold's frost (climate.cpp)
         ashHazeUniforms(camera);   // the ash's pall over the far open ground (ash.cpp)
         sandHazeUniforms(camera);  // a sandstorm's dust and whiteout (sand.cpp)
+        firestormHazeUniforms(camera);   // a firestorm's smoke, lit orange (firestorm.cpp)
         snowHazeUniforms(camera);  // a blizzard's whiteout (snow.cpp)
         dryIceHazeUniforms(camera);   // dry ice's haze in the bank's colour (fog.cpp)
         // The whiteout close by (whiteout.cpp; world.frag): over what lies out
@@ -600,6 +767,7 @@ FrameView prepareFrame(int w,int h) {
         if(profile.skip&I_RENDER3D_SKIP_MIST) {mistVertices.clear();shaftVertices.clear();}
         if(profile.skip&I_RENDER3D_SKIP_FOG) {fogLights={};camera.materials[2]=0;}
         if(profile.skip&I_RENDER3D_SKIP_BLOOM) camera.materials[1]=0;
+        applyProfileKnob(camera);   // the perf test's feature knob, last (profile_knobs.cpp)
     }
     if(!worldPending) {mistVertices.clear();shaftVertices.clear();heatVertices.clear();skyVertices.clear();}
     uint64_t masksStart=profileStart();
@@ -609,13 +777,25 @@ FrameView prepareFrame(int w,int h) {
     timed(Stat::Lights,buildLightWords);
     profileAdd(profile.frame.lightsMs,wordsStart);
     if(profile.enabled) {recordProfile();profileAdd(profile.frame.prepareMs,prepareStart);}
-    view.uiX=uiX;view.uiY=uiY;view.uiWidth=uiWidth;view.uiHeight=uiHeight;
+    view.uiX=uiX;view.uiY=uiY;view.uiWidth=uiWidth;view.uiHeight=uiHeight;view.bar=layout.bar;
+    muzzleFireFrame(uiX,uiY,uiWidth,uiHeight,worldX,worldY,worldW,worldH);   // where the weapon layer and the view lie, for the fire on its barrel (muzzle_fire.cpp)
     view.worldX=worldX;view.worldY=worldY;view.worldW=worldW;view.worldH=worldH;
+    frameAfterLoadDone();
     return view;
 }
-std::vector<unsigned> hudPixels(const unsigned *pixels) {
-    std::vector<unsigned> overlay(pixels,pixels+SCREENWIDTH*SCREENHEIGHT);
-    if(worldPending) for(int i=0;i<SCREENWIDTH*SCREENHEIGHT;++i)overlay[i]=(overlay[i]&0xffffff)|(unsigned)v_overlaymask[i]<<24;
+// Built over last frame's: most frames the status bar and the mask stand
+// still, and then the upload (gpu3d/draw.cpp) is left out.
+const std::vector<unsigned> &hudPixels(const unsigned *pixels,bool &changed) {
+    static std::vector<unsigned> overlay;
+    changed=overlay.size()!=(size_t)(SCREENWIDTH*SCREENHEIGHT);
+    if(changed)overlay.assign(SCREENWIDTH*SCREENHEIGHT,0);
+    unsigned differ=0;
+    if(worldPending)for(int i=0;i<SCREENWIDTH*SCREENHEIGHT;++i) {
+        unsigned now=(pixels[i]&0xffffff)|(unsigned)v_overlaymask[i]<<24;
+        differ|=now^overlay[i];overlay[i]=now;
+    }
+    else for(int i=0;i<SCREENWIDTH*SCREENHEIGHT;++i) {differ|=pixels[i]^overlay[i];overlay[i]=pixels[i];}
+    changed=changed||differ!=0;
     return overlay;
 }
 // The sky sector a stretch of open air under a roof (a porch, a doorless
@@ -648,11 +828,12 @@ int openAirYard(int sector) {
 // (openAirYard) carries its yard's, negated: lit by the same rule and the
 // same enclosure and floor as the yard, so nothing shows on the roof's line.
 // Then the fog bank's entries while it lies (fog.cpp) and the wear records (wear.cpp).
-std::vector<std::array<float,4>> sectorInfo() {
-    std::vector<std::array<float,4>> info(std::max(1,numsectors));
+const std::vector<std::array<float,4>> &sectorInfo() {
+    static std::vector<std::array<float,4>> info;   // kept from frame to frame: no allocation each
+    info.assign(std::max(1,numsectors),{});
     if(worldPending)for(int i=0;i<numsectors;++i) {
         int yard=openAirYard(i);
-        info[i]={lighting(&sectors[i]),floorZ(&sectors[i]),ceilZ(&sectors[i]),
+        info[i]={roomPulse(&sectors[i],lighting(&sectors[i])),floorZ(&sectors[i]),ceilZ(&sectors[i]),
             sectors[i].ceilingpic==skyflatnum?packOutdoor(&sectors[i]):yard>=0?-packOutdoor(&sectors[yard]):0.0f};
     }
     if(worldPending)fogBankEntries(info);
@@ -672,7 +853,14 @@ static int renderFramesTaken=0;
 bool renderCheckDue() {
     int after=renderArg("-rendertic",10)+renderFramesTaken*std::max(1,renderArg("-renderevery",1));
     bool due=M_CheckParm((char*)"-rendercheck")&&worldPending&&gametic>after;
-    if(due&&M_CheckParm((char*)"-rendersettings")&&!I_Render3DSettingsOpen()) {I_Render3DSettingsMenu();return false;}
+    if(due&&M_CheckParm((char*)"-rendersettings")&&!I_Render3DSettingsOpen()) {
+        // -rendersettingsgroup G -rendersettingstab T: that page of it (both from 0), -rendersettingsrow R: R rows down.
+        I_Render3DSettingsMenu();
+        for(int i=renderArg("-rendersettingsgroup",0);i>0;--i)I_Render3DSettingsKey(SDL_SCANCODE_PAGEDOWN,0);
+        I_Render3DSettingsKey(SDL_SCANCODE_1+renderArg("-rendersettingstab",0),0);
+        for(int i=renderArg("-rendersettingsrow",0);i>0;--i)I_Render3DSettingsKey(SDL_SCANCODE_DOWN,0);
+        return false;
+    }
     return due;
 }
 void saveScreenshot(const void *bgra,int width,int height,int stride) {
@@ -728,6 +916,7 @@ void updateTitle(int width,int height,const char *renderer) {
 // Backend-independent parts of the renderer interface.
 using namespace doom3d;
 void I_Render3DStartFrame(void) {worldPending=false;v_overlayactive=false;}
+void I_Render3DEarlySettings(void) {earlySettings();}
 int I_Render3DIsAccelerated(void) {return settings.accelerated;}
 #ifdef DOOM_DEVTOOLS
 extern "C" boolean devInputHeld(event_t *event);   // local dev tools: the player held still (null: the mouse's look)

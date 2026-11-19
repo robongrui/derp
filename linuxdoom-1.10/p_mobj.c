@@ -32,8 +32,16 @@ rcsid[] = "$Id: p_mobj.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 #include "m_random.h"
 
 #include "doomdef.h"
+#include "p_rounds.h"
 #include "p_local.h"
 #include "p_phobos.h"
+#include "p_derp.h"
+#include "p_tactics.h"
+#include "p_demons.h"
+#include "p_strides.h"
+#include "p_derplog.h"
+#include "p_bullets.h"
+#include "p_swept.h"
 #include "sounds.h"
 
 #include "st_stuff.h"
@@ -124,6 +132,7 @@ void P_XYMovement (mobj_t* mo)
     fixed_t	xmove;
     fixed_t	ymove;
     fixed_t friction = FRICTION;
+    boolean	moved;
 			
     if (!mo->momx && !mo->momy)
     {
@@ -169,7 +178,12 @@ void P_XYMovement (mobj_t* mo)
 	    xmove = ymove = 0;
 	}
 		
-	if (!P_TryMove (mo, ptryx, ptryy))
+	// Moving by momentum: for DERP's monsters a ledge no longer holds a
+	// thrown body (P_Shoved).
+	derpmomentum = true;
+	moved = P_TryMove (mo, ptryx, ptryy);
+	derpmomentum = false;
+	if (!moved)
 	{
 	    // blocked move
 	    if (mo->player || P_Loose (mo))
@@ -242,7 +256,7 @@ void P_XYMovement (mobj_t* mo)
 	return;
     }
 
-    if (mo->flags & MF_CORPSE)
+    if ((mo->flags & MF_CORPSE) || P_DerpSliding (mo))
     {
 	// do not stop sliding
 	//  if halfway off a step with some momentum
@@ -276,8 +290,9 @@ void P_XYMovement (mobj_t* mo)
         // Only living grounded players receive the tighter movement tuning.
         if (player && player->playerstate == PST_LIVE
             && !(mo->flags & MF_CORPSE) && P_UseResponsiveMovement ())
-            friction = (player->cmd.forwardmove || player->cmd.sidemove)
-                ? 0xc000 : 0xa000;
+            friction = P_DerpGrip (player->cmd.forwardmove || player->cmd.sidemove,
+                                   (player->cmd.forwardmove || player->cmd.sidemove)
+                                   ? 0xc000 : 0xa000);
 	mo->momx = FixedMul (mo->momx, friction);
 	mo->momy = FixedMul (mo->momy, friction);
     }
@@ -342,6 +357,7 @@ void P_ZMovement (mobj_t* mo)
 	    P_BodyContact (mo, mo->momz, false);
 	    P_Jolt (mo, mo->momz);
 	    P_Touchdown (mo, mo->momz);
+	    P_DerpLanded (mo, mo->momz);
 	    if (mo->player
 		&& mo->momz < -GRAVITY*8
 		&& !P_Flying ())
@@ -479,6 +495,9 @@ P_NightmareRespawn (mobj_t* mobj)
 //
 void P_MobjThinker (mobj_t* mobj)
 {
+    // DERP: the next share of a walk, before a blow can move it.
+    P_DerpStrides (mobj);
+
     // momentum movement
     if (mobj->momx
 	|| mobj->momy
@@ -500,6 +519,17 @@ void P_MobjThinker (mobj_t* mobj)
 	    return;		// mobj was removed
     }
 
+    // Authored: its feet swept away, it does nothing until it is up again.
+    if (P_Swept (mobj))
+    {
+	P_SweptThink (mobj);
+	return;
+    }
+
+    P_DerpFloor (mobj);
+    P_DerpBodyThink (mobj);
+    P_DemonThink (mobj);
+    P_DerpLogThink (mobj);
     
     // cycle through states,
     // calling action functions at transitions
@@ -511,6 +541,8 @@ void P_MobjThinker (mobj_t* mobj)
 	if (!mobj->tics)
 	    if (!P_SetMobjState (mobj, mobj->state->nextstate) )
 		return;		// freed itself
+	// DERP: this tic's steps walked out over the tics to the next.
+	P_DerpStridesEnd (mobj);
     }
     else
     {
@@ -563,7 +595,7 @@ P_SpawnMobj
     mobj->radius = info->radius;
     mobj->height = info->height;
     mobj->flags = info->flags;
-    mobj->health = info->spawnhealth;
+    mobj->health = P_DerpHealth (type);
 
     if (gameskill != sk_nightmare)
 	mobj->reactiontime = info->reactiontime;
@@ -583,6 +615,8 @@ P_SpawnMobj
 	
     mobj->floorz = mobj->subsector->sector->floorheight;
     mobj->ceilingz = mobj->subsector->sector->ceilingheight;
+    mobj->homesector = mobj->subsector->sector - sectors;
+    mobj->serial = P_DerpSerial ();
 
     if (z == ONFLOORZ)
 	mobj->z = mobj->floorz;
@@ -610,6 +644,7 @@ int		iquetail;
 
 void P_RemoveMobj (mobj_t* mobj)
 {
+    P_BulletsForget (mobj);
     if ((mobj->flags & MF_SPECIAL)
 	&& !(mobj->flags & MF_DROPPED)
 	&& (mobj->type != MT_INV)
@@ -987,11 +1022,11 @@ P_SpawnMissile
 
     th->angle = an;
     an >>= ANGLETOFINESHIFT;
-    th->momx = FixedMul (th->info->speed, finecosine[an]);
-    th->momy = FixedMul (th->info->speed, finesine[an]);
-	
+    th->momx = FixedMul (P_RoundMissileSpeed (th), finecosine[an]);
+    th->momy = FixedMul (P_RoundMissileSpeed (th), finesine[an]);
+
     dist = P_AproxDistance (dest->x - source->x, dest->y - source->y);
-    dist = dist / th->info->speed;
+    dist = dist / P_RoundMissileSpeed (th);
 
     if (dist < 1)
 	dist = 1;
@@ -1075,19 +1110,19 @@ P_SpawnPlayerMissile
     th->angle = an;
     if (look)
     {
-	fixed_t	flat = (fixed_t)(cos (tourpitch)*th->info->speed);
+	fixed_t	flat = (fixed_t)(cos (tourpitch)*P_RoundMissileSpeed (th));
 
 	th->momx = FixedMul (flat, finecosine[an>>ANGLETOFINESHIFT]);
 	th->momy = FixedMul (flat, finesine[an>>ANGLETOFINESHIFT]);
-	th->momz = (fixed_t)(sin (tourpitch)*th->info->speed);
+	th->momz = (fixed_t)(sin (tourpitch)*P_RoundMissileSpeed (th));
     }
     else
     {
-	th->momx = FixedMul( th->info->speed,
+	th->momx = FixedMul( P_RoundMissileSpeed (th),
 			     finecosine[an>>ANGLETOFINESHIFT]);
-	th->momy = FixedMul( th->info->speed,
+	th->momy = FixedMul( P_RoundMissileSpeed (th),
 			     finesine[an>>ANGLETOFINESHIFT]);
-	th->momz = FixedMul( th->info->speed, slope);
+	th->momz = FixedMul( P_RoundMissileSpeed (th), slope);
     }
 
     P_CheckMissileSpawn (th);

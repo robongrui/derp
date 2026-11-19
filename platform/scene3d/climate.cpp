@@ -18,17 +18,63 @@ namespace {
 // adds, the disc's least glow; the outdoors' light (the mood's outdoor), the
 // sky's tint; whether the sun is up.
 struct Hour { float light,disc; std::array<float,3> tint; float shade,gain,glow,outdoor; std::array<float,3> sky; bool up; };
+// An hour written as what it is: the sky's light (open shade) and what the sun adds to it on
+// open ground, as levels under Doom's sun (Game_Sun's shade 0.3; another game's own sun bends
+// them as it does its own day). The rule takes them as the outdoors' level L (outdoor, 1 at
+// the most), shade = 1 - sky/L and gain = (sky + sun)/L - 1 (lightRule, bake_sun.cpp). They
+// used to be set the other way round, a level and a softer shade: the softer shade of a low
+// sun raised the sky's light by about what the lower level took, and dusk stood as bright in
+// the shade as noon.
+constexpr Hour hour(float light,float disc,std::array<float,3> tint,float skyLevel,float sunLevel,float outdoor,float glow,std::array<float,3> sky,bool up) {
+    float level=outdoor<1?outdoor:1;
+    return {light,disc,tint,(1-skyLevel/level)/0.3f,(skyLevel+sunLevel)/level-1,glow,outdoor,sky,up};
+}
 const Hour hours[]={
-    {40,40,{1,1,1},1,0,0,1,{1,1,1},true},                                // the map's own (unused)
-    {20,3,{1,0.72f,0.55f},0.75f,0,0.8f,0.8f,{1.06f,0.86f,0.82f},true},     // dawn
-    {35,22,{1,0.93f,0.84f},1,0.05f,1,0.95f,{1,0.98f,0.96f},true},         // morning
-    {68,68,{1,0.98f,0.94f},1.25f,0.15f,1,1.1f,{1.04f,1.03f,1},true},      // noon
-    {45,32,{1,0.9f,0.76f},1.05f,0.08f,1,1,{1.05f,0.98f,0.9f},true},       // afternoon
-    {20,3,{1,0.6f,0.4f},0.75f,0,0.9f,0.72f,{1.1f,0.76f,0.62f},true},      // dusk
-    {40,40,{1,1,1},1,0,0,0.5f,{0.72f,0.8f,1},false},                      // night
+    //   light disc  sun's tint          sky     sun      outdoor glow  sky's tint
+    hour(40,40,{1,1,1},                  0.7f,   0.3f,    1,      0,    {1,1,1},true),                 // the map's own (unused)
+    hour(20,3, {1,0.72f,0.55f},          0.36f,  0.16f,   0.52f,  0.8f, {1.06f,0.86f,0.82f},true),     // dawn
+    hour(35,22,{1,0.93f,0.84f},          0.665f, 0.3325f, 0.95f,  1,    {1,0.98f,0.96f},true),         // morning
+    hour(68,68,{1,0.98f,0.94f},          0.625f, 0.525f,  1.1f,   1,    {1.04f,1.03f,1},true),         // noon
+    hour(45,32,{1,0.9f,0.76f},           0.685f, 0.395f,  1,      1,    {1.05f,0.98f,0.9f},true),      // afternoon
+    hour(20,3, {1,0.6f,0.4f},            0.32f,  0.16f,   0.48f,  0.9f, {1.1f,0.76f,0.62f},true),      // dusk
+    hour(40,40,{1,1,1},                  0.25f,  0,       0.25f,  0,    {0.72f,0.8f,1},false),         // night
 };
 int hourNow=TIME_OWN;
-bool explicitTemperature() {return settings.temperature!=climateOwn&&!Game_Phobos();}
+bool explicitTemperature() {return climateNow().temperature!=climateOwn&&!Game_Phobos();}
+}
+
+// Weather's Random: this map's roll, the same every time for the same map in
+// the same playthrough (Game_ClimateSeed: a new game rolls anew, a death or a
+// save loaded keeps it). Wind only where the game has it.
+namespace {
+Climate roll() {
+    static Climate rolled{};static unsigned long long rolledFor=~0ull;
+    bool wind=Game_HasEffect(GAME_EFFECT_WIND)!=0;
+    unsigned long long key=((unsigned long long)Game_ClimateSeed()<<32)^((unsigned long long)gameepisode<<16)^((unsigned long long)gamemap<<1)^(wind?1:0);
+    if(key!=rolledFor) {
+        rolledFor=key;rolled=rollClimate(key,wind);
+        fprintf(stderr,"3D climate: Random rolled weather %d, amount %d, hour %d, %d C, wind %d from %d.\n",
+                rolled.weather,rolled.fallAmount,rolled.timeOfDay,rolled.temperature,rolled.wind,rolled.windFrom);
+    }
+    return rolled;
+}
+}
+bool climateRolled(Climate &climate) {
+    if(gamestate!=GS_LEVEL||Game_Phobos())return false;
+    climate=roll();
+    return true;
+}
+// Where the player leaves the hour or the temperature to the map, the map's own DERPINFO (or
+// DERP mode's authored look, mapInfo) may give them.
+Climate climateNow() {
+    if(settings.weather==weatherRandom)return roll();
+    Climate c{settings.weather,settings.fallAmount,settings.timeOfDay,settings.temperature,settings.wind,settings.windFrom};
+    if(gamestate==GS_LEVEL&&!Game_Phobos()) {
+        const derp_map &own=mapInfo();
+        if(c.timeOfDay==TIME_OWN&&own.time>TIME_OWN&&own.time<=TIME_NIGHT)c.timeOfDay=own.time;
+        if(c.temperature==climateOwn&&own.temperatureSet)c.temperature=own.temperature;
+    }
+    return c;
 }
 
 // The hour the mood was last worked out for (TIME_OWN: as derived).
@@ -40,10 +86,10 @@ void climateMood(game_mood &mood) {
     hourNow=TIME_OWN;
     if(Game_Phobos())return;
     // How hard it falls: a quarter of a downpour up to all of it.
-    if(settings.fallAmount>0&&settings.fallAmount<=4)mood.rainAmount=settings.fallAmount/4.0f;
-    int hour=settings.timeOfDay;
-    if(hour==TIME_OWN&&explicitTemperature()&&!mood.sun&&mood.outdoor<0.8f&&settings.temperature>hottestAt(TIME_NIGHT))
-        hour=settings.temperature>hottestAt(TIME_DUSK)?TIME_AFTERNOON:TIME_DUSK;
+    if(climateNow().fallAmount>0&&climateNow().fallAmount<=4)mood.rainAmount=climateNow().fallAmount/4.0f;
+    int hour=climateNow().timeOfDay;
+    if(hour==TIME_OWN&&explicitTemperature()&&!mood.sun&&mood.outdoor<0.8f&&climateNow().temperature>hottestAt(TIME_NIGHT))
+        hour=climateNow().temperature>hottestAt(TIME_DUSK)?TIME_AFTERNOON:TIME_DUSK;
     hourNow=hour;
     if(hour!=TIME_OWN) {
         const Hour &h=hours[hour];
@@ -72,12 +118,12 @@ void climateSun(float &elevation,float &discElevation,std::array<float,3> &tint,
     shade*=1+0.3f*heat;gain+=0.15f*heat;glow=std::max(glow,heat);
 }
 // The temperature outside (C): the player's, or the falling kind's own.
-float climateTemperature(Weather kind) {return explicitTemperature()?(float)settings.temperature:weatherKind(kind).outside;}
+float climateTemperature(Weather kind) {return explicitTemperature()?(float)climateNow().temperature:weatherKind(kind).outside;}
 // The heat of the day: 0 up to 30 C, 1 at 50 C (only the player's: no
 // weather of a map's own is that hot). The cold on clear windows: 0 at 0 C,
 // 1 at -20 C, only while nothing falls (what falls frosts them itself).
-float climateHeat() {return explicitTemperature()?std::clamp((settings.temperature-30)/20.0f,0.0f,1.0f):0.0f;}
-float climateCold() {return explicitTemperature()&&falling()==WEATHER_NONE?std::clamp(-settings.temperature/20.0f,0.0f,1.0f):0.0f;}
+float climateHeat() {return explicitTemperature()?std::clamp((climateNow().temperature-30)/20.0f,0.0f,1.0f):0.0f;}
+float climateCold() {return explicitTemperature()&&falling()==WEATHER_NONE?std::clamp(-climateNow().temperature/20.0f,0.0f,1.0f):0.0f;}
 // The map's own weather under the player's temperature and wind: snow above
 // freezing falls as rain, rain below it as snow; the rest that doesn't fit
 // (rain past 40 C, fog in the heat, a sandstorm in still air) clears.
@@ -85,23 +131,23 @@ float climateCold() {return explicitTemperature()&&falling()==WEATHER_NONE?std::
 Weather climateWeather(Weather own) {
     if(own==WEATHER_NUKAGE||own==WEATHER_NONE||Game_Phobos())return own;
     if(explicitTemperature()) {
-        int low,high,t=settings.temperature;kindTemperatures(own,low,high);
+        int low,high,t=climateNow().temperature;kindTemperatures(own,low,high);
         if(t<low||t>high) {
             if(own==WEATHER_SNOW&&t<=40)own=WEATHER_RAIN;
             else if(own==WEATHER_RAIN&&t<0)own=WEATHER_SNOW;
             else own=WEATHER_NONE;
         }
     }
-    return kindWind(own,settings.wind)?own:WEATHER_NONE;
+    return kindWind(own,climateNow().wind)?own:WEATHER_NONE;
 }
 // The wind's speed (units a second) for the player's choice, or the map's
 // own (own); a map's own wind under weather the player picked gives way to a
 // breeze where it doesn't fit (a sandstorm in still air, fog in a gale).
 float climateWindSpeed(float own) {
     static const float speeds[]={0,0,115,172,230};   // still, breeze, strong, gale
-    if(settings.wind>WIND_OWN&&settings.wind<=WIND_GALE)return speeds[settings.wind];
+    if(climateNow().wind>WIND_OWN&&climateNow().wind<=WIND_GALE)return speeds[climateNow().wind];
     Weather kind=falling();
-    if(settings.weather!=1&&kind!=WEATHER_NONE) {
+    if(climateNow().weather!=1&&kind!=WEATHER_NONE) {
         int band=own<57.5f?WIND_STILL:own<143.75f?WIND_BREEZE:own<201.25f?WIND_STRONG:WIND_GALE;
         if(!kindWind(kind,band))return speeds[WIND_BREEZE];
     }
@@ -110,8 +156,8 @@ float climateWindSpeed(float own) {
 // The way the player's wind blows to (map degrees: 0 east, 90 north), from
 // the compass point it comes from; false for the map's own.
 bool climateWindHeading(float &degrees) {
-    if(settings.windFrom<1||settings.windFrom>8)return false;
-    degrees=90-45*(settings.windFrom-1)+180.0f;
+    if(climateNow().windFrom<1||climateNow().windFrom>8)return false;
+    degrees=90-45*(climateNow().windFrom-1)+180.0f;
     return true;
 }
 // The shaders' share (c.climate), and the warm haze over the far outdoors

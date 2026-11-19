@@ -133,8 +133,9 @@ boolean planeImpact(sector_t *sector,boolean ceiling,fixed_t fx,fixed_t fy,fixed
     int pic=ceiling?sector->ceilingpic:sector->floorpic;
     Image &image=lumpImage(firstflat+flattranslation[pic],true);
     float light=lighting(sector);
-    if(debris.size()>512)debris.erase(debris.begin(),debris.begin()+(debris.size()-512));
-    for(int i=0;i<5;++i) {
+    if(settings.wallHits)flatHit(*sector,ceiling,x,y,z,texelColor(image));   // as a wall's (wall_hits.cpp)
+    else if(debris.size()>512)debris.erase(debris.begin(),debris.begin()+(debris.size()-512));
+    for(int i=0,chips=settings.wallHits?0:5;i<chips;++i) {
         float angle=randomRange(0,2*doomPi),out=randomRange(20,70);
         debris.push_back({x,y,ceiling?z-3:z+1,std::cos(angle)*out,std::sin(angle)*out,ceiling?randomRange(-40,0):randomRange(60,140),now,
             randomRange(0.45f,0.8f),randomRange(1.2f,2.0f),texelColor(image),light});
@@ -249,7 +250,7 @@ static void buildSpouts(const Uniforms &camera) {
             z=std::min(z,ceiling-floor-size);
             std::array<float,3> shown=thick?albedo[shade]:foam(albedo[shade],0.3f+0.3f*std::clamp(z/height,0.0f,1.0f),light),lit;
             for(int c=0;c<3;++c)lit[c]=std::min(1.0f,shown[c]*light);
-            pixelBlock(particleVertices,camera,s.x+rx*side+ry*depth,s.y+ry*side-rx*depth,floor+z,size,1,lit,true,&shown);
+            pixelBlock(particleVertices,camera,s.x+rx*side+ry*depth,s.y+ry*side-rx*depth,floor+z,size,1,lit,true,&shown,true,nullptr,1,1,farLeast);
         };
         int draw=0;auto random=[&]{return hashUnit(draw++,0x5b0u,s.seed);};
         auto gauss=[&]{return (random()+random()+random()-1.5f)/1.5f;};
@@ -329,7 +330,7 @@ static void buildPlunges(const Uniforms &camera) {
                 float high=g.up*g.up/(2*g.gravity),z=std::min(g.up*s-0.5f*g.gravity*s*s,ceiling-floor-g.size);
                 std::array<float,3> shown=thick?albedo[g.shade]:foam(albedo[g.shade],0.3f+0.3f*std::clamp(z/high,0.0f,1.0f),light),lit;
                 for(int c=0;c<3;++c)lit[c]=std::min(1.0f,shown[c]*light);
-                pixelBlock(particleVertices,camera,x,y,floor+z,g.size,1,lit,true,&shown);
+                pixelBlock(particleVertices,camera,x,y,floor+z,g.size,1,lit,true,&shown,true,nullptr,1,1,farLeast);
             } else if(g.land==GLOB_LIQUID&&s<g.landT+0.2f)
                 pixelBlock(crestVertices,camera,x,y,g.landZ+0.2f,g.size+2,1,crestOf(g.landSector,0.75f),true,nullptr,false,&crestCells);
         }
@@ -366,7 +367,21 @@ static bool clipToView(const Uniforms &camera,float x,float y,float z,float tx,f
 // liquid, so no foam. Phases drift across the map, so the walls of one pool
 // do not pulse in lockstep.
 static void buildShoreRipples(const Uniforms &camera) {
-    if(!settings.shoreRipples||shoreEdges.empty()||camera.effects[2]!=0)return;
+    if(settings.shoreRipples!=1||shoreEdges.empty()||camera.effects[2]!=0)return;   // (2: the liquid's shader draws them, world/shore.glsl)
+    // STATSDEBUG: once a second, what the shore ripples of a frame took.
+    static const bool debug=getenv("STATSDEBUG")!=nullptr;
+    uint64_t debugStart=debug?SDL_GetTicksNS():0;
+    size_t debugBefore=crestVertices.size();
+    int debugEdges=0,debugPoints=0;
+    struct DebugEnd {
+        bool on;uint64_t start;size_t before;int &edges,&points;
+        ~DebugEnd() {
+            if(on&&SDL_GetTicksNS()-start>150000) {
+                fprintf(stderr,"SHORE tic %d: %.2f ms, %d edges, %d points tried, %zu blocks drawn\n",leveltime,(SDL_GetTicksNS()-start)/1e6,edges,points,
+                    (crestVertices.size()-before)/6);
+            }
+        }
+    } debugEnd{debug,debugStart,debugBefore,debugEdges,debugPoints};
     float now=std::floor(gameSeconds()*TICRATE/frameTics)*frameTics/TICRATE;
     float perPixel=1/(100*camera.projection[1]);   // map units per Doom pixel at depth 1
     for(const ShoreEdge &edge:shoreEdges) {
@@ -382,6 +397,7 @@ static void buildShoreRipples(const Uniforms &camera) {
         if(!clipToView(camera,edge.ax,edge.ay,water,tx,ty,-32,64,lo,hi))continue;
         int look=liquidLook(sector.floorpic);if(look==LIQUID_LOOK_NONE||poolIce(edge.sector).ice>0)continue;   // icing over (Phobos): still
         if(waterIceAt(nearX+edge.nx*12,nearY+edge.ny*12)>=0.35f)continue;   // ice along the shore here, or floes (water_ice.cpp)
+        ++debugEdges;
         Image &flat=lumpImage(firstflat+flattranslation[sector.floorpic],true);
         float z=water+decalLift(nearX,nearY,camera)+0.1f;
         float light=liquidLight(edge.sector,flat,nearX,nearY,z,camera);
@@ -421,6 +437,7 @@ static void buildShoreRipples(const Uniforms &camera) {
             // Only where this edge is the nearest shore: the crest stops
             // where another wall's crest at the same distance takes over.
             auto put=[&](float x,float y,bool arc) {
+                ++debugPoints;
                 float d=shoreDistanceAt(x,y);
                 if(d<r-1.5f||(arc&&d>r+1.5f))return;
                 if(blood)pixelBlock(particleVertices,camera,x,y,z,w,tall,tint,true,&albedo,false);

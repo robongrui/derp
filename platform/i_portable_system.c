@@ -25,15 +25,40 @@
 #include "i_sound.h"
 #include "i_video.h"
 #include "m_misc.h"
+#include "m_argv.h"
 #include "d_net.h"
 #include "g_game.h"
 #include "game_profile.h"
+#include "audio/sound_options.h"
 #ifdef DOOM_NATIVE
 #include <SDL3/SDL.h>
 #endif
 
 int mb_used = 16;
 static ticcmd_t emptycmd;
+
+static uint64_t (*audioClock)(void);
+static uint64_t audioElapsed;
+
+void I_SetAudioTiming(uint64_t (*clock)(void))
+{
+    audioClock = clock;
+    audioElapsed = 0;
+}
+
+uint64_t I_BeginAudioTiming(void) { return audioClock ? audioClock() : 0; }
+
+void I_EndAudioTiming(uint64_t start)
+{
+    if (audioClock) audioElapsed += audioClock() - start;
+}
+
+uint64_t I_TakeAudioTiming(void)
+{
+    uint64_t elapsed = audioElapsed;
+    audioElapsed = 0;
+    return elapsed;
+}
 
 ticcmd_t *I_BaseTiccmd(void) { return &emptycmd; }
 int I_GetHeapSize(void) { return mb_used * 1024 * 1024; }
@@ -50,10 +75,26 @@ byte *I_ZoneBase(int *size)
     return memory;
 }
 
+/* Game seconds per real second: slow motion (slow_motion.c). */
+double I_TimeScale = 1;
+/* A test player's fast clock (tests/derp_ai_probe.c): apart from slow motion, which eases its own back. */
+double I_TestSpeed = 1;
 #ifdef DOOM_DEVTOOLS
-/* Local dev tools (devtools/) may run the game's clock slow: game seconds per real second. */
+/* Local dev tools (devtools/) may run the game's clock slow as well. */
 extern double devTimeScale;
 #endif
+
+/* Whether the game may drop tics it fell behind by after a hitch (d_net.c).
+   The test drivers count on every tic, and a test player's fast clock runs
+   many a frame on purpose. */
+int I_MayDropTics(void)
+{
+#ifdef DOOM_TEST_DRIVER
+    return 0;
+#else
+    return I_TestSpeed == 1;
+#endif
+}
 
 /* Nanoseconds since the first call, on the game's clock. */
 static uint64_t elapsedNanoseconds(void)
@@ -92,15 +133,17 @@ static uint64_t elapsedNanoseconds(void)
     }
     elapsed = (uint64_t)seconds * UINT64_C(1000000000) + (uint64_t)nanoseconds;
 #endif
-#ifdef DOOM_DEVTOOLS
     {
         /* Summed a call at a time, so changing the scale never jumps the clock. */
         static uint64_t realBefore, scaled;
-        scaled += (uint64_t)((double)(elapsed - realBefore) * devTimeScale);
+        double scale = I_TimeScale * I_TestSpeed;
+#ifdef DOOM_DEVTOOLS
+        scale *= devTimeScale;
+#endif
+        scaled += (uint64_t)((double)(elapsed - realBefore) * scale);
         realBefore = elapsed;
         elapsed = scaled;
     }
-#endif
     return elapsed;
 }
 
@@ -200,10 +243,11 @@ void I_Error(char *error, ...)
     I_ShutdownSound();
     I_ShutdownMusic();
 #ifdef DOOM_NATIVE
-    /* No window to show it over in the tests (the dummy video driver): the
-       message is on stderr, and a box would wait on the desktop. */
+    /* No window to show it over in the tests (the dummy video driver), and
+       none for a render check's hidden window either: the message is on
+       stderr, and a box would wait on the desktop of whoever is at it. */
     const char *video = getenv("SDL_VIDEODRIVER");
-    if (!video || strcmp(video, "dummy"))
+    if ((!video || strcmp(video, "dummy")) && !M_CheckParm("-rendercheck"))
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Game_Title(), message, NULL);
 #endif
     I_ShutdownGraphics();

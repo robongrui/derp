@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "doomdef.h"
 #include "p_local.h"
 #include "i_video.h"
@@ -162,6 +163,9 @@ static void G_Release(int key)
 
 // DERP: the next (1) or previous (-1) weapon key pressed since the last ticcmd.
 static int weaponstep;
+// DERP: weapon slot + 1 whose key went down since the last ticcmd. A wheel
+// notch is down and up within one frame, so holding alone never sees it.
+static int weaponslot;
 
 int             mousex, mousey;             // mouse values are used once
 static int      mouseturns[BACKUPTICS];     // the mouse's part of each ticcmd's turn
@@ -217,21 +221,24 @@ extern  int             isCyberPresent;     // is CyberMan present?
 boolean usearti = true;
 void I_ReadCyberCmd (ticcmd_t *cmd);
 
-// DERP: whether the key for weapon slot i (0: staff, 6: firemace) is held.
-static boolean G_WeaponHeld(int i)
+// DERP: whether the key for weapon slot i (0: staff, 6: firemace) is held
+// (key < 0) or is key.
+#define SLOT(a) (key < 0 ? HELD(a) : BOUND(key, a))
+static boolean G_WeaponKey(int i, int key)
 {
 	switch(i)
 	{
-		case 0: return HELD(weapon1);
-		case 1: return HELD(weapon2);
-		case 2: return HELD(weapon3);
-		case 3: return HELD(weapon4);
-		case 4: return HELD(weapon5);
-		case 5: return HELD(weapon6);
-		case 6: return HELD(weapon7);
+		case 0: return SLOT(weapon1);
+		case 1: return SLOT(weapon2);
+		case 2: return SLOT(weapon3);
+		case 3: return SLOT(weapon4);
+		case 4: return SLOT(weapon5);
+		case 5: return SLOT(weapon6);
+		case 6: return SLOT(weapon7);
 	}
 	return false;
 }
+#undef SLOT
 
 // DERP: the weapon the next (step 1) or previous (-1) weapon key picks: the
 // next along the slots that the player has and has ammo for, or -1.
@@ -665,7 +672,7 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 
 	for(i = 0; i < NUMWEAPONS-2; i++)
 	{
-		if(G_WeaponHeld(i))
+		if(G_WeaponKey(i, -1) || weaponslot == i+1)
 		{
 			cmd->buttons |= BT_CHANGE;
 			cmd->buttons |= i<<BT_WEAPONSHIFT;
@@ -680,7 +687,7 @@ void G_BuildTiccmd (ticcmd_t *cmd)
 			cmd->buttons |= BT_CHANGE|weapon<<BT_WEAPONSHIFT;
 		}
 	}
-	weaponstep = 0;
+	weaponstep = weaponslot = 0;
 
 	// DERP: a gamepad's stick moves as far as it is tilted, at full tilt
 	// as fast as running.
@@ -878,7 +885,7 @@ void G_DoLoadLevel (void)
 	joyxmove = joyymove = 0;
 	mousex = mousey = 0;
 	sendpause = sendsave = paused = false;
-	weaponstep = 0;
+	weaponstep = weaponslot = 0;
 	memset (joybuttons, 0, sizeof(joybuttons));
 }
 
@@ -1004,6 +1011,16 @@ boolean G_Responder(event_t *ev)
 			if(BOUND(ev->data1, prevweapon))
 			{
 				weaponstep = -1;
+			}
+			{
+				int slot;
+				for(slot = 0; slot < NUMWEAPONS-2; slot++)
+				{
+					if(G_WeaponKey(slot, ev->data1))
+					{
+						weaponslot = slot+1;
+					}
+				}
 			}
 			if(ev->data1 >= 0 && ev->data1 < NUMKEYS)
 			{
@@ -1706,8 +1723,24 @@ boolean G_StepMap (int step, int *episode, int *map)
 	return false;
 }
 
+// F4 Weather's Random: the playthrough's seed for each map's roll
+// (scene3d/climate.cpp). Not the game's random numbers, which would change
+// demos: every new game takes a fresh one from the clock. Heretic's saves
+// keep their own layout, so a save loaded after a restart rolls anew.
+unsigned climateseed;
+static void G_NewClimateSeed (void)
+{
+	static unsigned games;
+	climateseed = ((unsigned)time(NULL)*2654435761u)^((unsigned)I_GetTime()*40503u)^(++games*0x9e3779b9u);
+	if(!climateseed)
+	{
+		climateseed = 1;
+	}
+}
+
 void G_DoNewGame (void)
 {
+	G_NewClimateSeed();
 	G_InitNew (d_skill, d_episode, d_map);
 	gameaction = ga_nothing;
 }
@@ -1722,6 +1755,11 @@ void G_InitNew(skill_t skill, int episode, int map)
 	{
 		"SKY1", "SKY2", "SKY3", "SKY1", "SKY3"
 	};
+
+	if(!climateseed)
+	{
+		G_NewClimateSeed();
+	}
 
 	if(paused)
 	{
@@ -1783,6 +1821,14 @@ void G_InitNew(skill_t skill, int episode, int map)
 	else
 	{
 		skytexture = R_TextureNumForName(skyLumpNames[episode-1]);
+		// The 2025 IWAD paints E4 and E5 their own skies (its Enhanced
+		// maps' UMAPINFO names them). Only that IWAD has SKY4: the DOS
+		// one's TEXTURE1 lists a SKY5 that is SKY1's patch again, so SKY5
+		// alone is no sign of the new art.
+		if((episode == 4 || episode == 5) && R_CheckTextureNumForName("SKY4") >= 0)
+		{
+			skytexture = R_TextureNumForName(episode == 4 ? "SKY4" : "SKY5");
+		}
 	}
 
 //

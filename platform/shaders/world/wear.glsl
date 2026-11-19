@@ -13,11 +13,13 @@
 //   the frame's ends as it collects. Darkening only: damp, never glossy.
 //   Nukage rain (c.weatherTint) lies the same way, tinted its colour.
 // - While it snows (c.weather.w WEATHER_SNOW), or sand or ash settles
-//   (WEATHER_SAND, WEATHER_ASH), the ground under the sky lies white (or in
+//   (WEATHER_SAND, WEATHER_ASH, WEATHER_FIRESTORM), the ground under the sky lies white (or in
 //   their colour, world/settled.glsl) instead, as deep as baked in the same place (weather.cpp bakeWetness):
 //   in clumps of two texels with ragged rims, deep snow solid, thin snow
 //   broken with the ground showing through (snowAt); against the foot of
-//   the walls a ragged rim, climbing higher on walls facing the wind. Where
+//   the walls a ragged drift as high as the ground right in front holds,
+//   climbing higher on walls facing the wind, so buildings grow out of the
+//   ground, and a little caught in runs along the bricks' ledges. Where
 //   it blew in through a broken pane it settles in front of it in coarse
 //   clumps, fanning out past the frame's ends as it reaches in. Snow is
 //   matte and smooth: no gloss, no bump (snowWear).
@@ -55,7 +57,7 @@ float wearNoise(vec2 p,float cell,uint seed) {
 // sector is to the wind). Coherent, never a texel flickering on its own.
 float blowing(vec2 t,float open) {
     float wind=length(c.weather.yz);
-    if(open<=0.0||wind<=1.0||c.weather.w==WEATHER_ASH) return 0.0;
+    if(open<=0.0||wind<=1.0||c.weather.w==WEATHER_ASH||c.weather.w==WEATHER_FIRESTORM) return 0.0;
     float tic=windTic(),lift=windLiftAt(t,tic)*open;
     if(lift<=0.0) return 0.0;
     vec2 way=c.weather.yz/wind;
@@ -122,6 +124,29 @@ float bakedWetness(vec2 t,bool outdoors) {
     float a=texelFetch(flatLight,clamp(ivec2(floor(at+jitter)),ivec2(0),layer-1),0).a;
     if(a<=0.0) a=own;
     return a>0.0?(a*255.0-1.0)/254.0:-1.0;
+}
+// What settles lying on an open ground texel t, in snowAt's steps: as the
+// bake laid it, else in broad patches (as surfaceWear lays the ground).
+float groundSnow(vec2 t) {
+    float baked=bakedWetness(t,true);
+    return snowAt(t,baked>=0.0?baked:0.25+0.65*smoothstep(0.4,0.7,wearNoise(t,44.0,0x3c6ef372u)));
+}
+// The way u runs along a wall in the world (world.frag sets it from the
+// texture frame before surfaceWear).
+vec2 wallAlong=vec2(1.0,0.0);
+// How much lies on the ground along block b (four texels of u) of a wall's
+// foot, half and one and a half units out: at, the point on the wall at u;
+// away, out from it. Fixed blocks, so a drift's height blends from block to
+// block instead of flickering column by column. Placed by u from the point
+// itself, not by world coordinates against the wall's normal (rebuilt from
+// screen derivatives, it wobbles enough to move a dot product by most of a
+// unit out at map coordinates); each sample in a texel's middle, as walls
+// along the axes lie on whole units where floor() would flip between two.
+float footCover(vec2 at,float u,vec2 away,float b) {
+    float sum=0.0;
+    for(int i=0;i<2;++i)for(int d=1;d<=2;++d)
+        sum+=groundSnow(floor(at+wallAlong*(b*4.0+1.5+2.0*float(i)-u)+away*(float(d)-0.5))+0.5);
+    return sum*0.25;
 }
 // A draft's trail at a floor texel (record 9: half widths at a and b in
 // eighths, packed a + 1024 b; amounts in 255ths, a + 256 b; state 2 snow /
@@ -190,10 +215,17 @@ float splashWet(vec3 world,vec3 normal,vec4 a,vec4 b) {
     float edge=b.x*(0.7+0.6*wearNoise(cell,3.0,uint(b.y)*0x85ebca6bu+11u));
     return r<edge?b.w*(r<edge-1.5?1.0:0.6):0.0;
 }
+// Where settledColor reads its texel (applyWear): on a wall half a unit
+// inside it, as walls along the axes lie on whole units.
+vec3 settledAt=vec3(0.0);
+// Whether this wall texel lies under a drift heaped at its foot (world.frag
+// lights those as the ground in front).
+bool wallDrift=false;
 Wear surfaceWear(vec3 world,vec3 normal,float u,uint sector,uint flags) {
     Wear w=Wear(0.0,0.0,false,0.0,0.0,0.0,0.0,0.0,false,0.0,vec2(0.0));
+    settledAt=abs(normal.z)<=0.5?vWorld-vec3(normal.xy*0.5,0.0):vWorld;
     // Snow, and sand and ash, which lie as snow does in their own colour.
-    bool snow=c.weather.w==WEATHER_SNOW||c.weather.w==WEATHER_SAND||c.weather.w==WEATHER_ASH;
+    bool snow=c.weather.w==WEATHER_SNOW||c.weather.w==WEATHER_SAND||c.weather.w==WEATHER_ASH||c.weather.w==WEATHER_FIRESTORM;
     uint base=uint(c.right.w);
     if(base!=0u) w.frost=breachFrostAt(world,normal,u,sector,base);
     vec4 info=sectorInfo[sector];
@@ -281,12 +313,37 @@ Wear surfaceWear(vec3 world,vec3 normal,float u,uint sector,uint flags) {
     }
     if(!wall) return w;
     if(outdoors&&c.up.w>0.0&&snow) {
-        // The rim reads the snow lying on the ground in front of the wall.
-        float baked=bakedWetness(t+normal.xy*3.0,true),deep=baked>=0.0?baked:0.5,height=world.z-info.y;
+        // What lies on the ground at the wall's foot heaps against it, so a
+        // building grows out of the ground instead of standing on it. Column
+        // by column along the wall, only as much as the ground in front holds
+        // (groundSnow, two texels out and four columns either way, so the
+        // drift rises and tapers with the ground's patches instead of copying
+        // its clumps): where it lies bare the wall's foot stays bare. On the
+        // wall's own grid: its texture's columns (u), rows by whole units up.
+        float height=floor(world.z-info.y);
+        float cover=0.0;
+        int column=int(floor(u));
+        if(height>=0.0&&height<40.0) {
+            float along=(float(column)+0.5-2.0)/4.0,block=floor(along);
+            cover=mix(footCover(world.xy,u,normal.xy,block),footCover(world.xy,u,normal.xy,block+1.0),along-block);
+        }
         float wind=length(c.weather.yz),facing=wind>1.0?saturate(dot(normal.xy,-c.weather.yz/wind)):0.0;
-        int column=int(floor(dot(world.xy,vec2(-normal.y,normal.x))));
-        float rim=deep*(1.5+2.5*wearHash(ivec2(column/2,3),0x1b873593u)+6.0*facing*deep);
-        if(height>=0.0&&height<rim) w.snow=c.up.w*(height<rim-1.0?1.0:0.55);
+        if(cover>0.0) {
+            // The drift: its top wandering over a dozen texels, higher where
+            // more lies and on walls facing the wind.
+            float rim=cover*(4.0+8.0*wearNoise(vec2(float(column),0.0),12.0,0x1b873593u)+10.0*facing);
+            if(height<rim) {w.snow=c.up.w*(height<rim-1.0?1.0:0.55);wallDrift=true;}
+        }
+        // A little caught on the ledges all up the wall: the top row of what
+        // the artwork paints facing up (a brick's top under the mortar, a sill;
+        // the relief sloping along v), in runs of a few texels along it, more
+        // on walls facing the wind. Thin, the brick showing through.
+        if(w.snow<=0.0) {
+            ivec2 p=ivec2(floor(vUV)),size=textureSize(relief,0);
+            float rise=(texelFetch(relief,wrapTexel(p,size),0).g*255.0-128.0)/127.0;
+            float above=(texelFetch(relief,wrapTexel(p-ivec2(0,1),size),0).g*255.0-128.0)/127.0;
+            if(rise>0.3&&above<=0.3&&wearHash(ivec2(column/5,p.y),0x4d2c6dfcu)<0.2+0.35*facing) w.snow=c.up.w*0.55;
+        }
     }
     else if(outdoors&&c.up.w>0.0) w.wet=c.up.w*(0.2+0.3*(1.0-saturate((world.z-info.y)/64.0)));
     if(base==0u) return w;
@@ -362,6 +419,6 @@ vec3 applyWear(vec3 color,Wear w,float emission) {
     if(w.iceCrack>0.0) color=mix(color,vec3(0.92,0.96,1.0),w.iceCrack*0.85*keep);   // fractured ice scatters light: white
     if(w.frost>0.0) color=mix(color,vec3(0.76,0.83,0.9)*max(dot(color,vec3(0.3,0.59,0.11))*1.5,0.42),min(w.frost,1.0)*0.75*keep);
     // Snow (or sand, or ash) over it all.
-    if(w.snow>0.0) color=mix(color,settledColor(vWorld,w.indoors,w.open,w.flow),w.snow*keep);
+    if(w.snow>0.0) color=mix(color,settledColor(settledAt,w.indoors,w.open,w.flow),w.snow*keep);
     return color;
 }

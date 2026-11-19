@@ -18,8 +18,72 @@ struct doom_weapon_maps {
     std::vector<unsigned char> gloss;   /* 0-255 per pixel. */
 };
 
-/* pixels: palette index and coverage pairs; palette: PLAYPAL RGB. */
-inline doom_weapon_maps doom_weapon_delight(int w, int h, const unsigned char *pixels, const unsigned char *palette)
+/* Normals for screen artwork (x, then y texture down, as unsigned bytes): a
+ rounded rim from the silhouette (the frame's bottom edge is cut off by the
+ screen, not an outline), tilted by the painted shading read as height,
+ bright standing proud (blurred, so the artwork's dithering does not turn
+ into grit). pixels and palette as doom_weapon_delight's; rim likewise. */
+inline void doom_weapon_normals(int w, int h, const unsigned char *pixels, const unsigned char *palette, bool rim, std::vector<unsigned char> &normals)
+{
+    const size_t n = (size_t)w * h;
+    normals.assign(n * 2, 128);
+    auto opaque = [&](int x, int y) { return x >= 0 && y >= 0 && x < w && y < h && pixels[((size_t)y * w + x) * 2 + 1]; };
+    std::vector<float> Y(n, 0);
+    for (size_t i = 0; i < n; ++i) if (pixels[i * 2 + 1]) {
+        const unsigned char *c = palette + pixels[i * 2] * 3;
+        Y[i] = (0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2]) / 255.0f;
+    }
+    std::vector<float> distance(n);
+    for (size_t i = 0; i < n; ++i) distance[i] = pixels[i * 2 + 1] ? 1e6f : 0;
+    auto at = [&](int x, int y) {
+        if (x < 0 || x >= w || y < 0) return 0.0f;
+        return y >= h ? 1e6f : distance[(size_t)y * w + x];
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        int step = pass ? -1 : 1;
+        for (int y = pass ? h - 1 : 0; y >= 0 && y < h; y += step) for (int x = pass ? w - 1 : 0; x >= 0 && x < w; x += step) {
+            float &d = distance[(size_t)y * w + x]; if (d == 0) continue;
+            d = std::min({d, at(x - step, y) + 1, at(x, y - step) + 1, at(x - step, y - step) + 1.4142f, at(x + step, y - step) + 1.4142f});
+        }
+    }
+    float radius = std::clamp(std::min(w, h) * 0.25f, 3.0f, 12.0f);
+    auto dome = [&](int x, int y) {
+        float t = std::min(1.0f, at(std::clamp(x, -1, w), std::min(y, h)) / radius);
+        return std::sqrt(std::max(0.0f, 1 - (1 - t) * (1 - t)));
+    };
+    std::vector<float> relief(n, 0);
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+        if (!opaque(x, y)) continue;
+        float sum = 0, weight = 0;
+        static const float binomial[5] = {1, 4, 6, 4, 1};
+        for (int j = -2; j <= 2; ++j) for (int k = -2; k <= 2; ++k) if (opaque(x + k, y + j)) {
+            float s = binomial[j + 2] * binomial[k + 2];
+            sum += Y[(size_t)(y + j) * w + x + k] * s; weight += s;
+        }
+        relief[(size_t)y * w + x] = sum / weight;
+    }
+    auto height = [&](int x, int y, int fx, int fy) {
+        return opaque(x, y) ? relief[(size_t)y * w + x] : relief[(size_t)fy * w + fx];
+    };
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+        if (!opaque(x, y)) continue;
+        size_t i = (size_t)y * w + x;
+        float rimScale = rim ? 0.5f * radius : 0.0f;
+        float gx = (dome(x + 1, y) - dome(x - 1, y)) * rimScale + (height(x + 1, y, x, y) - height(x - 1, y, x, y)) * 2.0f;
+        float gy = (dome(x, y + 1) - dome(x, y - 1)) * rimScale + (height(x, y + 1, x, y) - height(x, y - 1, x, y)) * 2.0f;
+        float length = std::sqrt(gx * gx + gy * gy + 1);
+        normals[i * 2] = (unsigned char)std::lround((-gx / length * 0.5f + 0.5f) * 255);
+        normals[i * 2 + 1] = (unsigned char)std::lround((-gy / length * 0.5f + 0.5f) * 255);
+    }
+}
+
+/* pixels: palette index and coverage pairs; palette: PLAYPAL RGB. sheen:
+   take back the painted highlights too (weapon metal); off for artwork whose
+   bright specks are texture, not light (the sky's mountains, sky_layers.cpp).
+   rim: round the normals off toward the silhouette; off where the outline
+   is no edge of a body (a stepped crest whose steps would each turn a
+   column away from the light). */
+inline doom_weapon_maps doom_weapon_delight(int w, int h, const unsigned char *pixels, const unsigned char *palette, bool sheen = true, bool rim = true)
 {
     const size_t n = (size_t)w * h;
     doom_weapon_maps maps;
@@ -45,7 +109,7 @@ inline doom_weapon_maps doom_weapon_delight(int w, int h, const unsigned char *p
        highlights; darker texels (outlines, crevices) stay as painted. */
     const int r = 6;
     std::vector<float> flat(Y), removed(n, 0);
-    for (int y = 0; y < h; ++y) {
+    for (int y = 0; y < h && sheen; ++y) {
         int histogram[256] = {0}, count = 0;
         auto column = [&](int x, int add) {
             if (x < 0 || x >= w) return;
@@ -128,50 +192,10 @@ inline doom_weapon_maps doom_weapon_delight(int w, int h, const unsigned char *p
         maps.pixels[i * 2] = (unsigned char)cached;
     }
 
-    /* Normals: a rounded rim from the silhouette (the
-       frame's bottom edge is cut off by the screen, not an outline), tilted by
-       the painted shading read as height, bright standing proud (blurred,
-       so the artwork's dithering does not turn into grit). */
-    std::vector<float> distance(n);
-    for (size_t i = 0; i < n; ++i) distance[i] = pixels[i * 2 + 1] ? 1e6f : 0;
-    auto at = [&](int x, int y) {
-        if (x < 0 || x >= w || y < 0) return 0.0f;
-        return y >= h ? 1e6f : distance[(size_t)y * w + x];
-    };
-    for (int pass = 0; pass < 2; ++pass) {
-        int step = pass ? -1 : 1;
-        for (int y = pass ? h - 1 : 0; y >= 0 && y < h; y += step) for (int x = pass ? w - 1 : 0; x >= 0 && x < w; x += step) {
-            float &d = distance[(size_t)y * w + x]; if (d == 0) continue;
-            d = std::min({d, at(x - step, y) + 1, at(x, y - step) + 1, at(x - step, y - step) + 1.4142f, at(x + step, y - step) + 1.4142f});
-        }
-    }
-    float radius = std::clamp(std::min(w, h) * 0.25f, 3.0f, 12.0f);
-    auto dome = [&](int x, int y) {
-        float t = std::min(1.0f, at(std::clamp(x, -1, w), std::min(y, h)) / radius);
-        return std::sqrt(std::max(0.0f, 1 - (1 - t) * (1 - t)));
-    };
-    std::vector<float> relief(n, 0);
-    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
-        if (!opaque(x, y)) continue;
-        float sum = 0, weight = 0;
-        static const float binomial[5] = {1, 4, 6, 4, 1};
-        for (int j = -2; j <= 2; ++j) for (int k = -2; k <= 2; ++k) if (opaque(x + k, y + j)) {
-            float s = binomial[j + 2] * binomial[k + 2];
-            sum += Y[(size_t)(y + j) * w + x + k] * s; weight += s;
-        }
-        relief[(size_t)y * w + x] = sum / weight;
-    }
-    auto height = [&](int x, int y, int fx, int fy) {
-        return opaque(x, y) ? relief[(size_t)y * w + x] : relief[(size_t)fy * w + fx];
-    };
+    doom_weapon_normals(w, h, pixels, palette, rim, maps.normals);
     for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
         if (!opaque(x, y)) continue;
         size_t i = (size_t)y * w + x;
-        float gx = (dome(x + 1, y) - dome(x - 1, y)) * 0.5f * radius + (height(x + 1, y, x, y) - height(x - 1, y, x, y)) * 2.0f;
-        float gy = (dome(x, y + 1) - dome(x, y - 1)) * 0.5f * radius + (height(x, y + 1, x, y) - height(x, y - 1, x, y)) * 2.0f;
-        float length = std::sqrt(gx * gx + gy * gy + 1);
-        maps.normals[i * 2] = (unsigned char)std::lround((-gx / length * 0.5f + 0.5f) * 255);
-        maps.normals[i * 2 + 1] = (unsigned char)std::lround((-gy / length * 0.5f + 0.5f) * 255);
         /* Gloss: the sheen the ramp lost around here, and grey metal; skin
            and other saturated ramps keep a third of their painted sheen's. */
         int index = pixels[i * 2];

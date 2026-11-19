@@ -27,10 +27,21 @@ static const char
 rcsid[] = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 
 #include "z_zone.h"
+#include "p_barks.h"
 #include "p_local.h"
 #include "p_phobos.h"
 #include "p_library.h"
 #include "p_weather.h"
+#include "p_nav.h"
+#include "p_navbudget.h"
+#include "p_navlong.h"
+#include "p_senses.h"
+#include "p_director.h"
+#include "p_word.h"
+#include "p_chatter.h"
+#include "p_bullets.h"
+#include "p_derp.h"
+#include "p_derptiming.h"
 
 #include "doomstat.h"
 
@@ -134,6 +145,7 @@ void P_RunThinkers (void)
 void P_Ticker (void)
 {
     int		i;
+    derp_timing_group previous;
     
     // run the tic
     if (paused)
@@ -147,15 +159,29 @@ void P_Ticker (void)
     {
 	return;
     }
-    
-		
+
+    // The tic's route cells afresh, before anything in it can search: his
+    // shots and steps are heard (and answered) in his own think.
+    P_NavBudgetTic ();
+
     for (i=0 ; i<MAXPLAYERS ; i++)
 	if (playeringame[i])
 	    P_PlayerThink (&players[i]);
 			
     P_AirThink ();
     P_WeatherThink ();
+    P_NavThink ();
+    // The long route searches walk on, on the grid as rebuilt just now.
+    P_NavLongTic ();
+    P_SensesThink ();
+    previous = derp_timing_clock && P_DerpAI () ? P_DerpTimingBegin (DERP_TIMING_COORDINATION) : DERP_TIMING_DISABLED;
+    P_DirectorThink ();
+    P_WordThink ();
+    P_ChatterThink ();
+    P_BarksThink ();
+    P_DerpTimingEnd (previous);
     P_RunThinkers ();
+    P_RunBullets ();
     P_LibraryTicker ();
     P_UpdateSpecials ();
     P_RespawnSpecials ();

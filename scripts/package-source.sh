@@ -1,6 +1,6 @@
 #!/bin/sh
 # Assemble the complete source of a release: this repository at the checked-out
-# commit plus the exact SDL, Nuked OPL3 and TinySoundFont sources and the
+# commit plus the exact SDL, Nuked OPL3, TinySoundFont, dr_libs and stb sources and the
 # SoundFont bank the build downloaded, so the
 # game, with or without changes to those libraries, builds without the internet.
 # Usage: package-source.sh <build dir> <output dir>
@@ -10,7 +10,7 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=$1
 stage="$2/DERP-source"
 
-for dependency in sdl3-src nukedopl3-src tinysoundfont-src; do
+for dependency in sdl3-src nukedopl3-src tinysoundfont-src drlibs-src stb-src; do
     if [ ! -d "$build_dir/_deps/$dependency" ]; then
         echo "$build_dir has no downloaded $dependency; configure with -DCMAKE_DISABLE_FIND_PACKAGE_SDL3=ON first." >&2
         exit 1
@@ -24,6 +24,8 @@ mkdir -p "$stage/dependencies"
 cp -R "$build_dir/_deps/sdl3-src" "$stage/dependencies/SDL3"
 cp -R "$build_dir/_deps/nukedopl3-src" "$stage/dependencies/Nuked-OPL3"
 cp -R "$build_dir/_deps/tinysoundfont-src" "$stage/dependencies/TinySoundFont"
+cp -R "$build_dir/_deps/drlibs-src" "$stage/dependencies/dr_libs"
+cp -R "$build_dir/_deps/stb-src" "$stage/dependencies/stb"
 if [ -d "$build_dir/soundfonts" ]; then
     cp -R "$build_dir/soundfonts" "$stage/dependencies/soundfonts"
 fi
@@ -35,6 +37,9 @@ The libraries the game is linked with, exactly as the release build used them:
 - Nuked-OPL3: Nuked OPL3 by Nuke.YKT (GNU LGPL 2.1 or later; see
   Nuked-OPL3/LICENSE).
 - TinySoundFont: by Bernhard Schelling (MIT; see TinySoundFont/LICENSE).
+- dr_libs: dr_mp3 by David Reid (public domain or MIT-0; see
+  dr_libs/LICENSE).
+- stb: stb_vorbis by Sean Barrett (public domain or MIT; see stb/LICENSE).
 - soundfonts: the GeneralUser GS bank by S. Christian Collins, used as found
   here instead of downloaded (its own license; see
   soundfonts/GeneralUser-GS-LICENSE.txt).
@@ -45,7 +50,9 @@ To build the game from this folder alone, from the folder above this one:
     -DCMAKE_DISABLE_FIND_PACKAGE_SDL3=ON \
     -DFETCHCONTENT_SOURCE_DIR_SDL3="$PWD/dependencies/SDL3" \
     -DFETCHCONTENT_SOURCE_DIR_NUKEDOPL3="$PWD/dependencies/Nuked-OPL3" \
-    -DFETCHCONTENT_SOURCE_DIR_TINYSOUNDFONT="$PWD/dependencies/TinySoundFont"
+    -DFETCHCONTENT_SOURCE_DIR_TINYSOUNDFONT="$PWD/dependencies/TinySoundFont" \
+    -DFETCHCONTENT_SOURCE_DIR_DRLIBS="$PWD/dependencies/dr_libs" \
+    -DFETCHCONTENT_SOURCE_DIR_STB="$PWD/dependencies/stb"
   cmake --build build --parallel --target doom
 
 Changes made to either library here are built into the game. BUILDING.md

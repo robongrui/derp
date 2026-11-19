@@ -75,6 +75,14 @@ void I_StopSound(int handle);
 
 // A DMX sound lump by name, whole and dry, from no place; 0 if there is none.
 int I_SoundLump(const char* name);
+// A DMX sound lump played once at a map point, as any monster's sound is heard
+// there: distance, walls, the room. loud in percent. How many tics it lasts, 0
+// if it did not play (DERP's soldiers' shouts, p_barks.h).
+int I_BarkLump(const char* name, fixed_t x, fixed_t y, fixed_t z, int loud, int pitch);
+// The next shout is meant to be made out: however it is walled off, it keeps its words.
+void I_BarkClear(void);
+// The last shout's handle for I_StopSound (0: it was not played).
+int I_BarkVoice(void);
 
 // Called by S_*() functions
 //  to see if a channel is still playing.
@@ -90,6 +98,12 @@ I_UpdateSoundParams
   int		sep,
   int		pitch );
 
+// S_UpdateSounds' pass over the playing sounds, between these: a mixer may
+// take what is asked of each sound in at the end at once (and do a new
+// level's sound preparation at the begin of the first pass in it).
+void I_BeginSoundUpdate(void);
+void I_EndSoundUpdate(void);
+
 // Where a positioned sound is in the map, for muffling and distance.
 // Handle 0 places the sound the next I_StartSound starts.
 void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z);
@@ -100,6 +114,13 @@ void I_SoundOwn(void);
 // units): a mixer with a natural falloff lets loud ones (gunfire, blasts)
 // reach farther, fainter and muffled.
 fixed_t I_SoundReach(int id);
+/* Authored maps: sound carries past DOOM's 1200 units (audio/level_sound.h).
+   A sound too far for a channel goes to I_FarSound, heard from where it was
+   made, at volume (DOOM's 0-15, before distance). */
+int I_LevelSound(void);
+void I_FarSound(int id, fixed_t x, fixed_t y, fixed_t z, int volume);
+/* The level's map is about to be freed: stops whatever still reads it. */
+void I_LevelEnding(void);
 
 
 //

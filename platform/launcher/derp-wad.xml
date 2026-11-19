@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The file types DERP's launcher opens (derp.desktop). Install with:
+     xdg-mime install derp-wad.xml -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-doom-wad">
+    <comment>DOOM engine WAD</comment>
+    <magic priority="50">
+      <match type="string" offset="0" value="IWAD"/>
+      <match type="string" offset="0" value="PWAD"/>
+    </magic>
+    <glob pattern="*.wad" case-sensitive="false"/>
+  </mime-type>
+  <mime-type type="application/x-doom-patch">
+    <comment>DEHACKED patch</comment>
+    <glob pattern="*.deh" case-sensitive="false"/>
+    <glob pattern="*.bex" case-sensitive="false"/>
+  </mime-type>
+</mime-info>

@@ -311,50 +311,53 @@ void W_Reload (void)
 
 
 //
-// Flat merging.
+// Flat and sprite merging.
 // PWADs add flats between their own F_START/F_END or FF_START/FF_END
-//  markers (the DeuTex and Boom convention). The engine only sees one
-//  flat range, so every marked block is gathered, in load order, into
-//  one F_START..F_END block at the end of the directory.
+//  markers, and sprites between S_START/S_END or SS_START/SS_END
+//  (the DeuTex and Boom convention, mixed freely: Aliens TC opens with
+//  SS_START and closes with S_END). The engine only sees one range of
+//  each, so every marked block is gathered, in load order, into one
+//  block at the end of the directory. Sprites go first, flats last.
 //
 static int	mergedflatstart = -1;	// first merged flat
 static int	mergedflatend = -1;	// one past the last merged flat
 
-static boolean W_IsFlatMarker (char* name, char* marker)
+static boolean W_IsMarker (char* name, char* marker)
 {
-    // FF_START matches F_START, FF_END matches F_END.
+    // FF_START matches F_START, SS_END matches S_END.
     return !strncasecmp (name, marker, 8)
-	|| (toupper (name[0]) == 'F' && !strncasecmp (name+1, marker, 7));
+	|| (toupper (name[0]) == marker[0] && !strncasecmp (name+1, marker, 7));
 }
 
-static void W_MergeFlats (void)
+// Returns the index of the first merged lump, or -1 if nothing moved.
+static int W_MergeBlock (char* start, char* end)
 {
     lumpinfo_t*	merged;
     int		i;
+    int		first;
     int		blocks = 0;
     int		nummerged = 0;
     int		numother = 0;
     boolean	inside = false;
 
-    mergedflatstart = mergedflatend = -1;
     for (i=0 ; i<numlumps ; i++)
-	if (W_IsFlatMarker (lumpinfo[i].name, "F_START"))
+	if (W_IsMarker (lumpinfo[i].name, start))
 	    blocks++;
 
     // A single block is already contiguous; the reload hack needs
     //  its lumps to stay where they were loaded.
     if (blocks < 2 || reloadname)
-	return;
+	return -1;
 
     merged = malloc (numlumps*sizeof(*merged));
     if (!merged)
-	I_Error ("Couldn't allocate flat directory");
+	I_Error ("Couldn't allocate %s directory", start);
 
     for (i=0 ; i<numlumps ; i++)
     {
-	if (W_IsFlatMarker (lumpinfo[i].name, "F_START"))
+	if (W_IsMarker (lumpinfo[i].name, start))
 	    inside = true;
-	else if (W_IsFlatMarker (lumpinfo[i].name, "F_END"))
+	else if (W_IsMarker (lumpinfo[i].name, end))
 	    inside = false;
 	else if (inside)
 	    merged[nummerged++] = lumpinfo[i];
@@ -363,14 +366,24 @@ static void W_MergeFlats (void)
     }
 
     memset (&lumpinfo[numother], 0, sizeof(*lumpinfo));
-    strncpy (lumpinfo[numother].name, "F_START", 8);
-    mergedflatstart = numother+1;
-    memcpy (&lumpinfo[mergedflatstart], merged, nummerged*sizeof(*merged));
-    mergedflatend = mergedflatstart+nummerged;
-    memset (&lumpinfo[mergedflatend], 0, sizeof(*lumpinfo));
-    strncpy (lumpinfo[mergedflatend].name, "F_END", 8);
-    numlumps = mergedflatend+1;
+    strncpy (lumpinfo[numother].name, start, 8);
+    first = numother+1;
+    memcpy (&lumpinfo[first], merged, nummerged*sizeof(*merged));
+    memset (&lumpinfo[first+nummerged], 0, sizeof(*lumpinfo));
+    strncpy (lumpinfo[first+nummerged].name, end, 8);
+    numlumps = first+nummerged+1;
     free (merged);
+    return first;
+}
+
+static void W_MergeMarkedLumps (void)
+{
+    W_MergeBlock ("S_START", "S_END");
+
+    mergedflatstart = mergedflatend = -1;
+    mergedflatstart = W_MergeBlock ("F_START", "F_END");
+    if (mergedflatstart >= 0)
+	mergedflatend = numlumps-1;
 }
 
 
@@ -404,7 +417,7 @@ void W_InitMultipleFiles (char** filenames)
     if (!numlumps)
 	I_Error ("W_InitFiles: no files found");
 
-    W_MergeFlats ();
+    W_MergeMarkedLumps ();
 
     // set up caching
     size = numlumps * sizeof(*lumpcache);

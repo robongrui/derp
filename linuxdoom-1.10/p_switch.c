@@ -30,6 +30,8 @@ rcsid[] = "$Id: p_switch.c,v 1.3 1997/01/28 22:08:29 b1 Exp $";
 #include "i_system.h"
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_nav.h"
+#include "p_tactics.h"
 
 #include "g_game.h"
 
@@ -41,6 +43,8 @@ rcsid[] = "$Id: p_switch.c,v 1.3 1997/01/28 22:08:29 b1 Exp $";
 // State.
 #include "doomstat.h"
 #include "r_state.h"
+#include "p_demons.h"
+#include "p_derp.h"
 
 
 //
@@ -113,7 +117,9 @@ void P_InitSwitchList(void)
 	
     episode = 1;
 
-    if (gamemode == registered)
+    // Ultimate Doom is "retail" and has the episode 2/3 switches too
+    // (linuxdoom-1.10 left it out; the DOS executables did not).
+    if (gamemode == registered || gamemode == retail)
 	episode = 2;
     else
 	if ( gamemode == commercial )
@@ -298,11 +304,17 @@ P_UseSpecialLine
     }
 
     
+    // A secret door he has used is no secret to those who saw him go.
+    if (thing->player && (line->flags & ML_SECRET))
+	P_NavSecretFound (line);
+    if (thing->player)
+	P_DerpSwitchUsed (line);
+
     // Switches that other things can activate.
     if (!thing->player)
     {
-	// never open secret doors
-	if (line->flags & ML_SECRET)
+	// never open secret doors (DERP's imps find the catch)
+	if ((line->flags & ML_SECRET) && !P_DerpClimber (thing))
 	    return false;
 	
 	switch(line->special)

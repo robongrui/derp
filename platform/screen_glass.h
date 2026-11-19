@@ -19,6 +19,25 @@ static inline int doom_screen_texture(const char *name, int flat)
         "SILVER3","TEKWALL*",0};
     return doom_emissive_match(name,flat?flats:walls);
 }
+/* Whether a closed region's box (x0..x1, y0..y1, count of its texels) is a
+   screen: big enough, nearly filled, mostly dark, framed by housing. */
+static inline int doom_screen_box(const unsigned char *flags, int w, int h, int x0, int y0, int x1, int y1,
+                                  size_t count)
+{
+    enum { DARK=1, CANDIDATE=2 };
+    int bw=x1-x0+1,bh=y1-y0+1;size_t n=(size_t)w*h,area=(size_t)bw*bh;
+    if (bw<6 || bh<5 || bw>255 || bh>255 || area<48 || area*10>n*6 || count*100<area*65) return 0;
+    size_t raw=0,dark=0,ring=0,housing=0;
+    for (int y=y0;y<=y1;++y) for (int x=x0;x<=x1;++x) {
+        unsigned char f=flags[(size_t)y*w+x];
+        raw+=(f&CANDIDATE)!=0;dark+=(f&DARK)!=0;
+    }
+    for (int y=y0-1;y<=y1+1;++y) for (int x=x0-1;x<=x1+1;++x) {
+        if ((y>=y0 && y<=y1 && x>=x0 && x<=x1) || x<0 || y<0 || x>=w || y>=h) continue;
+        ++ring;housing+=!(flags[(size_t)y*w+x]&CANDIDATE);
+    }
+    return !(raw*100<area*56 || dark*100<area*45 || !ring || housing*10<ring*6);
+}
 /* pixels: palette index and coverage pairs; palette: PLAYPAL RGB. Writes a
    height per pixel (DOOM_GLASS_NONE outside screens) and, when frame is not
    NULL, four bytes per pixel locating it on its screen: x and y from the
@@ -27,7 +46,14 @@ static inline int doom_screen_texture(const char *name, int flat)
    saturated readouts; a 3x3 closing joins text and graphs into one region.
    A region is a screen when it nearly fills its bounding box, is mostly
    dark, and the ring around the box is mostly housing. Vent grilles fill
-   their box only after closing, so the raw candidate share rejects them. */
+   their box only after closing, so the raw candidate share rejects them.
+   Whiskers: a region may reach a texel or two up or down out of its screen,
+   where dirt or a line of text on the bezel touches it (SPACEW3: three of
+   its eight monitors). Rows at the box's top and bottom holding at most two
+   of the region's texels are cut off, so the glass ends with the screen and
+   nothing on the bezel counts as on it; a region that only then passes (one
+   of SPACEW3's did not at all) must be 8 rows or more, a pane and not a slot
+   (COMPTALL's drive slot is 5). */
 static inline int doom_screen_glass(int w, int h, const unsigned char *pixels,
                                     const unsigned char *palette, unsigned char *glass,
                                     unsigned char *frame)
@@ -39,12 +65,13 @@ static inline int doom_screen_glass(int w, int h, const unsigned char *pixels,
     memset(glass,DOOM_GLASS_NONE,n);
     unsigned char *flags=(unsigned char*)calloc(n,1);
     int *stack=(int*)malloc(n*sizeof(int));
+    unsigned *rows=(unsigned*)calloc((size_t)h,sizeof(unsigned));
     for (i=0;i<n;++i) if (pixels[2*i+1]) {
         const unsigned char *c=palette+pixels[2*i]*3;
         int hi=c[0]>c[1]?c[0]:c[1]; if (c[2]>hi) hi=c[2];
         ++histogram[hi];++covered;
     }
-    if (!flags || !stack || !covered) {free(flags);free(stack);return 0;}
+    if (!flags || !stack || !rows || !covered) {free(flags);free(stack);free(rows);return 0;}
     int median=0;
     for (size_t seen=0;median<256;++median) if ((seen+=histogram[median])*2>covered) break;
     float threshold=median*0.6f<40?median*0.6f:40;
@@ -72,7 +99,7 @@ static inline int doom_screen_glass(int w, int h, const unsigned char *pixels,
         int top=0,x0=w,y0=h,x1=-1,y1=-1;size_t count=0;
         stack[top++]=(int)i;flags[i]|=SEEN;
         while (top) {
-            int p=stack[--top],x=p%w,y=p/w;++count;
+            int p=stack[--top],x=p%w,y=p/w;++count;++rows[y];
             if (x<x0) x0=x; if (x>x1) x1=x; if (y<y0) y0=y; if (y>y1) y1=y;
             const int next[4][2]={{x+1,y},{x-1,y},{x,y+1},{x,y-1}};
             for (int k=0;k<4;++k) {
@@ -82,18 +109,16 @@ static inline int doom_screen_glass(int w, int h, const unsigned char *pixels,
                 if ((flags[q]&CLOSED) && !(flags[q]&SEEN)) {flags[q]|=SEEN;stack[top++]=(int)q;}
             }
         }
-        int bw=x1-x0+1,bh=y1-y0+1;size_t area=(size_t)bw*bh;
-        if (bw<6 || bh<5 || bw>255 || bh>255 || area<48 || area*10>n*6 || count*100<area*65) continue;
-        size_t raw=0,dark=0,ring=0,housing=0;
-        for (int y=y0;y<=y1;++y) for (int x=x0;x<=x1;++x) {
-            unsigned char f=flags[(size_t)y*w+x];
-            raw+=(f&CANDIDATE)!=0;dark+=(f&DARK)!=0;
+        int whole=doom_screen_box(flags,w,h,x0,y0,x1,y1,count);
+        int ty0=y0,ty1=y1;size_t cut=count;
+        while (ty0<ty1 && rows[ty0]<=2) cut-=rows[ty0++];
+        while (ty1>ty0 && rows[ty1]<=2) cut-=rows[ty1--];
+        memset(rows+y0,0,(size_t)(y1-y0+1)*sizeof(unsigned));
+        if ((ty0!=y0 || ty1!=y1) && (whole || ty1-ty0+1>=8) && doom_screen_box(flags,w,h,x0,ty0,x1,ty1,cut)) {
+            y0=ty0;y1=ty1;whole=1;
         }
-        for (int y=y0-1;y<=y1+1;++y) for (int x=x0-1;x<=x1+1;++x) {
-            if ((y>=y0 && y<=y1 && x>=x0 && x<=x1) || x<0 || y<0 || x>=w || y>=h) continue;
-            ++ring;housing+=!(flags[(size_t)y*w+x]&CANDIDATE);
-        }
-        if (raw*100<area*56 || dark*100<area*45 || !ring || housing*10<ring*6) continue;
+        if (!whole) continue;
+        int bw=x1-x0+1,bh=y1-y0+1;
         /* A dome over the box: flat in the middle, steepest at the edges. */
         float peak=(bw<bh?bw:bh)*0.12f;
         peak=peak<1.5f?1.5f:peak>12?12:peak;
@@ -111,7 +136,7 @@ static inline int doom_screen_glass(int w, int h, const unsigned char *pixels,
         }
         ++screens;
     }
-    free(flags);free(stack);
+    free(flags);free(stack);free(rows);
     return screens;
 }
 /* A readout's frame bytes: width and height carry its cell size in their top

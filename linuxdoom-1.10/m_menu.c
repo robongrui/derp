@@ -1994,7 +1994,7 @@ void M_DrawCheats(void)
     {
 	debugfly,
 	(player->cheats & CF_NOCLIP) != 0,
-	(player->cheats & CF_GODMODE) != 0,
+	(player->cheats & CF_GODMODE) != 0 || debugnodeath,
 	debugnotarget,
 	debugnomonsters
     };
@@ -2015,7 +2015,9 @@ void M_DrawCheats(void)
     {
 	y = CheatDef.y + i*LINEHEIGHT + 1;
 	M_WriteText(CheatDef.x, y, labels[i]);
-	if (i < dbg_give)
+	if (i == dbg_god && debugnodeath && !(player->cheats & CF_GODMODE))
+	    M_WriteText(CheatDef.x + 150, y, "NO DEATH");
+	else if (i < dbg_give)
 	    M_WriteText(CheatDef.x + 150, y, on[i] ? "ON" : "OFF");
     }
     if (gamemode == commercial)
@@ -2038,10 +2040,19 @@ void M_CheatNoclip(int choice)
     P_SetCheat(player, &debugnoclip, !(player->cheats & CF_NOCLIP));
 }
 
+// GOD MODE cycles OFF -> ON -> NO DEATH (hurt as usual, never killed).
 void M_CheatGod(int choice)
 {
     player_t*	player = &players[consoleplayer];
-    P_SetCheat(player, &debuggod, !(player->cheats & CF_GODMODE));
+    if (player->cheats & CF_GODMODE)
+    {
+	P_SetCheat(player, &debuggod, false);
+	debugnodeath = true;
+    }
+    else if (debugnodeath)
+	debugnodeath = false;
+    else
+	P_SetCheat(player, &debuggod, true);
 }
 
 void M_CheatNoTarget(int choice)
@@ -2108,6 +2119,14 @@ void M_StartControlPanel (void)
 // Called after the view has been rendered,
 // but before it has been blitted.
 //
+boolean M_LibraryBlack (void);
+boolean M_DrawsBelow (int y)
+{
+    if (inhelpscreens || M_LibraryBlack ())
+	return true;
+    return menuactive && currentMenu->y + currentMenu->numitems*LINEHEIGHT > y;
+}
+
 void M_Drawer (void)
 {
     static short	x;

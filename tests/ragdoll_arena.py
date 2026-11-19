@@ -12,16 +12,34 @@ and saves the falls as a contact sheet.
   MAP06 close    a wall 22 units behind the row, the side walls 40 off its ends
   MAP05 clutter  behind each monster in turn a step up, a pillar, open floor, a pit;
                  beyond them a dark floor (light 96)
+  MAP08 pedestal each monster on a pedestal as in DOOM II's MAP01 (128 x 64, 64 high, the monster
+                 32 in from its left end): the row 160 apart
+  MAP09 pools   liquids a step down just behind the row: water, nukage, lava (west to east)
   MAP07 show     the row facing the player, 90 apart, and behind each something else:
                  a broad column (64), a pit (96 deep) with a pillar standing in it, open
                  floor with two staggered columns, stairs up (16 a step) to a column
+  MAP10 flight   long stairs down behind the row: 16 a step on the west half, 8 on the east
+  MAP11 low      waist-high things just behind the row, west to east: a low wall, a platform,
+                 a sill over a 96-unit drop, a fence (a blocking line with a mid texture)
+  MAP12 pond     water under open sky just behind the row: frozen when it's cold enough
+  MAP13 voids    void patterns (void_patterns.cpp): the row facing the player, an imp behind three of them
+                 (48, 64 and 80 behind, west to east), a wall 112 behind the row; the east one alone
+                 (no imp: the fan without an outline). Burst the front one up close (point-blank SSG,
+                 rockets, or -gorehead blown) and the imp's outline stays clean on the wall. The chamber
+                 brings everyone back once all are dead: the imps too.
+  MAP14 window   the row facing the player 64 in front of a glazed window (a frame 16 deep, sill 32,
+                 lintel 112, 320 wide), open floor beyond: blood on the glass (glass_blood.cpp),
+                 bodies and pieces thrown through it (windows.cpp glassBodyThrough)
+  MAP15 squad    a bigger open room (1024 x 1472) and twelve facing the player: three each of
+                 zombiemen, shotgun guys, imps and chaingunners, in three staggered rows of four
+                 (the monster argument doesn't change it). play mix 15
 
 The rectangles tile each room in guillotine cuts (every split line runs the
 room's whole width or depth), so the BSP is the cut tree, each rectangle a
 convex subsector closed by real lines, and no seg is ever split.
 
   python3 tests/ragdoll_arena.py zombie out.wad [--doom1]
-  monsters: zombie, shotgun, imp. --doom1 names the maps E1M1-E1M4.
+  monsters: zombie, shotgun, chaingun, imp, baron, knight, cyber, revenant, vile, ss, caco, pain, mancubus (no rig: gore bursts it). --doom1 names the maps E1M1-E1M4.
 
   python3 tests/ragdoll_arena.py showcase [monster] [weapon[:aim]] [--smooth] [-gameflag [value] ...]
   plays MAP07 in a window with -ragdollloop: the row shot, left to lie, stood up and shot
@@ -32,19 +50,27 @@ convex subsector closed by real lines, and no seg is ever split.
   game steps them like its own animations. From the first argument with one dash on, the
   arguments go to the game as they are (e.g. -slowmo 4).
 
-  python3 tests/ragdoll_arena.py run <monster> <map 1-7> <weapon[:aim[:n[:tic]]]> <sheet.png> [--side]
+  python3 tests/ragdoll_arena.py play [monster] [map] [--still] [-gameflag [value] ...]
+  the arenas to play yourself in a window (default mix, MAP10): nothing killed for you; you can't
+  die and hold every gun; 5 seconds after the last of the row dies all of it stands up again
+  (-gorechamber 5, which idclev keeps). --still holds the row on its spots, doing nothing: left to
+  walk, those facing you die too far from what's behind them. Your settings are copied to
+  output/ragdoll-play/ and the game uses those, so it can't change yours.
+
+  python3 tests/ragdoll_arena.py run <monster> <map 1-14> <weapon[:aim[:n[:tic]]]> <sheet.png> [--side]
   builds the WAD next to the sheet and plays it with DOOM II: 20 frames 3 tics
   apart from the kills on, one contact sheet. weapon: pistol, shotgun, ssg; aim:
   chest, head, legs, left, right; n keeps only that monster of the row (0-3:
   facing the player, away, east, west), tic kills it then (its random draw).
-  --side watches the one victim from across its flight; --log adds the per-tic -ragdolllog to sheet.log. The game reads and writes a
+  --side watches the one victim from across its flight; --log adds the per-tic -ragdolllog to sheet.log;
+  game switches after it as with play (-ragdollkneel: the row down on one knee). The game reads and writes a
   graphics.cfg and default.cfg beside the sheet (the player's graphics.cfg is
   copied there once), never the player's own. -renderframes etc.: scene.cpp.
 
 No id data: plain geometry and stock texture names only."""
 import struct, sys
 
-MONSTERS = {'zombie': 3004, 'shotgun': 9, 'imp': 3001, 'mix': (3004, 9, 3004, 9)}   # mix: the row, west to east
+MONSTERS = {'zombie': 3004, 'shotgun': 9, 'chaingun': 65, 'imp': 3001, 'baron': 3003, 'knight': 69, 'cyber': 16, 'revenant': 66, 'vile': 64, 'ss': 84, 'caco': 3005, 'pain': 71, 'mancubus': 67, 'mix': (3004, 9, 3004, 9)}   # mix: the row, west to east
 WALL, FLOOR, CEIL = 'GRAY5', 'FLAT19', 'FLAT18'   # light, plain greys in both IWADs: bodies stand out
 ROW_Y, PLAYER_Y = 128, -32             # the row, and the player south of it facing north
 ROW_X = (-120, -40, 40, 120)
@@ -65,7 +91,57 @@ def arenas():
                                    (0, 80, 0, 256), (80, 160, -32, 256), (160, 384, 0, 256)):
         clutter.append((x0, 160, x1, 208, floor, ceiling))
     close = [(-160, -448, 0, 150, 0, 256), (0, -448, 160, 150, 0, 256)]   # a wall 22 behind, side walls 40 off the ends
-    return [flat, stairs, ledge, wall, clutter, close, show_room()]
+    # MAP09 pools: just behind the row, liquids a step down (water, nukage, lava, west to east): what blood does
+    # landing in each (gore's blood_liquids.cpp).
+    pools = [(-384, -448, 384, 150, 0, 256)]
+    for x0, x1, liquid in ((-384, -64, 'FWATER1'), (-64, 64, 'NUKAGE1'), (64, 384, 'LAVA1')):
+        pools.append((x0, 150, x1, 768, -8, 256, 255, liquid))
+    voids = [(-384, -448, 0, VOID_WALL, 0, 256), (0, -448, 384, VOID_WALL, 0, 256)]   # two halves: a BSP needs a node
+    window = [(-384, -448, 384, 160, 0, 256), (-384, 160, -160, 176, 0, 0), (-160, 160, 160, 176, 32, 112),
+              (160, 160, 384, 176, 0, 0), (-384, 176, 384, 768, 0, 256)]
+    squad = [(-512, -448, 0, 1024, 0, 256), (0, -448, 512, 1024, 0, 256)]   # two halves: a BSP needs a node
+    return [flat, stairs, ledge, wall, clutter, close, show_room(), pedestals(), pools, flight(), low(), pond(), voids, window,
+            squad]
+
+def flight():
+    """MAP10: ten steps down from just behind the row, each half of the room its own stairs."""
+    rects = []
+    for x0, x1, rise, tread in ((-384, 0, 16, 32), (0, 384, 8, 24)):
+        rects.append((x0, -448, x1, 160, 0, 256))
+        y = 160
+        for step in range(1, 11):
+            rects.append((x0, y, x1, y + tread, -rise * step, 256)); y += tread
+        rects.append((x0, y, x1, 768, -rise * 10 - rise, 256))
+    return rects
+
+def pond():
+    """MAP12: open sky over all of it, so the water takes the outside's temperature (water_ice.cpp)."""
+    return [(-384, -448, 384, 150, 0, 256, 255, FLOOR, 'F_SKY1'), (-384, 150, 384, 768, -8, 256, 255, 'FWATER1', 'F_SKY1')]
+
+LOW_TOP, LOW_Y = 32, 150
+
+def low():
+    """MAP11: the lanes behind the row, a monster in each. Every lane starts LOW_Y: a strip 16 deep, then the floor beyond."""
+    rects = [(-384, -448, 384, LOW_Y, 0, 256)]
+    for x0, x1, strip, beyond in ((-384, -80, LOW_TOP, 0), (-80, 0, 24, 24), (0, 80, LOW_TOP, -96), (80, 384, 0, 0)):
+        rects.append((x0, LOW_Y, x1, LOW_Y + 16, strip, 256))
+        rects.append((x0, LOW_Y + 16, x1, 768, beyond, 256))
+    return rects
+
+PEDESTAL_ROW = (-240, -80, 80, 240)
+
+def pedestals():
+    """MAP08: MAP01's pedestals (sectors 46, 47, 50, 51 there): 128 wide, 64 deep, 64 high, the monster
+    32 in from the left end and in the middle of its depth. A grid cut at every edge, as show_room."""
+    boxes = [(x - 32, ROW_Y - 32, x + 96, ROW_Y + 32) for x in PEDESTAL_ROW]
+    xs = sorted({-384, 384} | {b[0] for b in boxes} | {b[2] for b in boxes})
+    ys = sorted({-448, 768, ROW_Y - 32, ROW_Y + 32})
+    rects = []
+    for x0, x1 in zip(xs, xs[1:]):
+        for y0, y1 in zip(ys, ys[1:]):
+            up = any(b[0] <= x0 and x1 <= b[2] and b[1] <= y0 and y1 <= b[3] for b in boxes)
+            rects.append((x0, y0, x1, y1, 64 if up else 0, 256))
+    return rects
 
 def show_room():
     """MAP07: the front room, and behind the row a grid of cells cut at every edge (so the cuts
@@ -91,15 +167,31 @@ def show_room():
             rects.append((x0, y0, x1, y1, f, f if closed else 256))
     return rects
 
+# MAP13: the wall behind the row, and an imp (3001) behind three of the row, facing the player
+VOID_WALL = ROW_Y + 112
+VOID_BEHIND = ((-135, ROW_Y + 48, 3001), (-45, ROW_Y + 64, 3001), (45, ROW_Y + 80, 3001))
+
+# MAP15: three rows of four, one of each kind per row (zombie, shotgun guy, imp, chaingunner), each row's
+# order turned one along and shifted sideways so nobody stands straight behind anybody.
+SQUAD_KINDS = (3004, 9, 3001, 65)
+SQUAD = tuple((x + 48 * r - 48, 384 + 112 * r, SQUAD_KINDS[(i + r) % 4])
+              for r in range(3) for i, x in enumerate((-288, -96, 96, 288)))
+
 # Maps (from 0) laid out otherwise: the row facing the player, spread out, the player further back
-SHOWS = {6: {'facings': (270,) * 4, 'row': (-135, -45, 45, 135), 'player': -100}}
+SHOWS = {14: {'row': (), 'player': -100, 'behind': SQUAD},
+6: {'facings': (270,) * 4, 'row': (-135, -45, 45, 135), 'player': -100}, 7: {'row': PEDESTAL_ROW},
+         10: {'fences': ((80, 384, LOW_Y),)},
+         12: {'facings': (270,) * 4, 'row': (-135, -45, 45, 135), 'player': -100, 'behind': VOID_BEHIND},
+         13: {'facings': (270,) * 4, 'row': (-135, -45, 45, 135), 'player': -100, 'row_y': 96}}
+FENCE, FENCE_HEIGHT = 'MIDGRATE', 128   # a stock mid texture, moved down so LOW_TOP of it shows
 
 def name8(s):
     return s.encode('ascii').ljust(8, b'\0')[:8]
 
-def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y, start=None):
+def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y, start=None, fences=(), behind=(), row_y=ROW_Y):
     """Rects may go on past the light: (..., light, floor flat, ceiling flat, wall texture). With
-    start (x, y, angle) the player starts there and no monsters are placed."""
+    start (x, y, angle) the player starts there and no monsters are placed. Fences: (x0, x1, y), the
+    east-west lines along them blocking, with a mid texture standing LOW_TOP high."""
     def wall(i):
         return rects[i][9] if len(rects[i]) > 9 else WALL
     vertices, vindex = [], {}
@@ -142,11 +234,15 @@ def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y, start=Non
             lower = wall(sector) if rects[other][4] != rects[sector][4] else '-'
             upper = wall(sector) if rects[other][5] != rects[sector][5] else '-'
             return (0, 0, upper, lower, '-', sector)
-        sides.append(side(front, back)); fs = len(sides) - 1
+        fenced = back >= 0 and ay == by and any(f[0] <= ax and bx <= f[1] and ay == f[2] for f in fences)
+        def sided(sector, other):
+            s = side(sector, other)
+            return (0, LOW_TOP - FENCE_HEIGHT, s[2], s[3], FENCE, s[5]) if fenced else s
+        sides.append(sided(front, back)); fs = len(sides) - 1
         bs = 0xFFFF
         if back >= 0:
-            sides.append(side(back, front)); bs = len(sides) - 1
-        flags = 4 if back >= 0 else 1
+            sides.append(sided(back, front)); bs = len(sides) - 1
+        flags = (4 | 1 | 16 if fenced else 4) if back >= 0 else 1   # 16: pegged to the floor
         lines.append((vertex(*a), vertex(*b), flags, 0, 0, fs, bs))
         lineAt[(a, b)] = len(lines) - 1
     # Segs: each rectangle's lines clockwise round it (it on their right).
@@ -200,7 +296,8 @@ def build(rects, monster, facings=FACINGS, row=ROW_X, player=PLAYER_Y, start=Non
     else:
         things = [(0, player, 90, 1, 7)]
         kinds = MONSTERS[monster] if isinstance(MONSTERS[monster], tuple) else (MONSTERS[monster],) * len(row)
-        things += [(x, ROW_Y, f, kind, 7 | 8) for x, f, kind in zip(row, facings, kinds)]
+        things += [(x, row_y, f, kind, 7 | 8) for x, f, kind in zip(row, facings, kinds)]
+        things += [(x, y, 270, kind, 7 | 8) for x, y, kind in behind]   # others standing behind the row, facing the player
     sectors = [(r[4], r[5], r[7] if len(r) > 7 else FLOOR, r[8] if len(r) > 8 else CEIL, r[6] if len(r) > 6 else 255, 0, 0)
                for r in rects]
     lumps = [
@@ -251,7 +348,7 @@ def machine():
             os.path.expanduser('~/Downloads/DOOM-gamedata/gog_doom/doom2.wad'),
             os.path.expanduser('~/Library/Application Support/Local Games/DOOM'))
 
-def run(args, side, trace=False):
+def run(args, side, trace=False, extra=()):
     import os, shutil, subprocess
     monster, level, spec, sheet = args
     here = os.path.dirname(os.path.abspath(__file__))
@@ -271,6 +368,7 @@ def run(args, side, trace=False):
     command += ['-ragdollview', 'side', '-rendercrop', '0.2,0.2,0.8,0.72', '-renderscale', '0.35'] if side else \
                ['-rendercrop', '0.15,0.25,0.85,0.7']
     command += ['-ragdolllog'] if trace else []
+    command += list(extra)
     with open(sheet + '.log', 'w') as log:
         code = subprocess.call(command, stdout=log, stderr=subprocess.STDOUT)
     print('%s: exit %d' % (sheet, code))
@@ -297,6 +395,22 @@ def showcase(monster, spec, smooth=False, extra=()):
     command += ['-graphics', graphics, '-config', os.path.join(out, 'default.cfg')]
     return subprocess.call(command)
 
+def play(monster, level, still=False, extra=()):
+    import os, shutil, subprocess
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = os.path.join(here, '..', 'output', 'ragdoll-play')
+    os.makedirs(out, exist_ok=True)
+    wad = os.path.join(out, 'arena-%s.wad' % monster)
+    write(wad, monster, False)
+    game, iwad, mine = machine()
+    for name, yours in (('graphics.cfg', 'graphics.cfg'), ('default.cfg', 'doom.cfg')):   # fresh copies each time, never written back
+        if os.path.exists(os.path.join(mine, yours)):
+            shutil.copy(os.path.join(mine, yours), os.path.join(out, name))
+    command = [game, '-iwad', iwad, '-file', wad, '-warp', level, '-skill', '3', '-gorechamber', '5'] + (['still'] if still else [])
+    command += list(extra)
+    command += ['-graphics', os.path.join(out, 'graphics.cfg'), '-config', os.path.join(out, 'default.cfg')]
+    return subprocess.call(command)
+
 def write(path, monster, doom1):
     lumps = []
     for i, rects in enumerate(arenas()):
@@ -318,10 +432,14 @@ def main():
         if len(args) > 3 or (len(args) > 1 and args[1] not in MONSTERS):
             raise SystemExit(__doc__)
         return showcase(args[1] if len(args) > 1 else 'mix', args[2] if len(args) > 2 else 'ssg:mix', '--smooth' in sys.argv, extra)
+    if args and args[0] == 'play':
+        if len(args) > 3 or (len(args) > 1 and args[1] not in MONSTERS):
+            raise SystemExit(__doc__)
+        return play(args[1] if len(args) > 1 else 'mix', args[2] if len(args) > 2 else '10', '--still' in sys.argv, extra)
     if args and args[0] == 'run':
         if len(args) != 5 or args[1] not in MONSTERS:
             raise SystemExit(__doc__)
-        return run(args[1:], '--side' in sys.argv, '--log' in sys.argv)
+        return run(args[1:], '--side' in sys.argv, '--log' in sys.argv, extra)
     if len(args) != 2 or args[0] not in MONSTERS:
         raise SystemExit(__doc__)
     write(args[1], args[0], '--doom1' in sys.argv)

@@ -23,24 +23,79 @@ void buildShafts(const Uniforms &camera) {
     // Nor while rain, snow or nukage falls (weather.cpp): sunbeams through a downpour read wrong.
     // Dry ice lies low under clear air and keeps its sun (overcast), so its beams too: the sun
     // stood in a clear sky over the layer with none.
-    if(fallNow>0.01f&&falling()!=WEATHER_DRY_ICE)return;
+    if(fallNow>0.01f&&falling()!=WEATHER_DRY_ICE&&!sunshower())return;
+    // Nor with the sun behind the sky's mountains (sky_sun_block.cpp).
+    if(skySunClear<=0)return;
+    if(sunShafts.empty())return;
     const float *d=sunDirection,*eye=camera.eye;
+    // First the beams that can show at all: near enough, ahead, in a room the eye sees into, not
+    // edge-on, not too faint. All of that goes by the whole beam, not by where a body cuts it, so
+    // it comes before the bodies, and without a beam left nothing need be asked of them.
+    struct Shown { const SunShaft *shaft; float side[3],alpha; };
+    static std::vector<Shown> shown;
+    shown.clear();
     for(const SunShaft &s:sunShafts) {
-        if(std::fabs(floorZ(&sectors[s.sector])-s.z)>1)continue;
+        if(std::fabs(floorZ(&sectors[s.sector])-s.floor)>1)continue;
         float half=s.length*0.5f,mid[3]={s.x+d[0]*half-eye[0],s.y+d[1]*half-eye[1],s.z+d[2]*half-eye[2]};
         float distance=std::sqrt(mid[0]*mid[0]+mid[1]*mid[1]+mid[2]*mid[2]);
         if(distance>1600||mid[0]*camera.forward[0]+mid[1]*camera.forward[1]+mid[2]*camera.forward[2]<-half)continue;
+        // Nor a beam in a room the eye cannot see into: its foot, its middle or its top in view.
+        auto seen=[&](float t) {
+            return leafInView((int)(R_PointInSubsector((fixed_t)((s.x+d[0]*t)*FRACUNIT),(fixed_t)((s.y+d[1]*t)*FRACUNIT))-subsectors));
+        };
+        if(!seen(0)&&!seen(half)&&!seen(s.length))continue;
         float side[3]={d[1]*mid[2]-d[2]*mid[1],d[2]*mid[0]-d[0]*mid[2],d[0]*mid[1]-d[1]*mid[0]};
         float across=std::sqrt(side[0]*side[0]+side[1]*side[1]+side[2]*side[2]);
         if(across<1e-3f)continue;
         // Seen down the axis a ribbon turns edge-on, so it fades out.
         float facing=std::min(1.0f,across/distance*2.5f),far=std::clamp((1600-distance)/500,0.0f,1.0f);
-        float alpha=s.strength*facing*far;
+        float alpha=s.strength*facing*far*skySunClear;
         if(alpha<0.02f)continue;
         for(float &c:side)c*=14/across;
+        shown.push_back({&s,{side[0],side[1],side[2]},alpha});
+    }
+    if(shown.empty())return;
+    // What stands in the beams: monsters, barrels, pillars and the like, each an upright cylinder
+    // (its radius, up to its sprite's top). A beam ends at the body it strikes, so the air behind
+    // a monster walking through the light is dark. Not corpses (too flat), not spectres (the
+    // light goes through them), not the player (the gap is where the eye is).
+    struct Body { float x,y,radius,low,high; };
+    static std::vector<Body> bodies;
+    bodies.clear();
+    for(int i=0;i<numsectors;++i)for(const mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
+        if(thing==players[displayplayer].mo||!(thing->flags&(MF_SOLID|MF_SHOOTABLE))||(thing->flags&(MF_CORPSE|MF_SHADOW)))continue;
+        float x,y,z;interpolatedPosition(*thing,renderFraction,x,y,z);
+        if(std::hypot(x-eye[0],y-eye[1])>1700)continue;
+        float high=z+units(thing->height);
+        if(thing->sprite>=0&&thing->sprite<numsprites) {
+            const auto &sprite=sprites[thing->sprite];int frame=thing->frame&FF_FRAMEMASK;
+            if(frame<sprite.numframes)high=std::max(high,z+units(spritetopoffset[sprite.spriteframes[frame].lump[0]]));
+        }
+        if(high-z>=16)bodies.push_back({x,y,units(thing->radius),z,high});
+    }
+    float flat=d[0]*d[0]+d[1]*d[1];
+    for(const Shown &beam:shown) {
+        const SunShaft &s=*beam.shaft;
+        // Where the beam starts: at its foot, or in the middle of the highest body on its way.
+        float cut=0;
+        for(const Body &b:bodies) {
+            float ox=s.x-b.x,oy=s.y-b.y,from=-INFINITY,to=INFINITY;
+            if(flat<1e-6f) {if(ox*ox+oy*oy>=b.radius*b.radius)continue;}
+            else {
+                float along=ox*d[0]+oy*d[1],inside=along*along-flat*(ox*ox+oy*oy-b.radius*b.radius);
+                if(inside<=0)continue;
+                float root=std::sqrt(inside);from=(-along-root)/flat;to=(-along+root)/flat;
+            }
+            from=std::max({from,(b.low-s.z)/d[2],0.0f});to=std::min({to,(b.high-s.z)/d[2],s.length});
+            if(to>from)cut=std::max(cut,(from+to)/2);
+        }
+        float reach=s.length-cut;
+        if(reach<24)continue;
+        const float *side=beam.side;float alpha=beam.alpha;
         auto vertex=[&](float u,float v) {
-            float t=v*s.length,x=s.x+d[0]*t+side[0]*u,y=s.y+d[1]*t+side[1]*u,z=s.z+d[2]*t+side[2]*u;
-            Vertex out={x,y,z,u,v,alpha*sunScatter(x-eye[0],y-eye[1],z-eye[2]),MODE_SUNBEAM};
+            float t=cut+v*reach,x=s.x+d[0]*t+side[0]*u,y=s.y+d[1]*t+side[1]*u,z=s.z+d[2]*t+side[2]*u;
+            Vertex out={x,y,z,u,v,alpha*sunScatter(x-eye[0],y-eye[1],z-eye[2]),MODE_SUNBEAM|((unsigned)((&s-sunShafts.data())&255)<<MODE_SUNBEAM_SEED_SHIFT)
+                                                                               |((unsigned)std::clamp((int)(reach/8+0.5f),1,255)<<MODE_SUNBEAM_LENGTH_SHIFT)};
             out.red=sunTint[0];out.green=sunTint[1];out.blue=sunTint[2];
             return out;
         };
@@ -58,6 +113,11 @@ void buildMist(const Uniforms &camera) {
         const auto &poly=floors[i];if(poly.size()<3)continue;
         const sector_t &sector=*subsectors[i].sector;const auto &mist=sectorMist[&sector-sectors];
         if(!(mist.pit||mist.liquid||mist.toxic)||sector.floorpic==skyflatnum)continue;
+        // Only over what the eye can see. The sheets are drawn without the world's depth
+        // (mist.frag softens them against it instead), so one behind a wall still shaded
+        // every pixel it covered, three or four layers deep: by E1M1's exit, beside the
+        // nukage hall, that was a third of the frame.
+        if(!leafInView(i))continue;
         const auto &bounds=floorBounds[i];
         if(camera.eye[0]<bounds[0]-2000||camera.eye[0]>bounds[2]+2000||
            camera.eye[1]<bounds[1]-2000||camera.eye[1]>bounds[3]+2000)continue;
@@ -90,6 +150,8 @@ void buildMist(const Uniforms &camera) {
 void buildHeat(const Uniforms &camera) {
     heatVertices.clear();
     buildGroundHeat(camera);   // the heat of the day (ground_heat.cpp), whatever the switch
+    buildShotWakes(camera);    // slow motion's shot wakes (shot_wakes.cpp), likewise
+    buildExplosionShimmer(camera);   // and a blast's shock in the air (explosions.cpp)
     if(!settings.heatHaze||camera.effects[2]!=0||sectorMist.size()!=(size_t)numsectors)return;
     auto vertex=[&](float x,float y,float z,float heat) {
         float fade=std::clamp((2400-std::hypot(x-camera.eye[0],y-camera.eye[1]))/600,0.0f,1.0f);
@@ -140,7 +202,7 @@ void buildHeat(const Uniforms &camera) {
 void buildDust(const Uniforms &camera) {
     if(!settings.dust||camera.effects[2]!=0||seamCells.empty())return;
     const Flash *beam=flashlightOn&&flashes.count&&flashes.lights[0].direction[3]>0?&flashes.lights[0]:nullptr;
-    bool sun=settings.sun&&sunLevel>0&&!contactCells.empty();
+    bool sun=settings.sun&&sunLevel>0&&!contactCells.empty()&&skySunClear>0;
     if(!beam&&!sun)return;
     constexpr float cell=48;
     float t=levelSeconds();
@@ -171,7 +233,7 @@ void buildDust(const Uniforms &camera) {
             float lift=(p[2]-floor)/std::tan(sunElevation);
             int fx=std::clamp((int)std::floor((p[0]-sunAzimuth[0]*lift-mapOrigin[0])/mapCell),0,mapWidth-1);
             int fy=std::clamp((int)std::floor((p[1]-sunAzimuth[1]*lift-mapOrigin[1])/mapCell),0,mapHeight-1);
-            float visible=contactCells[4*((size_t)fy*mapWidth+fx)+2]/255.0f*0.6f;
+            float visible=contactCells[4*((size_t)fy*mapWidth+fx)+2]/255.0f*0.6f*skySunClear;
             bright+=visible;for(int c=0;c<3;++c)color[c]+=sunTint[c]*visible;
         }
         if(bright<0.05f)continue;

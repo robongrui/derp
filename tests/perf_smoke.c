@@ -3,7 +3,8 @@
    get slow and why.
 
    doom-perf-smoke <iwad> [-maps MAP01,E1M2] [-spacing 512] [-budget 16.7]
-                   [-out perf-report] [-strict] [-at x,y[,facing]] [-doors] [-lines 471,12] [engine options]
+                   [-out perf-report] [-strict] [-at x,y[,facing]] [-doors] [-lines 471,12]
+                   [-features [-rounds 5]] [engine options]
 
    -at times just that spot (facing east, north, west or south, or all four),
    for re-checking a slow view the report found; use it with one map.
@@ -15,6 +16,13 @@
    walk-over lines given (by number: a lowering wall, a lift), as if the
    player crossed them. The report adds each second's mean frame, so a
    steady slowdown shows apart from a single hitch.
+
+   -features [-rounds N] instead times, at the -at view (each of the four
+   facings unless one is given), what each part of the world shader costs:
+   the renderer switches one part off at a time (I_Render3DProfileKnob) and
+   the report lists what that saves in the pieces that run the shader, the
+   opaque world, the masked walls and the sprites, largest first. Appends to
+   report.txt. Load the GPU (-width 3840 -height 2160) for steady timings.
 
    The world stays paused while the view moves from spot to spot, facing the
    four compass directions at each. Every frame waits for the GPU, so CPU and
@@ -80,7 +88,7 @@ static const char *map_filter;
 static FILE *report, *csv;
 static summary_t summaries[MAX_MAPS];
 
-static enum { START, LOADING, SETTLING, SAMPLING, CONFIRMING, ABLATING, SHOT_PREP, SHOT, DOORS, FINISHED } state = START;
+static enum { START, LOADING, SETTLING, SAMPLING, CONFIRMING, ABLATING, PIECES, SHOT_PREP, SHOT, DOORS, FEATURES, FINISHED } state = START;
 #define DOOR_SECONDS 6
 static int doors;             /* -doors */
 static int cross_lines[16], cross_count;   /* -lines */
@@ -101,6 +109,10 @@ static ablation_t ablations[16];
 static int ablation_count, ablation;
 static double timed_gpu[TIMED_FRAMES], timed_cpu[TIMED_FRAMES];
 static int timed_frame = -1;
+/* PIECES: the slowest view's GPU work piece by piece (I_Render3DProfilePieces),
+   each piece's median over TIMED_FRAMES frames. */
+static double piece_timed[I_RENDER3D_PIECES][TIMED_FRAMES], piece_ms[I_RENDER3D_PIECES];
+static int piece_frame = -1, pieces_timed;
 static int worst;             /* Index into samples. */
 static char shot_path[512];
 
@@ -291,6 +303,154 @@ static void report_doors(void)
         doors_opened, door_frames, DOOR_SECONDS, 1000 / mean, mean, wall95, worst_wall, cpu, gpu);
 }
 
+/* -features: the world shader's parts by what switching each off saves. GPU
+   times drift as the clocks change, so no two numbers taken far apart are
+   compared: a round runs baseline, knob 1, baseline, knob 2, ... knob K,
+   baseline, and the rounds repeat. A knob's saving is the median of the
+   baseline frames either side of it, over all rounds, less the median of its
+   own; a saving of at most twice those baseline frames' median absolute
+   deviation is within noise. Every measured frame follows an unmeasured one drawn the
+   same way, so pipelines and caches have settled on it. */
+#define FEATURE_PIECES 3
+#define FEATURE_SETTLE 20      /* Pieced frames at the view before the first round. */
+#define MAX_ROUNDS 64
+static const int feature_piece[FEATURE_PIECES] = {I_RENDER3D_PIECE_OPAQUE, I_RENDER3D_PIECE_MASKED, I_RENDER3D_PIECE_CUTOUTS};
+static int features, feature_rounds = 5;
+static int feature_knobs;      /* Knobs but knob 0, which is none. */
+static int feature_facing[4], feature_facings, feature_facing_at;
+static int feature_round, feature_step, feature_warm, feature_settle, feature_legend;
+static double *feature_ms;     /* [round][step][piece]: even steps the baseline, odd ones knob (step + 1) / 2. */
+
+static int feature_steps(void) { return 2 * feature_knobs + 1; }
+static double *feature_at(int round, int step) { return feature_ms + ((size_t)round * feature_steps() + step) * FEATURE_PIECES; }
+static int feature_knob_of(int step) { return step % 2 ? (step + 1) / 2 : 0; }
+/* The median absolute deviation from middle; reorders values. */
+static double deviation(double *values, int count, double middle)
+{
+    for (int i = 0; i < count; ++i) values[i] = fabs(values[i] - middle);
+    return median(values, count);
+}
+
+/* The facing now timed, from the first round on. */
+static void begin_features(void)
+{
+    feature_round = feature_step = feature_settle = 0;
+    feature_warm = 1;
+    I_Render3DProfileKnob(0);
+    I_Render3DProfileTeleported();
+    place(&spots[0], feature_facing[feature_facing_at]);
+}
+
+static void start_features(void)
+{
+    feature_knobs = I_Render3DKnobCount() - 1;
+    feature_facings = 0;
+    if (at_yaw >= 0) feature_facing[feature_facings++] = at_yaw;
+    else for (int k = 0; k < 4; ++k) feature_facing[feature_facings++] = k;
+    feature_facing_at = 0;
+    free(feature_ms);
+    feature_ms = malloc(sizeof(double) * FEATURE_PIECES * feature_steps() * feature_rounds);
+    if (!feature_ms || feature_knobs < 1) I_Error("Performance smoke: no feature knobs to time");
+    I_Render3DProfilePieces(1);
+    begin_features();
+}
+
+/* A piece's time with a mark when the piece did not run (0 in the baseline). */
+static void feature_cell(double saved, int noisy, double base)
+{
+    if (base <= 0) out("  %10s ", "-");
+    else out("  %+7.3f ms%s", saved, noisy ? "~" : " ");
+}
+
+static void report_features(void)
+{
+    int rounds = feature_rounds, knobs = feature_knobs, baselines = (knobs + 1) * rounds;
+    double around[2 * MAX_ROUNDS], own[MAX_ROUNDS];
+    double *all = malloc(sizeof(double) * baselines);
+    double *saved = malloc(sizeof(double) * FEATURE_PIECES * (knobs + 1));
+    double *left = malloc(sizeof(double) * FEATURE_PIECES * (knobs + 1));
+    int *noisy = malloc(sizeof(int) * FEATURE_PIECES * (knobs + 1));
+    int *order = malloc(sizeof(int) * knobs);
+    double base[FEATURE_PIECES], base_spread[FEATURE_PIECES];
+    if (!all || !saved || !left || !noisy || !order) I_Error("Performance smoke: out of memory");
+    const spot_t *spot = &spots[0];
+    int facing = feature_facing[feature_facing_at];
+
+    if (!feature_legend)
+    {
+        feature_legend = 1;
+        out("\n== World shader feature knobs (each clears, for its frames only):\n");
+        for (int k = 1; k <= knobs; ++k) out("   %-34s %s\n", I_Render3DKnobName(k), I_Render3DKnobClears(k));
+    }
+    for (int p = 0; p < FEATURE_PIECES; ++p)
+    {
+        int n = 0;
+        for (int r = 0; r < rounds; ++r)
+            for (int s = 0; s < feature_steps(); s += 2) all[n++] = feature_at(r, s)[p];
+        base[p] = median(all, n);
+        base_spread[p] = deviation(all, n, base[p]);
+        for (int k = 1; k <= knobs; ++k)
+        {
+            for (int r = 0; r < rounds; ++r)
+            {
+                around[2 * r] = feature_at(r, 2 * k - 2)[p];
+                around[2 * r + 1] = feature_at(r, 2 * k)[p];
+                own[r] = feature_at(r, 2 * k - 1)[p];
+            }
+            /* Round by round, the knob against the two baseline frames right
+               beside it: the GPU's time drifts (its clock steps up and down),
+               and medians taken apart put that drift into the saving. */
+            double mine = median(own, rounds);
+            for (int r = 0; r < rounds; ++r) around[r] = (around[2 * r] + around[2 * r + 1]) / 2 - feature_at(r, 2 * k - 1)[p];
+            double gain = median(around, rounds), spread = deviation(around, rounds, gain);
+            saved[k * FEATURE_PIECES + p] = gain;
+            left[k * FEATURE_PIECES + p] = mine;
+            noisy[k * FEATURE_PIECES + p] = fabs(gain) <= 2 * spread;
+        }
+    }
+    /* Single knobs by what they save in the opaque world, largest first; the
+       aggregates (names in parentheses) after them. */
+    int singles = 0;
+    for (int k = 1; k <= knobs; ++k) if (I_Render3DKnobName(k)[0] != '(') order[singles++] = k;
+    for (int i = 0; i < singles; ++i)
+        for (int j = i + 1; j < singles; ++j)
+            if (saved[order[j] * FEATURE_PIECES] > saved[order[i] * FEATURE_PIECES]) { int t = order[i]; order[i] = order[j]; order[j] = t; }
+    int listed = singles;
+    for (int k = 1; k <= knobs; ++k) if (I_Render3DKnobName(k)[0] == '(') order[listed++] = k;
+
+    out("\n== %s world shader features at (%d, %d) facing %s: %d rounds, each knob between two baseline frames\n",
+        maps[map_index].name, spot->x >> FRACBITS, spot->y >> FRACBITS, facing_names[facing], rounds);
+    out("   Saved by switching one off (median over the rounds against the baseline frames beside it;\n"
+        "   ~ within noise: at most twice their median absolute deviation; - the piece drew nothing):\n");
+    out("   %-34s  %-18s  %-11s  %-11s\n", "Feature", "opaque world, %", "masked walls", "sprites");
+    for (int i = 0; i < listed; ++i)
+    {
+        int k = order[i];
+        if (i == singles) out("   Together:\n");
+        const double *s = &saved[k * FEATURE_PIECES];
+        const int *q = &noisy[k * FEATURE_PIECES];
+        out("   %-34s", I_Render3DKnobName(k));
+        feature_cell(s[0], q[0], base[0]);
+        if (base[0] > 0) out(" %5.1f%%", 100 * s[0] / base[0]); else out(" %6s", "");
+        feature_cell(s[1], q[1], base[1]);
+        feature_cell(s[2], q[2], base[2]);
+        out("\n");
+    }
+    out("   Baseline (median of %d frames, median absolute deviation):", baselines);
+    for (int p = 0; p < FEATURE_PIECES; ++p)
+        out("%s %s %.3f ms (%.3f)", p ? "," : "", I_Render3DPieceName(feature_piece[p]), base[p], base_spread[p]);
+    out("\n   Everything off leaves (the shader's base: texture reads, baked light lookups):");
+    for (int p = 0; p < FEATURE_PIECES; ++p)
+    {
+        double rest = left[knobs * FEATURE_PIECES + p];
+        out("%s %s %.3f ms", p ? "," : "", I_Render3DPieceName(feature_piece[p]), rest);
+        if (base[p] > 0) out(" (%.0f%%)", 100 * rest / base[p]);
+    }
+    out("\n");
+    if (report) fflush(report);
+    free(all); free(saved); free(left); free(noisy); free(order);
+}
+
 static void request_map(void)
 {
     const map_t *map = &maps[map_index];
@@ -437,6 +597,20 @@ static void report_map(void)
             ablations[i].gpu - base_gpu, ablations[i].cpu - base_cpu);
         if (ablations[i].skip == I_RENDER3D_SKIP_LIGHTS) light_saving = base_gpu - ablations[i].gpu;
     }
+    if (pieces_timed)
+    {
+        /* Each piece waited for alone, so their sum runs over the frame's GPU time above. */
+        double sum = 0;
+        out("     GPU by piece (each submitted and waited for alone, median of %d frames):\n", TIMED_FRAMES);
+        for (int i = 0; i < I_RENDER3D_PIECES; ++i)
+        {
+            if (piece_ms[i] <= 0) continue;
+            out("       %-30s %6.2f ms\n", I_Render3DPieceName(i), piece_ms[i]);
+            sum += piece_ms[i];
+        }
+        out("       %-30s %6.2f ms\n", "(sum of the medians)", sum);
+        pieces_timed = 0;
+    }
     out("     Screenshot: %s\n", shot_path);
 
     /* Pitfalls over the whole map. */
@@ -538,13 +712,18 @@ void I_TestFrame(void)
         SDL_CreateDirectory(out_dir);
         char path[512];
         snprintf(path, sizeof(path), "%s/report.txt", out_dir);
-        report = fopen(path, "w");
-        snprintf(path, sizeof(path), "%s/views.csv", out_dir);
-        csv = fopen(path, "w");
-        if (!report || !csv) I_Error("Performance smoke: cannot write to %s", out_dir);
-        fputs("map,spot,x,y,sector,facing,frame_ms,cpu_ms,gpu_ms,scene_ms,geometry_ms,light_blockers_ms,"
-              "sprite_light_ms,light_masks_ms,lights,blockers,most_light_blockers,triangles,lit_triangles,"
-              "light_triangles,reflection\n", csv);
+        /* -features adds to the report and leaves views.csv alone: it times no views. */
+        report = fopen(path, features ? "a" : "w");
+        if (!features)
+        {
+            snprintf(path, sizeof(path), "%s/views.csv", out_dir);
+            csv = fopen(path, "w");
+        }
+        if (!report || (!features && !csv)) I_Error("Performance smoke: cannot write to %s", out_dir);
+        if (csv)
+            fputs("map,spot,x,y,sector,facing,frame_ms,cpu_ms,gpu_ms,scene_ms,geometry_ms,light_blockers_ms,"
+                  "sprite_light_ms,light_masks_ms,lights,blockers,most_light_blockers,triangles,lit_triangles,"
+                  "light_triangles,reflection\n", csv);
         {
             int count = 0, w = 0, h = 0;
             SDL_Window **windows = SDL_GetWindows(&count);
@@ -574,6 +753,7 @@ void I_TestFrame(void)
             load_ms = (SDL_GetTicksNS() - request_time) / 1e6;
             find_spots();
             if (!spot_count) { worst = 0; report_map(); goto next_map; }
+            if (features) { start_features(); state = FEATURES; return; }
             view = 0;
             state = doors ? DOORS : SAMPLING;
             I_Render3DProfileTeleported();
@@ -647,6 +827,21 @@ void I_TestFrame(void)
         if (!fresh || !time_view(frame, &ablations[ablation].gpu, &ablations[ablation].cpu)) return;
         if (++ablation < ablation_count) { I_Render3DProfile(1, ablations[ablation].skip); return; }
         I_Render3DProfile(1, 0);
+        I_Render3DProfilePieces(1);
+        piece_frame = -1;
+        state = PIECES;
+        return;
+    case PIECES:
+        /* As time_view: one frame settles, then TIMED_FRAMES are kept. */
+        place(&spots[samples[worst].spot], samples[worst].yaw);
+        if (!fresh || !frame->pieced) return;
+        if (piece_frame >= 0)
+            for (int i = 0; i < I_RENDER3D_PIECES; ++i) piece_timed[i][piece_frame] = frame->pieceMs[i];
+        if (++piece_frame < TIMED_FRAMES) return;
+        for (int i = 0; i < I_RENDER3D_PIECES; ++i) piece_ms[i] = median(piece_timed[i], TIMED_FRAMES);
+        piece_frame = -1;
+        pieces_timed = 1;
+        I_Render3DProfilePieces(0);
         /* The screenshot frame runs unpaused so no PAUSE sign covers it. */
         paused = false;
         state = SHOT_PREP;
@@ -667,6 +862,36 @@ void I_TestFrame(void)
         I_Render3DProfile(0, 0);
         I_Quit();
         return;
+    case FEATURES:
+        place(&spots[0], feature_facing[feature_facing_at]);
+        if (!fresh || !frame->pieced) return;
+        if (feature_settle < FEATURE_SETTLE) { ++feature_settle; return; }
+        /* The frame after a knob changes is drawn but not kept. */
+        if (feature_warm) { feature_warm = 0; return; }
+        {
+            double *ms = feature_at(feature_round, feature_step);
+            for (int p = 0; p < FEATURE_PIECES; ++p) ms[p] = frame->pieceMs[feature_piece[p]];
+        }
+        feature_warm = 1;
+        if (++feature_step == feature_steps())
+        {
+            feature_step = 0; ++feature_round;
+            printf("  %s facing %s: round %d of %d\n", maps[map_index].name,
+                   facing_names[feature_facing[feature_facing_at]], feature_round, feature_rounds);
+            fflush(stdout);
+        }
+        if (feature_round < feature_rounds) { I_Render3DProfileKnob(feature_knob_of(feature_step)); return; }
+        I_Render3DProfileKnob(0);
+        report_features();
+        if (++feature_facing_at < feature_facings) { begin_features(); return; }
+        I_Render3DProfilePieces(0);
+        if (++map_index < map_count) { request_map(); return; }
+        if (report) fclose(report);
+        report = NULL;
+        state = FINISHED;
+        I_Render3DProfile(0, 0);
+        I_Quit();
+        return;
     case FINISHED:
         return;
     }
@@ -676,7 +901,7 @@ int main(int argc, char **argv)
 {
     if (argc < 2 || argv[1][0] == '-')
     {
-        fprintf(stderr, "Usage: %s <iwad> [-maps MAP01,E1M2] [-spacing units] [-budget ms] [-out dir] [-strict] [-at x,y[,facing]] [-doors] [-lines n,n] [engine options]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <iwad> [-maps MAP01,E1M2] [-spacing units] [-budget ms] [-out dir] [-strict] [-at x,y[,facing]] [-doors] [-lines n,n] [-features [-rounds N]] [engine options]\n", argv[0]);
         return 1;
     }
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
@@ -699,6 +924,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-out") && i + 1 < argc) out_dir = argv[++i];
         else if (!strcmp(argv[i], "-strict")) strict = 1;
         else if (!strcmp(argv[i], "-doors")) doors = 1;
+        else if (!strcmp(argv[i], "-features")) features = 1;
+        else if (!strcmp(argv[i], "-rounds") && i + 1 < argc) feature_rounds = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-lines") && i + 1 < argc)
         {
             for (char *c = argv[++i]; *c && cross_count < 16;)
@@ -718,6 +945,9 @@ int main(int argc, char **argv)
         }
     }
     if (spacing < 32 || budget <= 0) { fprintf(stderr, "Invalid -spacing or -budget\n"); return 1; }
+    if (features && !at_set) { fprintf(stderr, "-features times one view: give it -at x,y[,facing]\n"); return 1; }
+    if (features && doors) { fprintf(stderr, "-features and -doors are separate runs\n"); return 1; }
+    if (feature_rounds < 1 || feature_rounds > MAX_ROUNDS) { fprintf(stderr, "-rounds runs from 1 to %d\n", MAX_ROUNDS); return 1; }
     if (!graphics)
     {
         /* The player's settings, read but never written. */

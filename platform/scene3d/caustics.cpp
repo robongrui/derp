@@ -23,8 +23,31 @@ constexpr float causticRange=96,causticFocus=40;
 constexpr int causticLayers=7;
 constexpr float causticHeights[4]={8,24,48,96};
 std::vector<int> causticFrames;int causticSpeed=0;
+// Map blocks near a liquid, for nearLiquid (gpu3d/draw.cpp's quiet triangles): 16 cells a side,
+// marked round every cell the caustic map or the shore map holds anything in, two cells out, as
+// world.frag samples them linearly and a cell aside along the normal. One set per map, each built
+// with its map.
+constexpr int liquidBlock=16;
+static std::vector<uint8_t> causticNear,shoreNear;
+static void markNear(std::vector<uint8_t> &near,int x,int y) {
+    int across=(mapWidth+liquidBlock-1)/liquidBlock,down=(mapHeight+liquidBlock-1)/liquidBlock;
+    if(near.size()!=(size_t)across*down)near.assign((size_t)across*down,0);
+    for(int by=std::max(0,y-2)/liquidBlock;by<=std::min(mapHeight-1,y+2)/liquidBlock;++by)
+        for(int bx=std::max(0,x-2)/liquidBlock;bx<=std::min(mapWidth-1,x+2)/liquidBlock;++bx)near[(size_t)by*across+bx]=1;
+}
+bool nearLiquid(float x0,float y0,float x1,float y1) {
+    if(causticNear.empty()&&shoreNear.empty())return false;
+    int across=(mapWidth+liquidBlock-1)/liquidBlock;
+    auto cell=[](float v,float origin,int size){return std::clamp((int)std::floor((v-origin)/mapCell),0,size-1);};
+    int cx0=cell(x0,mapOrigin[0],mapWidth),cx1=cell(x1,mapOrigin[0],mapWidth),cy0=cell(y0,mapOrigin[1],mapHeight),cy1=cell(y1,mapOrigin[1],mapHeight);
+    for(int by=cy0/liquidBlock;by<=cy1/liquidBlock;++by)for(int bx=cx0/liquidBlock;bx<=cx1/liquidBlock;++bx) {
+        size_t at=(size_t)by*across+bx;
+        if((at<causticNear.size()&&causticNear[at])||(at<shoreNear.size()&&shoreNear[at]))return true;
+    }
+    return false;
+}
 void buildCaustics() {
-    causticTexture=nullptr;causticPattern=nullptr;causticFrames.clear();causticSpeed=0;
+    causticTexture=nullptr;causticPattern=nullptr;causticFrames.clear();causticSpeed=0;causticNear.clear();
     uint64_t start=SDL_GetTicksNS();
     size_t count=(size_t)mapWidth*mapHeight;
     std::vector<float> distance(count,causticRange),height(count,0);
@@ -158,6 +181,7 @@ void buildCaustics() {
         char name[9];R_TextureName(strip->texture,name);
         fprintf(stderr,"3D liquid edges: %d rows from %s.\n",strip->height,name);
     }
+    for(size_t i=0;i<count;++i)if(dilated[4*i+3])markNear(causticNear,int(i%mapWidth),int(i/mapWidth));
     causticTexture=gpuCreateTexture(GpuFormat::RGBA8,mapWidth,mapHeight,dilated.data(),mapWidth*4);
     causticPattern=gpuCreateTexture(GpuFormat::R8,64,rows,pattern.data(),64);
     if(!causticTexture||!causticPattern)I_Error((char*)"Could not allocate caustic maps");
@@ -175,6 +199,9 @@ void buildCaustics() {
 // like causticMap. Lava and other hot liquids have a tint of 0: they ripple
 // at their shores but leave no damp.
 constexpr float shoreRange=16;
+// The texture's reach out over the liquid: the shore ripples drawn by the liquid's
+// shader (world/shore.glsl's shoreRipple) run out to 23 units.
+constexpr float shoreReach=28;
 std::vector<ShoreEdge> shoreEdges;
 static std::vector<float> shoreCells;
 // Sampled linearly between cell centers like the shore texture, which is
@@ -191,14 +218,17 @@ float shoreDistanceAt(float x,float y) {
     return top+(bottom-top)*ty;
 }
 void buildShore() {
-    shoreTexture=nullptr;shoreEdges.clear();shoreCells.clear();
+    shoreTexture=nullptr;shoreEdges.clear();shoreCells.clear();shoreNear.clear();
     size_t count=(size_t)mapWidth*mapHeight;
     std::vector<float> best(count,1e9f);
     std::vector<int> liquidOf(count,-1);
     std::vector<char> glowOf(count,0);
     const EdgeStrip *strip=levelEdgeStrip();
     size_t edges=0;
-    float reach=shoreRange+2*mapCell;
+    // (Out over the liquid as far as the texture holds, and two cells more, so the
+    // furthest crest's distance is still a distance and not the edge of the map's reach:
+    // it broke up into specks there.)
+    float reach=std::max(shoreRange,shoreReach)+2*mapCell;
     for(int i=0;i<numlines;++i) {
         const line_t &line=lines[i];
         float ax=units(line.v1->x),ay=units(line.v1->y),bx=units(line.v2->x),by=units(line.v2->y);
@@ -246,10 +276,11 @@ void buildShore() {
     for(size_t i=0;i<count;++i) {
         cells[4*i]=255;
         int s=liquidOf[i];if(s<0)continue;
+        markNear(shoreNear,int(i%mapWidth),int(i/mapWidth));
         const auto &color=sectorMist[s].color;
         float peak=std::max({color[0],color[1],color[2],0.01f});
         auto level=[&](int c,int steps){return (int)std::lround(std::clamp(color[c]/peak,0.0f,1.0f)*steps);};
-        cells[4*i]=(uint8_t)std::lround(std::clamp((best[i]+shoreRange)/(2*shoreRange),0.0f,1.0f)*255);
+        cells[4*i]=(uint8_t)std::lround(std::clamp((best[i]+shoreRange)/(shoreRange+shoreReach),0.0f,1.0f)*255);
         cells[4*i+1]=(uint8_t)(s&255);
         cells[4*i+2]=(uint8_t)((s>>8)|128|(glowOf[i]?64:0));
         // Hot liquids ripple at their shores but leave no damp: tint 0.
@@ -259,5 +290,5 @@ void buildShore() {
     if(!shoreTexture)I_Error((char*)"Could not allocate the shore map");
     fprintf(stderr,"3D shorelines: %zu liquid edges.\n",edges);
 }
-void causticsShutdown() {causticTexture=nullptr;causticPattern=nullptr;shoreTexture=nullptr;shoreEdges.clear();shoreCells.clear();}
+void causticsShutdown() {causticTexture=nullptr;causticPattern=nullptr;shoreTexture=nullptr;shoreEdges.clear();shoreCells.clear();causticNear.clear();shoreNear.clear();}
 } // namespace doom3d

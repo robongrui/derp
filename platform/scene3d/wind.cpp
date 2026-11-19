@@ -32,7 +32,7 @@ void windHeading(float &x,float &y) {
     x=std::cos(angle);y=std::sin(angle);
 }
 void windNewLevel() {
-    ownSpeed=DerpInfo_Map.windAmount>=0?2*breeze*DerpInfo_Map.windAmount:90+50*hashUnit(3,4,weatherSeed());
+    ownSpeed=mapInfo().windAmount>=0?2*breeze*mapInfo().windAmount:90+50*hashUnit(3,4,weatherSeed());
     windSpeed=climateWindSpeed(ownSpeed);
     windNow[0]=windNow[1]=0;
 }

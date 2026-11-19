@@ -34,7 +34,17 @@ enum { STAGGER_NONE,STAGGER_HOLD,STAGGER_SPIN,STAGGER_STEP };
 // in contrast order: each pace differs most from the one before it.
 enum { PACE_SNAP,PACE_HESITATE,PACE_SLUMP,PACE_PLAIN,PACES };
 constexpr float paceScales[PACES][3]={{0.6f,0.75f,1},{1.8f,0.65f,1},{1,1.4f,1.1f},{1,1,1}};
-struct Death { int start,first;int stagger;float staggerTics,spin;int pace;float overall;angle_t facing;bool mirror; };
+struct Death { int start,first;int stagger;float staggerTics,spin;int pace;float overall;angle_t facing;bool mirror;bool landed=false; };
+// Trial (fatFrames): a fat body's landing frame slaps down: flattened this much at first, the slap ringing down over
+// fatSettleTics in humps fatSettleHump tics apart, each smaller (fast hit, slow recovery). Heard as this heavy.
+constexpr float fatSettle=0.28f,fatSettleTics=16,fatSettleHump=5,fatSettleFade=5,fatLandHeft=1.4f,fatLandSpeed=4;
+// The moment it lands: its thud, a splash in a liquid, its blood on the floor round it.
+static void heavyLanding(const mobj_t &thing) {
+    float x=units(thing.x),y=units(thing.y),z=units(thing.floorz);
+    if(bodySplash(x,y,fatLandSpeed,(float)thing.info->mass,units(thing.radius)))return;
+    contactFloor(x,y,z,fatLandSpeed,fatLandHeft);
+    if(bleedsBlood(thing))sprayLanding(x,y,z,fatLandSpeed,bloodTint(&thing),false);
+}
 static std::unordered_map<const mobj_t*,Death> deaths;
 // This tic's attacks (what did the damage) and the pace of the last body each dropped.
 static std::unordered_map<const mobj_t*,int> attackPace;
@@ -86,15 +96,40 @@ static const DeathArt &deathArt(int first,const mobjinfo_t &info) {
         }
     return art;
 }
-void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,float high,bool gib,const mobj_t *attack,float hitZ,float hitU) {
+void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,float high,bool gib,const mobj_t *attack,float hitZ,float hitU,
+                const std::vector<GorePellet> *pellets,int damage,bool rocketDirect,bool mouthShot) {
     // A rigged monster falls as a ragdoll (ragdoll.cpp) or procedurally (death_falls.cpp) instead.
     game_thing_role by=attack?Game_ThingRole(attack->type):GAME_THING_OTHER;
     bool blast=by==GAME_THING_ROCKET||by==GAME_THING_BARREL||by==GAME_THING_BIG_SHOT;
+    // Fire and plasma carry next to no momentum: the heat does the killing, the body just stops holding
+    // itself up and crumples where it stands (the game still pushes the corpse; the drawing takes no blow from it).
+    bool burnt=by==GAME_THING_BURN_SHOT&&!gib;
+    if(burnt)speed=std::min(speed,0.3f);
     // With Flying enemies a blast's gib is drawn as the whole body thrown (the gib's blood and sound stay
     // the game's): a rocket gibs a zombieman every time, and it went to mush instead of flying.
     bool flies=!gib||(blast&&settings.deathBlast);
-    if(flies&&settings.deathRagdoll&&startRagdoll(thing,dx,dy,speed,side,high,hitZ,hitU,blast))return;
-    if(!gib&&startFall(thing,speed,high,side,hitZ,hitU))return;
+    // Gore: a rocket in the mouth: he swells and pops (caco_pop.cpp). -gorepop: any kill of a ball of flesh.
+    static const int popAlways=M_CheckParm((char*)"-gorepop");
+    if(goreOn()&&(mouthShot||(popAlways&&Game_BodyBall(thing.type)))&&startBalloonBurst(thing))return;
+    // Gore: blown apart whole (body_burst.cpp), rigged or not.
+    if(goreOn()&&goreBurst(thing,damage,rocketDirect&&blast,ragdollRigged(thing))&&startBodyBurst(thing,dx,dy,damage,hitZ))return;
+    // A ball of flesh (the cacodemon) that didn't burst: a soft doll (body_ball.cpp), with physics deaths on.
+    if(settings.deathRagdoll&&!gib&&startBall(thing,dx,dy,speed,blast&&settings.deathBlast))return;
+    // Trial: a fat body on its own death frames (fatFrames), straight to Varied deaths below.
+    bool ownFrames=fatFrames()&&Game_BodyFat(thing.type);
+    // Gore: a ragdoll with whatever the kill tears off, whatever the Deaths choice;
+    // when it tears nothing off the death is drawn as without gore.
+    const std::vector<GorePellet> *gore=goreOn()&&pellets&&!pellets->empty()?pellets:nullptr;
+    bool doll=flies&&settings.deathRagdoll&&!ownFrames;
+    if(ownFrames)gore=nullptr;
+    // A hitscan kill past the gib line (the super shotgun's, mostly): with gore it is taken apart where its
+    // pellets struck instead of Doom's gib frames (ragdoll_gore.cpp: the upper body goes at least).
+    goreGibKill(gore&&gib&&!blast);
+    goreBlastKill(goreOn()&&blast?damage:0);   // close, it tears a limb or two off before it throws the body
+    bool started=(doll||gore)&&startRagdoll(thing,dx,dy,speed,side,high,hitZ,hitU,blast,gore,!doll,burnt);
+    goreGibKill(false);goreBlastKill(0);
+    if(started)return;
+    if(!gib&&!ownFrames&&startFall(thing,speed,high,side,hitZ,hitU))return;
     const mobjinfo_t &info=*thing.info;
     int first=gib?info.xdeathstate:info.deathstate;
     if(first<=0)return;
@@ -171,15 +206,18 @@ void startDeath(const mobj_t &thing,float dx,float dy,float speed,float side,flo
     }
     deaths[&thing]=d;
 }
-void forgetDeath(const mobj_t *thing) {deaths.erase(thing);forgetFall(thing);forgetRagdoll(thing);}
-void deathsShutdown() {deaths.clear();arts.clear();attackPace.clear();attackTic=-1;fallsShutdown();ragdollsShutdown();}
+void forgetDeath(const mobj_t *thing) {deaths.erase(thing);forgetFall(thing);forgetRagdoll(thing);forgetBodyBurst(thing);}
+void deathsShutdown() {deaths.clear();arts.clear();attackPace.clear();attackTic=-1;fallsShutdown();ragdollsShutdown();bodyBurstsShutdown();}
 
 bool deathView(const mobj_t &thing,float fraction,DeathView &view) {
+    // Gore: crushed to gibs (height and radius 0), the body bursts where it lies (body_burst.cpp).
+    if(thing.health<=0&&thing.height==0&&thing.radius==0&&(thing.flags&MF_CORPSE)&&goreOn())goreCrush(thing);
+    if(bodyBurstView(thing,view))return true;
     if(ragdollView(thing,view))return true;
     if(fallView(thing,fraction,view))return true;
     auto found=deaths.find(&thing);
     if(found==deaths.end()||thing.health>0||!(thing.flags&MF_CORPSE)||!thing.state)return false;
-    const Death &d=found->second;
+    Death &d=found->second;
     const mobjinfo_t &info=*thing.info;
     const DeathArt &art=deathArt(d.first,info);
     // Crushed to gibs or otherwise moved on: the game's own frames again.
@@ -222,6 +260,13 @@ bool deathView(const mobj_t &thing,float fraction,DeathView &view) {
     // The jolt fades over the collapse; the landing frame flattens for 4 tics.
     float end=collapseEnd>=0?collapseEnd:clock;
     if(u>collapseStart)view.bend=std::clamp(1-(u-collapseStart)/std::max(1.0f,end-collapseStart),0.0f,1.0f);
+    if(fatFrames()&&Game_BodyFat(thing.type)) {
+        // Trial: the fat slaps down on the frame it lands on (the last if its art has none), heard and seen once.
+        int landAt=art.landing>0?art.landing:steps-1;
+        if(pick>=landAt&&!d.landed) {d.landed=true;heavyLanding(thing);}
+        if(pick==landAt&&into<fatSettleTics)view.settle=fatSettle*std::exp(-into/fatSettleFade)*std::abs(std::sin(doomPi*into/fatSettleHump));
+        return true;
+    }
     if(pick==art.landing&&into<4)view.settle=0.15f*std::sin(doomPi*into/4);
     return true;
 }

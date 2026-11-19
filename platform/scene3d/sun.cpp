@@ -3,9 +3,8 @@
    light is baked (bake_sun.cpp). Read from the sky texture: its brightest
    columns face the sun (sky.frag maps column x to yaw -x*2pi/(4*width)) and
    also give its tint; the elevation is fixed at 40 degrees, or (Game_Sun
-   fromSky) follows the height sky.frag shows their brightness at: painted
-   on the horizon it lights from 35 degrees, painted 45 degrees up or more
-   from 60. Lower suns left walled courtyards wholly in shade. A dark sky
+   fromSky) is the height sky.frag shows their brightness at, 3 degrees at
+   the least: the light comes from the drawn sun (placeSun). A dark sky
    shines weaker, softer, in its own colour: moonlight. The episode's mood
    can hide it, and a map's DERPINFO can put it where the map wants it
    (placeSun): then the sky gives only its colour and strength. */
@@ -16,8 +15,10 @@ std::array<float,3> sunTint={1,1,1};
 float sunAzimuth[2]={1,0}; // Horizontal direction toward the sun (sunElevation high).
 float sunDirection[3]={0,0,1};
 float sunYaw=0,sunGlow=0;
+float sunPaintedYaw=0;
 // The light's height above the horizon, and the drawn disc's (Game_Sun).
 float sunElevation=40*doomPi/180,sunDiscElevation=40*doomPi/180,sunShade=0.3f,sunGain=0;
+float sunSpread=0;
 
 namespace {
 // The sun as the sky texture paints it.
@@ -68,10 +69,11 @@ SkySun readSky() {
         for(int c=0;c<3;++c)out.tint[c]=out.tint[c]*daylight+(float)(0.6+0.4*color[c]/top)*(1-daylight);
     }
     if(game.fromSky&&total>0) {
-        // sky.frag: texture row fraction v shows at rise (0.70-v)/0.68.
+        // sky.frag: texture row fraction v shows at rise (skyRowHorizon-v)/skyRowScale.
+        skyLayersImage();   // which sets them
         double rows=0;
         for(int d=-4;d<=4;++d)for(int y=0;y<sky.height;++y) {const byte *rgb;rows+=weight((best+d+sky.width)%sky.width,y,rgb)*(y+0.5);}
-        float painted=std::atan((0.70f-(float)(rows/total/sky.height))/0.68f);
+        float painted=std::atan((skyRowHorizon-(float)(rows/total/sky.height))/skyRowScale);
         out.elevation=(35+25*std::clamp(painted/(45*doomPi/180),0.0f,1.0f))*doomPi/180;
         out.discElevation=std::max(painted,3*doomPi/180);
     }
@@ -84,14 +86,52 @@ SkySun readSky() {
 
 void placeSun() {
     SkySun sun=readSky();
+    sunPaintedYaw=sun.yaw;
     // The map's own sun (DERPINFO sun = angle, height): where it stands, in
     // map angles (0 east, 90 north), the disc drawn there too.
-    if(DerpInfo_Map.sun==1) {
-        sun.yaw=DerpInfo_Map.sunAngle*(float)doomPi/180;
-        sun.elevation=sun.discElevation=DerpInfo_Map.sunHeight*(float)doomPi/180;
+    const derp_map &info=mapInfo();
+    if(info.sun==1) {
+        sun.yaw=info.sunAngle*(float)doomPi/180;
+        sun.elevation=sun.discElevation=info.sunHeight*(float)doomPi/180;
     }
     // The player's hour and heat (climate.cpp): how high it stands, how it shines.
     climateSun(sun.elevation,sun.discElevation,sun.tint,sun.shade,sun.gain,sun.glow);
+    // The light comes from where the sun is seen, however low: shadows and beams point at the disc.
+    // (It used to come from higher, 35 degrees and more, to keep walled courtyards out of the shade
+    // of a low sun; the beams then missed the sun by that much. A low sun leaves a yard in shadow.)
+    sun.elevation=sun.discElevation;
+    // And where round the sky (with sky depth, whose mountains no longer
+    // wear the painting's light): the painted sun at noon, rising a quarter
+    // turn and more to one side of it and setting as far to the other, as
+    // the sun crosses a real sky. The map's own hour keeps the painting's.
+    if(settings.skyLayers&&info.sun!=1) {
+        static const float swing[]={0,100,50,0,-50,-100,0};   // TIME_OWN, dawn .. dusk, night (no sun)
+        int hour=climateHour();
+        if(hour>=0&&hour<(int)(sizeof(swing)/sizeof(swing[0])))sun.yaw+=swing[hour]*(float)doomPi/180;
+    }
+    // A sun set for this hour (DERPINFO sun.dusk, as the Aim the sun key writes it in the
+    // player's derpinfo.txt): where it stands and how high, the hour's light kept.
+    {
+        int hour=climateHour();
+        if(hour>TIME_OWN&&hour<TIME_NIGHT&&info.hourSun[hour]) {
+            sun.yaw=info.hourSunAngle[hour]*(float)doomPi/180;
+            sun.elevation=sun.discElevation=info.hourSunHeight[hour]*(float)doomPi/180;
+        }
+    }
+    // Under cloud (overcast, weather.cpp) the sun is a glow spread over the deck, not a disc:
+    // what is left of it lights open ground about as much as the shade beside it, so sunlit
+    // ground and open shade both sink toward the mapper's level (lightRule: the sun's share of
+    // the shade and the gain; the sky light in the bounce loses that shade too), its shadows go
+    // soft (sunSpread: the bake's rays fan out) and it shines in the cloud's colour. Light rain
+    // under broken cloud (a sunshower) keeps the sun's hard shadows.
+    float cover=overcast(),share=1-0.85f*cover;
+    sun.shade*=share;sun.gain*=share;
+    float soft=std::clamp((cover-0.2f)/0.8f,0.0f,1.0f);soft=soft*soft*(3-2*soft);
+    sunSpread=soft>0.02f?soft:0;
+    if(cover>0) {
+        std::array<float,3> cloud=skyLightColor();
+        for(int c=0;c<3;++c)sun.tint[c]+=(cloud[c]-sun.tint[c])*cover;
+    }
     sunYaw=sun.yaw;sunElevation=sun.elevation;sunDiscElevation=sun.discElevation;
     sunShade=sun.shade;sunGain=sun.gain;sunTint=sun.tint;
     sunGlow=levelMood().sun?sun.glow:0; // An episode with the sun hidden (Game_Mood).

@@ -7,10 +7,21 @@ extern "C" {
 #endif
 struct SDL_Window;
 int I_Render3DInit(struct SDL_Window *window);
+/* graphics.cfg's game rules (Authored, Phobos, the weather) set before
+   D_DoomMain: a -warp level loads before the window and I_Render3DInit, and
+   was set up without DERP's monsters (no guards, no cover plans). In the save
+   folder, after the command line is set. */
+void I_Render3DEarlySettings(void);
 void I_Render3DShutdown(void);
 void I_Render3DStartFrame(void);
 void I_Render3DPresent(const unsigned *pixels, const unsigned *palette);
 void I_Render3DLook(float delta);
+/* A palette flash (damage, pickup, radiation suit) as a colour laid over the finished
+   picture: r, g, b (0-1, gamma applied) and how much of it (0 none). */
+void I_Render3DScreenTint(const float tint[4]);
+/* The pickup flash by item (F4 Pickup flash): r, g, b (negative: the palette flash's own
+   colour) and amount; shown instead of the palette's pickup gold while amount > 0. */
+void I_Render3DPickupTint(const float tint[4]);
 void I_Render3DSettings(void);
 /* The in-game F4 panel (settings_menu.cpp), opened by I_Render3DSettings.
    It draws a 640x400 image that the renderer scales by whole pixels; clicks
@@ -37,6 +48,9 @@ void I_Render3DSettingsMouse(float x, float y, int button);
 void I_Render3DLoadingDraw(unsigned *pixels, const char *title, const char *stage, float fraction);
 void I_Render3DScreenshot(void);
 void I_Render3DToggleFlashlight(void);
+/* Aim the sun where the crosshair points, kept for this map and hour in the
+   player's derpinfo.txt; back: that aim taken out again (scene3d/sun_aim.cpp). */
+void I_Render3DSunAim(int back);
 /* The view level again (a pad's Center view). */
 void I_Render3DCenterView(void);
 /* The key left of 1: steps F4's "Show FPS" on (off, window title, FPS, full) and saves it. */
@@ -65,6 +79,17 @@ typedef struct {
     int triangles; /* World triangles within its radius. */
     float perPixel; /* Blockers a pixel tests on average, with slices. */
 } I_Render3DLightProfile;
+/* The pieces of a frame's GPU work in the order they run, each timed on its
+   own while piece timing is on (I_Render3DProfilePieces, or F4's "Show FPS"
+   at "Full, with GPU times"). */
+enum {
+    I_RENDER3D_PIECE_UPLOADS, I_RENDER3D_PIECE_LIQUID_MIRROR, I_RENDER3D_PIECE_GLASS_PROBES,
+    I_RENDER3D_PIECE_GLASS_MIRROR, I_RENDER3D_PIECE_SKY_CACHE, I_RENDER3D_PIECE_MIST_DEPTH,
+    I_RENDER3D_PIECE_PREPASS, I_RENDER3D_PIECE_OPAQUE, I_RENDER3D_PIECE_SKY, I_RENDER3D_PIECE_MASKED_DEPTH,
+    I_RENDER3D_PIECE_MASKED, I_RENDER3D_PIECE_CUTOUTS,
+    I_RENDER3D_PIECE_VOLUMES, I_RENDER3D_PIECE_TRANSPARENT, I_RENDER3D_PIECE_MIST, I_RENDER3D_PIECE_OVERLAYS,
+    I_RENDER3D_PIECE_BLOOM, I_RENDER3D_PIECE_PRESENT, I_RENDER3D_PIECES
+};
 typedef struct {
     unsigned serial;  /* Counts profiled frames. */
     int world;        /* The frame drew the 3D view. */
@@ -74,8 +99,31 @@ typedef struct {
     double geometryMs, lightsMs, spritesMs, masksMs;
     int lights, blockers, triangles, litTriangles, lightTriangles, reflection;
     I_Render3DLightProfile light[64];
+    /* The frame was timed piece by piece; then pieceMs holds each piece's
+       time from its submission until the GPU finished it (0: it had nothing
+       to draw), gpuMs their sum without the present, and cpuMs the frame's
+       time less those waits. */
+    int pieced;
+    double pieceMs[I_RENDER3D_PIECES];
 } I_Render3DFrameProfile;
 void I_Render3DProfile(int enabled, unsigned skip);
+/* Piece timing: each piece of the frame's GPU work in a command buffer of its
+   own, submitted and waited for, so the frame runs slower while it is on. On
+   with F4's GPU times as well. */
+void I_Render3DProfilePieces(int enabled);
+/* A piece's short name ("opaque world"). */
+const char *I_Render3DPieceName(int piece);
+/* Feature knobs (scene3d/profile_knobs.cpp), for the perf test's -features:
+   each switches one part of the world shader off in the frames drawn while it
+   is set, by its feature flag or the camera uniform that gates it, and only
+   while profiling is on. Knob 0 is none. Names in parentheses are aggregates,
+   at the end; the last is every feature knob at once. A few knobs use the
+   skip bits, which I_Render3DProfile overwrites: set the knob after it. */
+int I_Render3DKnobCount(void);
+const char *I_Render3DKnobName(int knob);
+/* What it clears, in the camera's terms ("bake.z", "FEATURE_CAUSTICS"). */
+const char *I_Render3DKnobClears(int knob);
+void I_Render3DProfileKnob(int knob);
 const I_Render3DFrameProfile *I_Render3DLastFrame(void);
 /* Drops lights still fading in or out from the previous view. */
 void I_Render3DProfileTeleported(void);

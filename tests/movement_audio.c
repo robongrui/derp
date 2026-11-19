@@ -1,9 +1,11 @@
 /* Exercise the real movement producer and SDL mixer without a WAD or audio
    device. Banks and acoustics are fixtures; samples still traverse the real
    routing, channel allocation, gains, filtering and stereo mixer. */
+double I_TimeScale = 1;   /* i_portable_system.c; the mixer reads it */
 #include "../platform/audio/steps.c"
 #include "../platform/stride.h"
 #include "../platform/i_sdl_sound.c"
+#include "../platform/i_sdl_level_sound.c"
 
 #define CHECK(condition) do { if (!(condition)) { \
     fprintf(stderr, "Check failed at line %d: %s\n", __LINE__, #condition); \
@@ -32,6 +34,8 @@ static int reverb_ids[2];
 int Game_HasEffect(game_effect effect) { return effect == GAME_EFFECT_NATURAL_FALLOFF; }
 int Game_ThinkerIsMobj(const thinker_t *thinker) { return thinker == &monster.thinker; }
 int Game_WeaponHeft(int weapon) { (void)weapon; return 2; }
+int Game_MonsterBooted(const struct mobj_s *mo) { (void)mo; return 0; }
+int Game_MonsterClawed(const struct mobj_s *mo) { (void)mo; return 0; }
 float Game_SoundCarry(int id) { (void)id; return 1; }
 void Game_SfxLoaded(int id, void *data) { (void)id; (void)data; }
 void Rumble_Analyse(int id, const unsigned char *samples, int length, int rate) { (void)id; (void)samples; (void)length; (void)rate; }
@@ -45,11 +49,16 @@ int I_GetSfxLumpNum(sfxinfo_t *sfx) { (void)sfx; return 0; }
 int W_LumpLength(int lump) { (void)lump; return 0; }
 void *W_CacheLumpNum(int lump, int tag) { (void)lump; (void)tag; return NULL; }
 int W_CheckNumForName(char *name) { (void)name; return -1; }
+uint64_t I_BeginAudioTiming(void) { return 0; }
+void I_EndAudioTiming(uint64_t start) { (void)start; }
 float Game_LibraryRinging(void) { return 0; }
 int Game_LibraryKnocks(void) { return 0; }
 void HeadKnock_Mix(float *buffer, int count, int rate, int knocks) { (void)buffer; (void)count; (void)rate; (void)knocks; }
 void Ringing_Mix(float *buffer, int count, int rate, float level) { (void)buffer; (void)count; (void)rate; (void)level; }
 float Game_LibraryFallSpeed(void) { return 0; }
+int Game_Sliding(const struct mobj_s *thing) { (void)thing; return 0; }
+void SlowWhoosh_Mix(float *buffer, int count, int rate) { (void)buffer; (void)count; (void)rate; }
+float Reverb_Stretch = 1;
 void FallingAir_Mix(float *buffer, int count, int rate, float speed) { (void)buffer; (void)count; (void)rate; (void)speed; }
 int LibrarySteps_Floor(int kind) { return kind; }
 int LibrarySteps_Player(step_event_t *events, int count, int max, int kind, const struct mobj_s *mo, float force) { (void)events; (void)count; (void)max; (void)kind; (void)mo; (void)force; return -1; }
@@ -99,6 +108,53 @@ void Reverb_SetRoom(reverb_t *reverb, const room_t *room) { (void)reverb; (void)
 void Reverb_SetEars(reverb_t *reverb, int headphones) { (void)reverb; (void)headphones; }
 void Reverb_Process(reverb_t *reverb, const float *send, float *stereo, int frames, float amount)
 { (void)stereo; (void)amount; CHECK(frames == FRAMES); memcpy(sends[reverb == beyond_reverb], send, sizeof(sends[0])); }
+/* Traced room tails stay off too: no room ever rings here. */
+void Room_Prepare(void) {}
+void RoomTails_Init(int rate) { (void)rate; }
+void RoomTails_Set(int on) { (void)on; }
+void RoomTails_Stop(void) {}
+int RoomTails_Listen(int key, float facing) { (void)key; (void)facing; return 0; }
+void RoomTails_Glass(int line, int whole) { (void)line; (void)whole; }
+void RoomTails_Clear(void) {}
+void RoomTails_SetEars(int headphones) { (void)headphones; }
+void RoomTails_Forget(void) {}
+int RoomTails_Beyond(int key, int separation) { (void)key; (void)separation; return 0; }
+void RoomTails_ProcessBeyond(const float *send, float *stereo, int frames, float amount) { (void)send; (void)stereo; (void)frames; (void)amount; }
+/* Level sound (authored maps) stays off here: normal mode is what is tested. */
+void LevelSound_Set(int authored) { (void)authored; }
+int LevelSound_Follow(void) { return 0; }
+int LevelSound_On(void) { return 0; }
+float LevelSound_Gain(float length, float loss, float reach) { (void)length; (void)loss; (void)reach; return 1; }
+void LevelSound_Queue(int id, float x, float y, float z, float level, float reach, float length)
+{ (void)id; (void)x; (void)y; (void)z; (void)level; (void)reach; (void)length; }
+int LevelSound_Due(far_sound_t *out) { (void)out; return 0; }
+int LevelSound_Stir(float x, float y, far_sound_t *out) { (void)x; (void)y; (void)out; return 0; }
+int Occlusion_Path(fixed_t x, fixed_t y, fixed_t z, occlusion_path_t *out) { (void)x; (void)y; (void)z; memset(out, 0, sizeof(*out)); return 0; }
+void RoomRecords_Follow(void) { }
+int RoomRecords_KeyAt(float x, float y) { (void)x; (void)y; return -1; }
+const room_record_t *RoomRecords_Get(int key) { (void)key; return NULL; }
+void RoomRecords_Glass(int line) { (void)line; }
+void RoomGrid_Follow(void) { }
+void RoomGrid_Stop(void) { }
+void RoomGrid_Glass(int line) { (void)line; }
+int RoomGrid_Listener(float x, float y, float facing, room_t *room, beyond_t *beyond)
+{ (void)x; (void)y; (void)facing; (void)room; (void)beyond; return 0; }
+void RoomReverbs_Init(int rate) { (void)rate; }
+void RoomReverbs_SetEars(int headphones) { (void)headphones; }
+void RoomReverbs_Clear(void) { }
+int RoomReverbs_Claim(int key, const room_record_t *record) { (void)key; (void)record; return -1; }
+void RoomReverbs_Expire(void) { }
+int RoomReverbs_Key(int slot) { (void)slot; return -1; }
+void RoomReverbs_SetPath(int slot, float gain, float cutoff, int separation) { (void)slot; (void)gain; (void)cutoff; (void)separation; }
+void RoomReverbs_Path(const room_record_t *record, float *gain, float *cutoff, float *from_x, float *from_y)
+{ (void)record; *gain = 0; *cutoff = 0; *from_x = *from_y = 0; }
+void RoomReverbs_Begin(int count) { (void)count; }
+void RoomReverbs_SetCount(int count) { (void)count; }
+void RoomReverbs_SetOwn(int slot, float amount) { (void)slot; (void)amount; }
+void RoomReverbs_AddOwn(const float *own, int count) { (void)own; (void)count; }
+int RoomRecords_Neighbours(int key, int *keys, float *widths, int max) { (void)key; (void)keys; (void)widths; (void)max; return 0; }
+float *RoomReverbs_Send(int slot) { (void)slot; return NULL; }
+void RoomReverbs_Mix(float *stereo, int count, float amount) { (void)stereo; (void)count; (void)amount; }
 void MixerMusic_UnRegister(void) {}
 void MixerMusic_Play(boolean loop) { (void)loop; }
 void MixerMusic_Stop(void) {}
@@ -107,6 +163,8 @@ void MixerMusic_Resume(void) {}
 void MixerMusic_SetVolume(int volume) { (void)volume; }
 boolean MixerMusic_Register(const void *data, int size, int rate, boolean soundfont)
 { (void)data; (void)size; (void)rate; (void)soundfont; return false; }
+boolean MixerMusic_RegisterRecorded(void *bytes, int size, int rate, float gain)
+{ free(bytes); (void)size; (void)rate; (void)gain; return false; }
 void MixerMusic_Render(float *stereo, int frames) { (void)stereo; (void)frames; }
 sf2_bank_t *MixerMusic_UseBank(sf2_bank_t *new_bank) { (void)new_bank; return NULL; }
 sf2_bank_t *SF2_Open(const char *path, int rate, int voices) { (void)path; (void)rate; (void)voices; return NULL; }

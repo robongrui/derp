@@ -6,12 +6,10 @@ namespace doom3d {
 // Weapon frames to relight (weapon_lighting.h), keyed below the WAD lumps:
 // the de-lit artwork with its normals in B/A, two transparent columns, then
 // its gloss in R.
-static Image &weaponImage(int lump) {
-    int key=INT_MIN/2-lump; auto found=images.find(key); if(found!=images.end()) return found->second;
-    const Image &source=lumpImage(lump,false);
-    int w=source.width,h=source.height,stride=2*w+2;
+static Image relitWeaponArt(int w,int h,int left,int top,const byte *pixels) {
+    int stride=2*w+2;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
-    auto maps=doom_weapon_delight(w,h,source.pixels.data(),palette);
+    auto maps=doom_weapon_delight(w,h,pixels,palette);
     std::vector<byte> packed((size_t)stride*h*4,0);
     for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
         size_t i=(size_t)y*w+x;byte *art=&packed[((size_t)y*stride+x)*4];
@@ -19,11 +17,21 @@ static Image &weaponImage(int lump) {
         packed[((size_t)y*stride+w+2+x)*4]=maps.gloss[i];
     }
     Image image;image.pixels=std::move(maps.pixels);image.opaque=false;
-    image.width=w;image.height=h;image.left=source.left;image.top=source.top;
+    image.width=w;image.height=h;image.left=left;image.top=top;
     image.texture=gpuCreateTexture(GpuFormat::RGBA8,stride,h,packed.data(),stride*4);
     if(!image.texture) I_Error((char*)"Could not allocate a GPU texture");
-    return images.emplace(key,std::move(image)).first->second;
+    return image;
 }
+static Image &weaponImage(int lump) {
+    // A frame rendered from a model, where the weapon pack has one (weapon_pack.cpp).
+    if(settings.weaponArt) if(Image *packed=weaponPackImage(lump)) return *packed;
+    int key=INT_MIN/2-lump; auto found=images.find(key); if(found!=images.end()) return found->second;
+    const Image &source=lumpImage(lump,false);
+    return images.emplace(key,relitWeaponArt(source.width,source.height,source.left,source.top,source.pixels.data())).first->second;
+}
+// At level load (sprite_precache.cpp): a weapon frame's relit image made
+// ahead, so its first showing in play costs nothing.
+void precacheWeaponImage(int lump) {if(settings.weaponLighting)weaponImage(lump);}
 // What the relit weapon sees around it, in the view's frame: ahead, behind,
 // right, left, up and down (rgb, w unused). Five rays a direction walk the
 // bake map from the eye; each hit shows its surface's average color under
@@ -116,6 +124,7 @@ void saveWeaponPlace() {
     const pspdef_t &weapon=players[displayplayer].psprites[0];
     oldWeaponX=weapon.sx;oldWeaponY=weapon.sy;oldWeaponSaved=weapon.state!=nullptr;
 }
+bool muzzleFireHidesFlash(int weapon);   // muzzle_fire.cpp
 std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
     std::vector<SpriteDraw> draws;
     player_t *player=&players[displayplayer];
@@ -126,29 +135,33 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
         if(std::abs(dx)<64&&std::abs(dy)<64) {shiftX=dx*(1-renderFraction);shiftY=dy*(1-renderFraction);}
     }
     if(settings.weaponLighting&&camera.effects[2]==0&&player->mo)updateWeaponProbe(camera,player->mo->subsector->sector);
-    for(int i=0;i<NUMPSPRITES;++i) {
-        auto psp=player->psprites[i];if(!psp.state)continue;
-        auto sf=sprites[psp.state->sprite].spriteframes[psp.state->frame&FF_FRAMEMASK];
-        bool bright=psp.state->frame&FF_FULLBRIGHT;
-        // MODE_RELIT on the screen: the weapon relit per pixel from its own
-        // normals, its painted light taken out.
-        bool relit=settings.weaponLighting&&!bright;
-        int lump=firstspritelump+sf.lump[0];
-        Image &image=relit?weaponImage(lump):lumpImage(lump,false);
-        float x=units(psp.sx)+shiftX-image.left,y=viewwindowy+viewheight/2.0f-100+units(psp.sy)+shiftY-image.top;
+    // Authored's kick (p_kick.c): his leg over the gun, which gives it room.
+    int kickFrame=0;float kickDip=0;
+    bool kicking=Game_Kick(displayplayer,&kickFrame,&kickDip)!=0;
+    // Partial invisibility: the hands go to a spectre's fuzz, flickering in
+    // its last 128 tics as id's did (R_DrawPSprite), the warning it runs out.
+    int invisible=player->powers[pw_invisibility];
+    unsigned fuzz=invisible>4*32||(invisible&8)?MODE_FUZZ:0u;
+    // One layer: a weapon frame, its flash, or the kicking leg.
+    // most: the most of the light round the eye it takes (a gun all of it).
+    auto layer=[&](Image &image,float x,float y,bool flipped,bool bright,bool relit,Image *blood,float most) {
         std::vector<Vertex> weapon;
-        float u0=sf.flip[0]?image.width:0,u1=sf.flip[0]?0:image.width;
+        float u0=flipped?image.width:0,u1=flipped?0:image.width;
         float light=bright?1.0f:sunLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,
                 flowLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,
-                seamLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,lighting(player->mo->subsector->sector))));
+                seamLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,roomPulse(player->mo->subsector->sector,lighting(player->mo->subsector->sector)))));
         screenQuad(weapon,x/160-1,1-y/100,image.width/160.0f,image.height/100.0f,u0,0,u1,image.height,light,
-            MODE_SCREEN|MODE_SPRITE|(relit?MODE_RELIT|(sf.flip[0]?MODE_FLIPPED:0u):0u));
+            MODE_SCREEN|MODE_SPRITE|fuzz|(relit?MODE_RELIT|(flipped?MODE_FLIPPED:0u):0u));
         // The weapon takes a restrained, capped share of the light around the
         // eye so nearby lamps tint it without washing out the artwork.
         if(!bright) {
             StaticSample statics;
             auto baked=bakedLightAt(camera.eye[0],camera.eye[1],camera.eye[2],player->mo->subsector->sector,&statics);
-            for(float &c:baked)c=std::min(0.5f,c*0.4f);
+            // Whole-level lighting: the light round the eye is all the weapon has (no level lies
+            // under it: indoors the room's fill, outside only the sun), so it takes it in full.
+            if(settings.lightModel==1&&bakedLightsActive)for(float &c:baked)c=std::min(1.0f,c);
+            else for(float &c:baked)c=std::min(0.5f,c*0.4f);
+            for(float &c:baked)c=std::min(c,most);
             unsigned tint=packedLampTint(statics,light);
             for(auto &vertex:weapon) {vertex.red=baked[0];vertex.green=baked[1];vertex.blue=baked[2];vertex.lampTint=tint;}
             if(relit) {
@@ -173,7 +186,37 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
                 for(auto &vertex:weapon) {std::copy(mask,mask+2,vertex.lightMask);vertex.statics=packedStatics;}
             }
         }
+        // Gore: the blood on it, over its frame, lit as the frame (gun_blood.cpp).
+        std::vector<Vertex> coat;
+        if(blood) {coat=weapon;for(Vertex &vertex:coat)vertex.mode&=~(MODE_RELIT|MODE_FLIPPED);}
         draws.push_back({&image,std::move(weapon)});
+        if(blood)draws.push_back({blood,std::move(coat)});
+    };
+    // Lower beside a narrow status bar, to reach the screen's bottom (status_bar.cpp).
+    const float base=viewwindowy+viewheight/2.0f-100+weaponDrop();
+    for(int i=0;i<NUMPSPRITES;++i) {
+        auto psp=player->psprites[i];if(!psp.state)continue;
+        // A bullet gun's flash frame gives way to the fire drawn at its barrel (muzzle_fire.cpp).
+        if(i==ps_flash&&muzzleFireHidesFlash(player->readyweapon))continue;
+        auto sf=sprites[psp.state->sprite].spriteframes[psp.state->frame&FF_FRAMEMASK];
+        bool bright=psp.state->frame&FF_FULLBRIGHT;
+        // MODE_RELIT on the screen: the weapon relit per pixel from its own
+        // normals, its painted light taken out.
+        bool relit=settings.weaponLighting&&!bright;
+        int lump=firstspritelump+sf.lump[0];
+        Image &image=relit?weaponImage(lump):lumpImage(lump,false);
+        // The blood coat follows id's artwork; a model frame has another outline.
+        bool modelled=relit&&settings.weaponArt&&weaponPackImage(lump);
+        layer(image,units(psp.sx)+shiftX-image.left-kickDip*12,base+units(psp.sy)+shiftY-image.top+kickDip*36,
+              sf.flip[0],bright,relit,i==0&&!modelled?gunBloodImage(lump):nullptr,1);
+    }
+    if(kicking) {
+        // Placed as a weapon frame at rest is: sx 1, sy 32.
+        // Relit with the guns, its paint kept (kick_view.cpp); as painted, its paint carries its own
+        // light, so under a bright lamp it stops short of white.
+        bool relit=settings.weaponLighting;
+        Image &image=kickImage(kickFrame,relit);
+        layer(image,1.0f-image.left,base+32-image.top,false,false,relit,nullptr,relit?1.0f:0.75f);
     }
     return draws;
 }

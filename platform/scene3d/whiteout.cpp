@@ -18,11 +18,12 @@ const WhiteoutRule rules[]={
     {WEATHER_SNOW,   {0.3f,0.35f,0.65f,1.0f}},
     {WEATHER_SAND,   {0.0f,0.1f,0.6f,1.0f}},
     {WEATHER_ASH,    {0.25f,0.3f,0.45f,0.6f}},
+    {WEATHER_FIRESTORM,{0.15f,0.18f,0.28f,0.4f}},
     {WEATHER_DRY_ICE,{0.15f,0.1f,0.05f,0.03f}},
 };
 }
 float whiteoutNow() {
-    if(!settings.weather)return 0;
+    if(!climateNow().weather)return 0;
     Weather kind=falling();
     for(const WhiteoutRule &rule:rules) {
         if(rule.kind!=kind)continue;

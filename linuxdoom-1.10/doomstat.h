@@ -52,6 +52,7 @@ extern  boolean	nomonsters;	// checkparm of -nomonsters
 extern  boolean	debugfly;
 extern  boolean	debugnoclip;
 extern  boolean	debuggod;
+extern  boolean	debugnodeath;	// GOD MODE's third state: hurt, never killed
 extern  boolean	debugnomonsters;
 extern  boolean	debugnotarget;
 extern  boolean	respawnparm;	// checkparm of -respawn
@@ -190,6 +191,9 @@ extern  boolean	usergame;
 
 //?
 extern  boolean	demoplayback;
+// A demo's first level is being set up (G_DoPlayDemo): demoplayback is
+// not yet set, but what spawns must already be as the demo recorded it.
+extern  boolean	demostarting;
 extern  boolean	demorecording;
 
 // Quit after playing a demo from cmdline.

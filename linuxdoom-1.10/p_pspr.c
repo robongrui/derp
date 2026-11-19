@@ -33,6 +33,8 @@ rcsid[] = "$Id: p_pspr.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 
 #include "m_random.h"
+#include "p_bullets.h"
+#include "p_rounds.h"
 #include "p_local.h"
 #include "p_phobos.h"
 #include "s_sound.h"
@@ -670,6 +672,17 @@ void P_BulletSlope (mobj_t*	mo)
 
 
 //
+// What one of P_GunShot's does, by thirds. Travelling, a pump's shell has nine
+// pellets at 3/6/9, 54 a shell: at stock's 70 it still killed the tougher
+// soldiers in one (the user, 2026-11-05), so their health counted for nothing.
+//
+static int Grain (mobj_t* mo)
+{
+    return P_BulletsTravel () && P_RoundOf (mo) == ROUND_PELLET ? 3 : 5;
+}
+
+
+//
 // P_GunShot
 //
 void
@@ -679,15 +692,19 @@ P_GunShot
 {
     angle_t	angle;
     int		damage;
-	
-    damage = 5*(P_Random ()%3+1);
+    fixed_t	slope = bulletslope;
+
+    damage = Grain (mo)*(P_Random ()%3+1);
     angle = mo->angle;
 
-    if (!accurate)
+    // Travelling, its round's grouping and his trigger's drift (p_rounds.h).
+    if (P_BulletsTravel ())
+	P_RoundPlayerAim (mo, &angle, &slope);
+    else if (!accurate)
 	angle += (P_Random()-P_Random())<<18;
 
     la_freeaim = bulletfree;
-    P_LineAttack (mo, angle, MISSILERANGE, bulletslope, damage);
+    P_LineAttack (mo, angle, MISSILERANGE, slope, damage);
 }
 
 
@@ -739,7 +756,7 @@ A_FireShotgun
 
     P_BulletSlope (player->mo);
 	
-    for (i=0 ; i<7 ; i++)
+    for (i=0 ; i<(P_BulletsTravel () ? PUMP_PELLETS : 7) ; i++)
 	P_GunShot (player->mo, false);
     P_Recoil (player, 16, bulletslope);	// 32 g of shot at 400 m/s, wad and gas
 }
@@ -772,6 +789,8 @@ A_FireShotgun2
 
     P_BulletSlope (player->mo);
 	
+    // Stock's, travelling or not: its job is the huge hit at arm's length,
+    // no use across a room. Only flight and energy loss are new.
     for (i=0 ; i<20 ; i++)
     {
 	damage = 5*(P_Random ()%3+1);
@@ -848,7 +867,14 @@ void A_BFGSpray (mobj_t* mo)
     int			j;
     int			damage;
     angle_t		an;
-	
+
+    // Travelling, it branches from the ball, not from the man who fired it.
+    if (P_BulletsTravel ())
+    {
+	P_RoundSpray (mo);
+	return;
+    }
+
     // offset angles from its attack angle
     for (i=0 ; i<40 ; i++)
     {

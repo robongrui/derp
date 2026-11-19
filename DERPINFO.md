@@ -57,12 +57,29 @@ out anything you don't want to set: DERP works it out as before. `//` and
 | `windamount` | `0` to `1` | How hard the wind blows: `0` still air, `0.5` a steady breeze (about what DERP picks when you leave it out), `1` a gale. In still air rain and snow fall straight down, nothing blows in at a window and the air in the buildings doesn't move; the harder it blows, the flatter they slant, the further they drift in under roofs and through broken windows, and the stronger the drafts through the rooms (and the colder they get in snow). |
 | `sun` | angle, height | Where the sun stands: the angle as above, then its height over the horizon in degrees (`1` to `90`). Shadows, sunbeams and the sun in the sky follow it. The sky texture still gives its colour and strength. |
 | `sun` | `none` or `hidden` | No sun on this map: no sunlight, no sunbeams. |
+| `sun.dawn`, `sun.morning`, `sun.noon`, `sun.afternoon`, `sun.dusk` | angle, height | Where the sun stands at that hour: the map's own `time`, or the *Time of day* the player picks in F4. Without one, the hour keeps your `sun`'s angle and sets the height itself. |
+| `time` | `dawn`, `morning`, `noon`, `afternoon`, `dusk`, `night` | The map's own hour: the sun's height and colour, how bright the outdoors are, and at `night` no sun, the lit rooms shining out into the dark. A *Time of day* the player picks wins. |
+| `temperature` | `-30` to `50`, in °C | The map's own temperature outside: frosted windows in the cold, a warm haze and a harder sun in the heat. A *Temperature* the player picks wins. |
 | `phobos` | `true`, `false` | DERP's Phobos physics: very low gravity, things slide and drift, vacuum outside the sealed rooms, broken windows and open doors vent air, airlocks, mag boots. `false` keeps it off even where DERP would use it (DOOM's first episode). |
 | `gravity` | `0` and up, in g | With `phobos = true`: how hard things fall, in Earth gravities. `0` weightless, `0.00058` Phobos (the default), `0.165` the Moon, `0.38` Mars. Doom's own fall is about `3.9`, the most it takes. |
 | `farfog` | near, far | A distance fog as in Turok: everything is clear up to *near* map units away, fades into the fog colour, and is solid from *far* on; behind it all is the fog colour, and what is wholly past *far* may not be drawn. `none` turns it off. |
 | `farfogcolor` | `RRGGBB` | The far fog's colour in hex, as `2E271F` (dark dust). Without it, near black. |
 | `mirror` | x1, y1, x2, y2, bottom, top | A wall mirror: silvered glass along a wall from (x1, y1) to (x2, y2), facing that line's right side as a linedef's front does, from *bottom* to *top* above the map's zero. It shows the world and everyone in it, the player included (with "Window glass" and "Glass reflections" on), while it is near and in view. Each `mirror` line adds one, up to 8; `none` drops those before it. |
 | `library` | `true`, `false` | Reserved for episode 0.5, SCP_7179_B. Leave it out. |
+
+## Aiming the sun in the game
+
+You don't have to work out the numbers. Stand on the map, look where the sun
+should be and press **U** (*Aim the sun* in F4's Bindings): the sun moves there
+at once, shadows and all, and the line is written to `derpinfo.txt` in DERP's
+save folder. At the map's own hour that's `sun = angle, height`; with a *Time of
+day* picked in F4 it's that hour's `sun.dusk = ...`, so each hour can have its
+own. **Y** (*Sun back*) takes the line for this map and hour out again.
+
+`derpinfo.txt` is your own DERPINFO, in the same words as the lump, read after
+every WAD's, so it wins over them all. Players can keep their sun there; mappers
+can copy the lines into their WAD's `DERPINFO` as they are. You can edit the
+file by hand too: the game only touches the lines it writes.
 
 ## Notes
 
@@ -79,6 +96,7 @@ out anything you don't want to set: DERP works it out as before. `//` and
 - Nukage rain is a rule of the game, so like Phobos it is off in demos and
   multiplayer; there it falls as plain rain.
 - Phobos physics never runs in demos or multiplayer.
+- Gore (F4, Game) is a rule of the game too: off in demos and multiplayer.
 - If several loaded WADs set the same map, the one loaded last wins, setting
   by setting.
 - Mistakes (a misspelled key, a value out of range) are written to DERP's log

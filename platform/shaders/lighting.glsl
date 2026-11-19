@@ -2,6 +2,7 @@
 // the Fog block; define BLOCKERS when the blocker storage buffer is bound.
 float cross2(vec2 a,vec2 b) {return a.x*b.y-a.y*b.x;}
 float lightFalloff(vec3 point,uint i) {
+    if(c.shadowSkip.x>0.0&&i+1u==uint(c.shadowSkip.x)) return 0.0;   // in that light's shadow
     vec3 delta=point-lights[i].position.xyz;
     float falloff=max(0.0,1.0-length(delta)/lights[i].position.w);
     if(falloff<=0.0) return 0.0;
@@ -13,7 +14,8 @@ float lightFalloff(vec3 point,uint i) {
     return falloff;
 }
 // Glowing wall panels (direction.yz: their wall's normal, no cone) shine only
-// ahead of the wall they sit 4 units in front of, fading out toward its plane;
+// ahead of the wall they sit 4 units in front of, fading out toward its plane
+// by the angle off their face, up and down too;
 // a receiver's normal keeps the wall around the panel lit. Matches
 // doom_panel_emission; normal is vec3(0) where there is none.
 float panelEmission(vec3 point,vec3 normal,uint i) {
@@ -21,7 +23,7 @@ float panelEmission(vec3 point,vec3 normal,uint i) {
     if(lights[i].direction.w>0.0||(n.x==0.0&&n.y==0.0)) return 1.0;
     vec3 delta=point-lights[i].position.xyz;
     float ahead=dot(delta.xy,n)+4.0;
-    float emission=smoothstep(0.0,0.5,ahead/max(length(delta),1.0));
+    float emission=smoothstep(0.0,1.0,ahead/max(length(delta),1.0));
     return max(emission,max(0.0,dot(normal.xy,n))*max(0.0,1.0-abs(ahead)/8.0));
 }
 float flashAtOpen(vec3 point,vec3 normal,uint i) {
@@ -147,13 +149,19 @@ float flashStipple(vec3 point,vec3 normal) {
     return (level+0.5)/2.0-1.0;
 }
 #endif
+// Up close the facing counts more than a broad light's directionality says:
+// light skimming a surface right beside it fades by its angle. Matches
+// doom_near_directionality.
+float nearDirectionality(float directionality,float distance) {
+    return max(directionality,0.85*(1.0-smoothstep(32.0,64.0,distance)));
+}
 // Lambert facing, blended toward 1 by the light's directionality (color.w):
 // near-surface emissive sources stay soft so they still light their own wall.
 float flashFacing(vec3 point,vec3 normal,uint i) {
     vec3 toLight=lights[i].position.xyz-point;
     float distance=length(toLight);
     float lambert=distance>0.001?max(0.0,dot(normal,toLight)/distance):1.0;
-    return mix(1.0,lambert,lights[i].color.w);
+    return mix(1.0,lambert,nearDirectionality(lights[i].color.w,distance));
 }
 // FEATURE_CLASSIC_FLASHLIGHT: the flashlight (the only light with a cone)
 // works like Doom's extralight. Its light comes in hard 1/8 steps, and the
@@ -161,22 +169,11 @@ float flashFacing(vec3 point,vec3 normal,uint i) {
 // tick above full brightness, so the beam reads without washing colors out.
 #define BEAM_STEPS 8.0
 #define BEAM_CEILING 1.2
+// The hero light's reach from the eye (world.frag); its ceiling is the F4 choice.
+#define HERO_REACH 256.0
 bool classicBeam(uint i) {return (uint(c.flashlightTint.w)&FEATURE_CLASSIC_FLASHLIGHT)!=0u&&lights[i].direction.w>0.0;}
 float beamSteps(float amount) {return floor(saturate(amount)*BEAM_STEPS+0.5)/BEAM_STEPS;}
-// Fog: analytic exponential height extinction, an analytic headlamp glow, and
-// one soft ray/sphere glow per nearby light. No marching through the volume.
-// Use the denser endpoint for downward rays to avoid an overflowing exp(-x).
-// Density thickens exponentially below the median floor, but stops 96 units
-// down: deep shafts (Freedoom has some hundreds of units deep) would
-// otherwise fog solid. Below that the ray sees the capped density.
-float heightFogTau(float oz,float pz,float distance,float density,float falloff,float reference) {
-    float lowest=reference-96.0,lo=min(oz,pz),hi=max(oz,pz);
-    float below=hi-lo<1e-3?(lo<lowest?1.0:0.0):clamp((lowest-lo)/(hi-lo),0.0,1.0);
-    float start=max(lo,lowest),x=falloff*(max(hi,lowest)-start);
-    float f=x<1e-3?1.0-x*0.5+x*x/6.0:(1.0-exp(-x))/x;
-    return density*distance*(below*exp(falloff*96.0)+
-        (1.0-below)*exp(clamp(-falloff*(start-reference),-80.0,80.0))*f);
-}
+#include "height_fog.glsl"
 float fogBeamIntegral(float distance,float radius) {
     float u=clamp(distance/max(radius,0.001),0.0,1.0);
     return radius*(u-u*u*u+0.5*u*u*u*u);
@@ -186,7 +183,7 @@ float fogBeamIntegral(float distance,float radius) {
 // it falls or blows. In DOOM 2's streets the dark grey pooled at the foot
 // of every far wall under the pale haze, like ambient occlusion.
 float weatherAir() {
-    bool filled=c.weather.w==WEATHER_SNOW||c.weather.w==WEATHER_SAND||c.weather.w==WEATHER_ASH;
+    bool filled=c.weather.w==WEATHER_SNOW||c.weather.w==WEATHER_SAND||c.weather.w==WEATHER_ASH||c.weather.w==WEATHER_FIRESTORM;
     return filled?saturate(c.weather.x*1.25):0.0;
 }
 uint fogLight(uint n) {return n==0u?fogA.y:n==1u?fogA.z:n==2u?fogA.w:fogB.x;}
@@ -197,14 +194,12 @@ vec4 fogAlong(vec3 end) {
     float transmission=exp(-heightFogTau(c.eye.z,end.z,distance,c.fog.x,c.fog.y,c.fog.z));
     distance=min(distance,2000.0); // Bound only the approximate light-glow work.
     vec3 glow=fogHaze(c.fx.yzw)*(1.0-transmission);
+#ifndef NO_LAMP_FOG   // the sky pass (sky.frag) takes the haze alone
     for(uint n=0u;n<fogA.x;++n) {
         uint i=fogLight(n);
         vec3 offset=lights[i].position.xyz-c.eye.xyz;
         float radius=lights[i].position.w,energy=0.0,center=0.0;
         if(lights[i].direction.w>0.0&&dot(offset,offset)<1600.0) {
-#ifdef NO_BEAM_FOG
-            continue;
-#endif
             // The handheld beam starts within a few dozen units of the eye, so
             // its angle is nearly constant along a view ray. Integrate its
             // radial fade directly; geometry already ends it.
@@ -227,5 +222,6 @@ vec4 fogAlong(vec3 end) {
         }
         glow+=lights[i].color.rgb*energy*(0.00035*0.38)*exp(-heightFogTau(c.eye.z,c.eye.z+ray.z*center,center,c.fog.x,c.fog.y,c.fog.z));
     }
+#endif
     return vec4(glow,transmission);
 }

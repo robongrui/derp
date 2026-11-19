@@ -32,6 +32,9 @@ float causticPatternAt(vec2 coord,float distance,uint flags) {
     float l=h<24.0?(h-8.0)/16.0:h<48.0?1.0+(h-24.0)/24.0:2.0+(h-48.0)/48.0;
     int l0=min(int(l),2);float lf=l-float(l0);
     const float scales[4]=float[4](2.0,2.5,3.0,4.0);
+    // At a layer's own height the other's weight is nothing: mix(a,b,0) is a to the bit, so only
+    // the one layer is read (half the pattern's texture reads within 8 units of the water).
+    if(lf<=0.0) return causticLayer(coord,1+l0,scales[l0],sway,flags);
     return mix(causticLayer(coord,1+l0,scales[l0],sway,flags),causticLayer(coord,2+l0,scales[l0+1],sway,flags),lf);
 }
 float causticSteps(float v) {return round(saturate(v*2.0-0.15)*4.0)/4.0;}
@@ -88,6 +91,15 @@ vec3 caustics(vec3 world,vec3 normal,uint sector,bool sprite) {
     vec4 water=sectorInfo[cell.r|((cell.g&127u)<<8)];
     vec3 tint=vec3(float(cell.b>>5)/7.0,float((cell.b>>2)&7u)/7.0,float(cell.b&3u)/3.0);
     float drive=max(smoothstep(0.5,0.9,water.x),(cell.g&128u)!=0u?0.3:0.0),leg=0.0;
+    // Whole-level lighting (c.bake.x 2): a liquid that glows (nukage, slime, lava) is murk, no
+    // mirror: it keeps its weak ripple under the open sky too. At a bright yard's full drive its
+    // ripples lay over every wall and ceiling near it, on surfaces the solve now leaves dark.
+    if(c.bake.x>1.5&&(cell.g&128u)!=0u) drive=min(drive,0.3);
+    // The height fade first: where it is nothing, so is all the rest (it multiplies the result),
+    // and the lights, the pattern and the ice need not be read.
+    vec4 info=sectorInfo[sector];
+    float fade=ceiling?1.0-smoothstep(32.0,224.0,info.z-info.y):1.0-smoothstep(0.0,96.0,world.z-(sprite?water.y:info.y));
+    if(fade<=0.0) return vec3(0);
     vec3 flash=vec3(0);float weight=0.0;
     uvec2 mask=world.z>water.y?vLightMask:uvec2(0);
     vec3 mirrored=vec3(world.xy,2.0*water.y-world.z);
@@ -116,8 +128,6 @@ vec3 caustics(vec3 world,vec3 normal,uint sector,bool sprite) {
     leg=weight>0.0?leg/weight:0.0;
     bool flashing=max(flash.r,max(flash.g,flash.b))>=0.004;
     if(drive<0.004&&!flashing) return vec3(0);
-    vec4 info=sectorInfo[sector];
-    float fade=ceiling?1.0-smoothstep(32.0,224.0,info.z-info.y):1.0-smoothstep(0.0,96.0,world.z-(sprite?water.y:info.y));
     vec2 coord=ceiling?world.xy:vec2(dot(world.xy,vec2(-normal.y,normal.x)),water.y-world.z);
     float room=drive>=0.004?causticSteps(causticPatternAt(coord,max(world.z-water.y,0.0),flags)):0.0;
     float lit=flashing?causticSteps(causticPatternAt(coord,leg,flags)):0.0;

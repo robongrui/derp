@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-    <key>CFBundleExecutable</key><string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+    <!-- The launcher (platform/launcher) is the app's program; Play DERP and
+         derp-heretic sit beside it in Contents/MacOS and it starts them. -->
+    <key>CFBundleExecutable</key><string>DERP</string>
     <key>CFBundleIdentifier</key><string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
     <key>CFBundleName</key><string>Play DERP</string>
     <key>CFBundleDisplayName</key><string>Play DERP</string>
@@ -12,4 +14,60 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>SDL_FILESYSTEM_BASE_DIR_TYPE</key><string>resource</string>
+    <!-- WADs, DEHACKED patches, SoundFonts and folders dropped on the Dock
+         icon or opened with the app reach the launcher as drop events. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>DOOM engine WAD</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key><array><string>io.github.robongrui.derp.wad</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>DEHACKED patch</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key><array><string>io.github.robongrui.derp.patch</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>SoundFont</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key><array><string>io.github.robongrui.derp.soundfont</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Folder</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+        </dict>
+    </array>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>io.github.robongrui.derp.wad</string>
+            <key>UTTypeDescription</key><string>DOOM engine WAD</string>
+            <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict>
+                <key>public.filename-extension</key><array><string>wad</string><string>WAD</string></array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>io.github.robongrui.derp.patch</string>
+            <key>UTTypeDescription</key><string>DEHACKED patch</string>
+            <key>UTTypeConformsTo</key><array><string>public.plain-text</string></array>
+            <key>UTTypeTagSpecification</key><dict>
+                <key>public.filename-extension</key><array><string>deh</string><string>bex</string></array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>io.github.robongrui.derp.soundfont</string>
+            <key>UTTypeDescription</key><string>SoundFont</string>
+            <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict>
+                <key>public.filename-extension</key><array><string>sf2</string></array>
+            </dict>
+        </dict>
+    </array>
 </dict></plist>

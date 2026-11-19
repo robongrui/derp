@@ -11,6 +11,8 @@
 
 #define UNITS_PER_DB 16.0f  /* how far a decibel of loss weighs when choosing the way */
 #define MOST_LOSS 30.0f     /* searched this far past reach in loss, then given up */
+#define FAR_REACH 16384.0f  /* on authored maps (Acoustic_SetFar) the whole level, */
+#define FAR_LOSS 60.0f      /* and through more before giving up */
 #define OPEN_HZ 20000.0f
 #define FOLLOW_MOVED 16.0f  /* the search follows the listener once they move this far, */
 #define FOLLOW_TICS 8       /* or this many tics pass */
@@ -37,6 +39,7 @@ static unsigned glass_serial = ~0u;
 static int glass_shown = 1;
 static int follow_dirty = 1;
 static float (*sector_air)(int sector);
+static int far;
 
 static float units(fixed_t v) { return v / (float)FRACUNIT; }
 
@@ -166,7 +169,7 @@ void Acoustic_Listen(float x, float y, int sector, float range)
         float px, py, cutoff, d = nearest(&graph_openings[p], x, y, &px, &py), db = crossing(&graph_openings[p], &cutoff);
         reach(p, d, db, cutoff, px, py, px, py, 0, OPEN_HZ);
     }
-    float limit = range + UNITS_PER_DB * MOST_LOSS;
+    float limit = range + UNITS_PER_DB * (far ? FAR_LOSS : MOST_LOSS);
     while (heap_count)
     {
         entry_t e = pop();
@@ -263,7 +266,7 @@ void Acoustic_Follow(void)
     int here = (int)(listener->subsector->sector - sectors);
     if (!follow_dirty && level == r_levelserial && at == here && fabsf(lx - x) + fabsf(ly - y) <= FOLLOW_MOVED &&
         gametic >= tic && gametic - tic < FOLLOW_TICS) return;
-    Acoustic_Listen(lx, ly, here, FOLLOW_REACH);
+    Acoustic_Listen(lx, ly, here, far ? FAR_REACH : FOLLOW_REACH);
     x = lx; y = ly; tic = gametic; at = here; level = r_levelserial;
     follow_dirty = 0;
 }
@@ -293,6 +296,13 @@ void Acoustic_ShowGlass(int shown)
 {
     if (glass_shown == (shown != 0)) return;
     glass_shown = shown != 0;
+    follow_dirty = 1;
+}
+
+void Acoustic_SetFar(int on)
+{
+    if (far == (on != 0)) return;
+    far = on != 0;
     follow_dirty = 1;
 }
 

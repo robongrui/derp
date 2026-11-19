@@ -22,6 +22,10 @@ This term covers only the material added by DERP. The DOOM source code by id
 Software (linuxdoom-1.10/, GPL version 2 or later) and the other parts listed
 in THIRD_PARTY.md keep their own licenses, without this term.
 
+The voice packs derp-cries.wad and derp-voices.wad are not covered by the GPL.
+They have their own licence, barks/VOICES-LICENSE.txt (licenses/VOICES.txt in
+the downloads).
+
 Versions up to 0.4.5 were released as Duct-Tape DOOM
 (https://github.com/robongrui/duct-tape-doom); their attribution term names
 that project, and this one continues it.

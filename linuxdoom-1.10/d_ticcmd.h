@@ -42,6 +42,7 @@ typedef struct
     short	consistancy;	// checks for net game
     byte	chatchar;
     byte	buttons;
+    byte	buttons2;	// DERP, Authored: crouch and kick (BT2_*); in no demo and on no wire
 } ticcmd_t;
 
 

@@ -42,6 +42,11 @@ boolean M_Responder (event_t *ev);
 // question, 3 typing a save's name (game_profile.h's GAME_PAD_*).
 int M_PadMode (void);
 
+// DERP: whether the menus draw at or below row y now (the status bar's top,
+// scene3d/status_bar.cpp): the help screens fill the screen, the load and
+// save menus' last slots reach into the bar.
+boolean M_DrawsBelow (int y);
+
 
 // Called by main loop,
 // only used for menu (skull cursor) animation.

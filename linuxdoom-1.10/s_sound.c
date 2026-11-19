@@ -51,6 +51,9 @@ const char snd_prefixen[]
 
 #define S_MAX_VOLUME		127
 
+// DERP: F4's Random pitch (Game_SetRandomPitch).
+int snd_randompitch;
+
 // when to clip out sounds
 // Does not fit the large outdoor areas.
 #define S_CLIPPING_DIST		(1200*0x10000)
@@ -66,9 +69,6 @@ const char snd_prefixen[]
 
 // Adjustable by menu.
 #define NORM_VOLUME    		snd_MaxVolume
-
-// DERP: F4's Random pitch (Game_SetRandomPitch).
-int snd_randompitch;
 
 #define NORM_PITCH     		128
 #define NORM_PRIORITY		64
@@ -209,6 +209,9 @@ void S_Start(void)
   int cnum;
   int mnum;
 
+  // nothing may read the old map once it goes
+  I_LevelEnding();
+
   // kill all playing sounds at start of level
   //  (trust me - a good idea)
   for (cnum=0 ; cnum<numChannels ; cnum++)
@@ -262,7 +265,10 @@ void S_Start(void)
   // HACK FOR COMMERCIAL
   //  if (commercial && mnum > mus_e3m9)	
   //      mnum -= mus_e3m9;
-  
+
+  // A level starts its song from the top, even the one already playing
+  // (a reload or a restart after dying).
+  S_StopMusic();
   S_ChangeMusic(mnum, true);
   
   nextcleanup = 15;
@@ -324,6 +330,7 @@ S_StartSoundAtVolume
   //  and if not, modify the params
   if (origin && origin != players[consoleplayer].mo)
   {
+    int base = volume;
     rc = S_AdjustSoundParams(players[consoleplayer].mo,
 			     origin,
 			     I_SoundReach(sfx_id),
@@ -337,8 +344,14 @@ S_StartSoundAtVolume
       sep 	= NORM_SEP;
     }
     
+    // DERP: on authored maps a sound past the clipping distance still
+    //  carries, as far as the level lets it, without taking a channel.
     if (!rc)
+    {
+      if (I_LevelSound())
+	I_FarSound(sfx_id, origin->x, origin->y, origin->z, base);
       return;
+    }
   }	
   else
   {
@@ -580,7 +593,11 @@ void S_UpdateSounds(void* listener_p)
 	}
 	nextcleanup = gametic + 15;
     }*/
-    
+
+    // DERP: the pass below goes to the mixer as one update, so its audio
+    //  thread is not held up once per sound (i_sound.h).
+    I_BeginSoundUpdate();
+
     for (cnum=0 ; cnum<numChannels ; cnum++)
     {
 	c = &channels[cnum];
@@ -621,7 +638,8 @@ void S_UpdateSounds(void* listener_p)
 						  &sep,
 						  &pitch);
 		    
-		    if (!audible)
+		    // DERP: on authored maps it plays on as it moves off.
+		    if (!audible && !I_LevelSound())
 		    {
 			S_StopChannel(cnum);
 		    }
@@ -641,6 +659,7 @@ void S_UpdateSounds(void* listener_p)
 	    }
 	}
     }
+    I_EndSoundUpdate();
     // kill music if it is a single-play && finished
     // if (	mus_playing
     //      && !I_QrySongPlaying(mus_playing->handle)

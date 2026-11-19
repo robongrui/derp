@@ -9,6 +9,9 @@ struct tsf;
 /* All of these run with the audio lock held. */
 /* soundfont: play through the bank if one is in use, else the OPL. */
 boolean MixerMusic_Register (const void* data, int size, int rate, boolean soundfont);
+/* A recording (MP3 or Ogg from malloc, taken over) instead of a score,
+   gain times as loud. */
+boolean MixerMusic_RegisterRecorded (void* bytes, int size, int rate, float gain);
 void MixerMusic_UnRegister (void);
 void MixerMusic_Play (boolean loop);
 void MixerMusic_Stop (void);

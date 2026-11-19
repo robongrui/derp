@@ -1,6 +1,7 @@
 /* Dynamic lights collected each frame: muzzle flashes, projectiles,
    decorations, barrels and door spill, packed for the GPU. */
 #include "internal.h"
+#include "../rooms.h"
 #include "../stride.h"
 
 namespace doom3d {
@@ -27,6 +28,7 @@ static std::array<float,3> frameGlow(int sprite,int frame) {
     }
     glowColors.emplace(key,color);return color;
 }
+void muzzleFire(const mobj_t &source,int weapon,int projectile,const std::array<float,3> &glow);   // muzzle_fire.cpp
 void muzzleFlash(mobj_t *source,int weapon,int projectile) {
     if(!source||gamestate!=GS_LEVEL) return;
     if(flashLevelSerial!=r_levelserial) {flashPulses.clear();flashLevelSerial=r_levelserial;}
@@ -41,6 +43,7 @@ void muzzleFlash(mobj_t *source,int weapon,int projectile) {
         const auto &state=states[flashState];sprite=state.sprite;frame=state.frame;
     }
     FlashPulse pulse={units(source->x),units(source->y),z,radius,strength,leveltime,source,frameGlow(sprite,frame)};
+    muzzleFire(*source,weapon,projectile,pulse.color);   // the fire and smoke at the barrel
     for(auto &old:flashPulses) if(old.source==source) {old=pulse;return;}
     if(flashPulses.size()==8) flashPulses.erase(flashPulses.begin());
     flashPulses.push_back(pulse);
@@ -54,6 +57,19 @@ void sparkFlash(float x,float y,float z,float radius,float strength,const std::a
     for(auto &old:flashPulses) if(!old.source) {old=pulse;return;}
     if(flashPulses.size()==8) flashPulses.erase(flashPulses.begin());
     flashPulses.push_back(pulse);
+}
+bool sparkGlow(float x,float y,float z,float glow[3]) {
+    bool any=false;glow[0]=glow[1]=glow[2]=0;
+    for(const FlashPulse &p:flashPulses) {
+        if(p.source||leveltime<p.tic)continue;
+        float d=std::sqrt((x-p.x)*(x-p.x)+(y-p.y)*(y-p.y)+(z-p.z)*(z-p.z));
+        if(d>=p.radius)continue;
+        float near=1-d/p.radius,strength=p.strength*doom_flash_fade(leveltime-p.tic,0)*near*near;
+        if(strength<=0)continue;
+        for(int c=0;c<3;++c)glow[c]+=strength*p.color[c];
+        any=true;
+    }
+    return any;
 }
 // Shadow walls kept between frames. A light's walls (relevant and not hidden)
 // depend only on its position, reach and cone and on the heights and skies of
@@ -118,8 +134,10 @@ static CachedBlockers *blockerSlot(const BlockerKey &key) {
     return &blockerCache[key];
 }
 // The map's lines by 128-unit cell, built once a level (lines don't move), so
-// a light asks only the lines near it instead of the whole map.
-static std::vector<int> linesAround(float x,float y,float reach) {
+// a light asks only the lines near it instead of the whole map. The answer
+// is a buffer kept from call to call (each caller is done with it before
+// the next asks).
+static const std::vector<int> &linesAround(float x,float y,float reach) {
     constexpr float cell=128;
     static std::vector<std::vector<int>> cells;
     static std::vector<unsigned> seen;
@@ -144,7 +162,8 @@ static std::vector<int> linesAround(float x,float y,float reach) {
             for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx)cells[(size_t)cy*across+cx].push_back(i);
         }
     }
-    std::vector<int> near;
+    static std::vector<int> near;
+    near.clear();
     if(++stamp==0) {std::fill(seen.begin(),seen.end(),0);stamp=1;}
     int x0=std::max(0,(int)std::floor((x-reach-originX)/cell)),x1=std::min(across-1,(int)std::floor((x+reach-originX)/cell));
     int y0=std::max(0,(int)std::floor((y-reach-originY)/cell)),y1=std::min(down-1,(int)std::floor((y+reach-originY)/cell));
@@ -270,41 +289,91 @@ static float teleportLight(const mobj_t &thing) {
 // (torches, candles, lamps, burning barrels), recognized from thing data
 // rather than names, and those the game names (Game_DecorationLight:
 // Heretic's chandeliers and serpent torches). Monsters, shots, pickups and
-// short-lived fogs and puffs are excluded. Animated flames flicker like DOOM's fire-flicker sectors:
-// a stepped drop every 4 tics, from a hash rather than the game's RNG.
+// short-lived fogs and puffs are excluded. An animated flame's light follows its flame as drawn:
+// each frame of its loop shines by how much of it is painted glowing, the brightest at full and the
+// dimmest 8% under (flameLevel), stepping when the sprite does. (It was a random drop of up to 36%
+// every 4 tics, after DOOM's fire-flicker sectors: in a yard lit by torches alone that read as a bug.)
 bool decorationLight(const mobj_t &thing) {
     if(thing.player||(thing.flags&(MF_MISSILE|MF_COUNTKILL|MF_SPECIAL|MF_NOBLOCKMAP)))return false;
     if(Game_DecorationLight(thing.sprite))return true;
     const state_t &spawn=states[thing.info->spawnstate];
     return (spawn.frame&FF_FULLBRIGHT)&&(thing.frame&FF_FULLBRIGHT);
 }
-// The flicker hashes finish with MurmurHash2's mixing step (Austin Appleby, public domain).
-static float decorationFlicker(const mobj_t &thing) {
-    const state_t &spawn=states[thing.info->spawnstate];
-    if(spawn.tics<0||spawn.nextstate==thing.info->spawnstate)return 1;
-    uint32_t hash=(uint32_t)(uintptr_t)&thing*2654435761u^(uint32_t)(leveltime/4)*40503u;
-    hash^=hash>>13;hash*=0x5bd1e995u;hash^=hash>>15;
-    return 1-0.12f*(hash&3);
+static bool flameLoops(const mobjinfo_t &info) {
+    const state_t &spawn=states[info.spawnstate];
+    return spawn.tics>=0&&spawn.nextstate!=info.spawnstate;
 }
-// Bake-only lights flicker by group: each animated decoration falls in one
-// of the groups switching lamps leave (up to 15) that step like
-// decorationFlicker; group 0 stays steady. Lamp groups switch in every mode,
-// decoration groups only with bake-only lights (their dynamic copies flicker
-// them otherwise).
+constexpr float flameSwing=0.08f;   // the dimmest frame of a flame's loop, under its brightest
+// Per state of a kind's spawn loop: its light, 1 at the frame painted brightest.
+static const std::unordered_map<int,float> &flameLevels(const mobjinfo_t &info) {
+    static std::unordered_map<const mobjinfo_t*,std::unordered_map<int,float>> kinds;
+    auto found=kinds.find(&info);if(found!=kinds.end())return found->second;
+    std::unordered_map<int,float> &levels=kinds[&info];
+    std::vector<std::pair<int,float>> loop;
+    for(int state=info.spawnstate,n=0;n<32&&state>0&&!levels.count(state);state=states[state].nextstate,++n) {
+        int sprite=states[state].sprite,frame=states[state].frame&FF_FRAMEMASK;float weight=0;
+        if(sprite>=0&&sprite<numsprites&&frame<sprites[sprite].numframes) {
+            const auto &sf=sprites[sprite].spriteframes[frame];
+            for(int r=0;r<(sf.rotate?8:1);++r)weight=std::max(weight,lumpImage(firstspritelump+sf.lump[r],false).glowWeight);
+        }
+        levels[state]=1;loop.push_back({state,weight});
+    }
+    float low=INFINITY,high=0;
+    for(const auto &f:loop) {low=std::min(low,f.second);high=std::max(high,f.second);}
+    if(high>low)for(const auto &f:loop)levels[f.first]=1-flameSwing*(high-f.second)/(high-low);
+    // DERP_FLAMES: lists each kind's loop, to see what the artwork gives.
+    if(getenv("DERP_FLAMES"))for(const auto &f:loop)
+        fprintf(stderr,"flame kind %d state %d glow %.4f level %.3f\n",int(&info-mobjinfo),f.first,f.second,levels[f.first]);
+    return levels;
+}
+float decorationFlicker(const mobj_t &thing) {
+    if(!flameLoops(*thing.info))return 1;
+    const auto &levels=flameLevels(*thing.info);
+    auto found=levels.find(int(thing.state-states));
+    return found==levels.end()?1:found->second;
+}
+// Bake-only lights flicker by group: each kind of animated decoration takes one
+// of the groups switching lamps leave (up to 15), which follows the first of
+// that kind in the level (the others stand up to 3 tics off it: the game starts
+// each map thing somewhere in its first frame); group 0 stays steady. One group
+// a kind, so two torches' pools never step apart where they overlap. Lamp groups
+// switch in every mode, decoration groups only with bake-only lights (their
+// dynamic copies flicker them otherwise).
 int flickerGroup(const mobj_t &thing) {
-    const state_t &spawn=states[thing.info->spawnstate];
     int free=flickerGroups-1-lampGroupCount;
-    if(spawn.tics<0||spawn.nextstate==thing.info->spawnstate||free<=0)return 0;
-    uint32_t hash=(uint32_t)(uintptr_t)&thing*2654435761u;
-    return 1+lampGroupCount+(int)((hash>>16)%free);
+    if(!flameLoops(*thing.info)||free<=0)return 0;
+    // By what it is: the bake records the group, and the bake cache (bake_cache.cpp) needs the
+    // same group on every run. Its place among the kinds whose spawn loop is a lit flame.
+    static std::vector<int> rank;
+    if(rank.empty()) {
+        rank.assign(NUMMOBJTYPES,0);
+        for(int type=0,count=0;type<NUMMOBJTYPES;++type) {
+            const mobjinfo_t &info=mobjinfo[type];
+            if(info.spawnstate<=0||!flameLoops(info)||(info.flags&(MF_MISSILE|MF_COUNTKILL|MF_SPECIAL|MF_NOBLOCKMAP)))continue;
+            const state_t &spawn=states[info.spawnstate];
+            if((spawn.frame&FF_FULLBRIGHT)||Game_DecorationLight(spawn.sprite))rank[type]=count++;
+        }
+    }
+    int type=int(thing.info-mobjinfo);
+    return 1+lampGroupCount+(type>=0&&type<NUMMOBJTYPES?rank[type]:0)%free;
 }
 float groupFlicker(int group) {
     if(group<=0||group>=flickerGroups)return 1;
     if(group<=lampGroupCount)return lampGroupFlicker[group];
     if(!bakeOnlyActive)return 1;
-    uint32_t hash=(uint32_t)group*2654435761u^(uint32_t)(leveltime/4)*40503u;
-    hash^=hash>>13;hash*=0x5bd1e995u;hash^=hash>>15;
-    return 1-0.12f*(hash&3);
+    // Once a tic: each decoration group's level, from the first of its things.
+    static float levels[flickerGroups];static int tic=-1;static unsigned serial=~0u;
+    if(tic!=leveltime||serial!=r_levelserial) {
+        tic=leveltime;serial=r_levelserial;
+        bool set[flickerGroups]={};
+        for(float &l:levels)l=1;
+        for(int i=0;i<numsectors;++i)for(const mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
+            if(!flameLoops(*thing->info)||!decorationLight(*thing))continue;
+            int g=flickerGroup(*thing);
+            if(g>lampGroupCount&&g<flickerGroups&&!set[g]) {set[g]=true;levels[g]=decorationFlicker(*thing);}
+        }
+    }
+    return levels[group];
 }
 // A decoration's unflickered light, shared by the dynamic set and the bake.
 // Size follows the artwork: a candle glows small, a tall torch wide. It
@@ -315,8 +384,11 @@ BakeLight decorationSource(const mobj_t &thing) {
     const Image &image=lumpImage(firstspritelump+frame.lump[0],false);
     float height=(float)image.height,up=Game_DecorationLight(thing.sprite)?image.glowHeight:0.85f;
     auto color=frameGlow(thing.sprite,thing.frame);
-    return {units(thing.x),units(thing.y),units(thing.z)+height*up,std::clamp(height*4.0f,96.0f,320.0f),
+    BakeLight light={units(thing.x),units(thing.y),units(thing.z)+height*up,std::clamp(height*4.0f,96.0f,320.0f),
             std::clamp(height/60.0f,0.6f,1.2f),0.75f,{color[0],color[1],color[2]}};
+    // The lamps on posts shine out and not up or down (BakeLight::post); a torch's or a candle's flame all round.
+    if(Game_Decoration(thing.sprite)==GAME_DECORATION_LAMP)light.post=1;
+    return light;
 }
 std::vector<StaticFog> staticFog;
 // The carried torch's color: the glow of the game's torch item sprite
@@ -332,6 +404,7 @@ std::array<float,3> torchColor() {
 void collectFlashes(float fraction,const Uniforms &camera) {
     flashes={};lightBlockers.clear();fogOnly={};lightKind=I_RENDER3D_LIGHT_FLASHLIGHT;
     noteSectorChanges();
+    roomPulseBegin();
     // A carried torch (Game_Torch): a flame held low at the left hand,
     // lighting all around like the torches on the walls, flickering with
     // the game's own torch and a fine stepped flicker of its own. Things
@@ -361,7 +434,8 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         // right (the player's radius is the lamp's offset) or facing into a
         // corner put it on or behind the wall, which then blocked the beam.
         float dx=lamp[0]-camera.eye[0],dy=lamp[1]-camera.eye[1],reach=std::sqrt(dx*dx+dy*dy),clear=1;
-        for(int i:reach>0?linesAround(camera.eye[0]+dx*0.5f,camera.eye[1]+dy*0.5f,reach*0.5f+5):std::vector<int>{}) {
+        static const std::vector<int> none;
+        for(int i:reach>0?linesAround(camera.eye[0]+dx*0.5f,camera.eye[1]+dy*0.5f,reach*0.5f+5):none) {
             const line_t &line=lines[i];
             if(line.frontsector&&line.backsector&&line.frontsector!=line.backsector&&
                lamp[2]>std::max(floorZ(line.frontsector),floorZ(line.backsector))&&
@@ -408,7 +482,10 @@ void collectFlashes(float fraction,const Uniforms &camera) {
     for(const auto &p:flashPulses) {
         float strength=p.strength*doom_flash_fade(leveltime-p.tic,fraction);
         // Muzzle flashes and sparks, whose sprites are on the HUD or none.
-        if(strength>0) appendLight(p.x,p.y,p.z,p.radius,strength,p.color,p.source,0.75f,true,0,lampSpot(p.source?4.0f:2.0f));
+        if(strength>0) {
+            appendLight(p.x,p.y,p.z,p.radius,strength,p.color,p.source,0.75f,true,0,lampSpot(p.source?4.0f:2.0f));
+            roomPulseAdd(p.x,p.y,p.radius,strength);
+        }
     }
     // Live WAD missile objects supply continuous light, including their bright
     // impact frames. Keep the nearest eight so rapid fire has a bounded cost.
@@ -419,7 +496,8 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         if(barrelLight(*thing)>0) {
             float x,y,z;interpolatedPosition(*thing,fraction,x,y,z);
             float dx=x-camera.eye[0],dy=y-camera.eye[1],dz=z-camera.eye[2];
-            barrels.push_back({thing,dx*dx+dy*dy+dz*dz});
+            explosionBarrel(*thing,x,y,z);   // it bursts with its sound (explosions.cpp), and shines from there by the blast's light
+            if(!explosionHides(*thing))barrels.push_back({thing,dx*dx+dy*dy+dz*dz});
             auto seen=burstBarrels.find(thing);
             if(seen!=burstBarrels.end())seen->second=true;
             else if(Game_BlastFrame(thing)>=GAME_BLAST_BURST) {burstBarrels[thing]=true;barrelBlast(*thing,x,y,z);}
@@ -438,6 +516,7 @@ void collectFlashes(float fraction,const Uniforms &camera) {
             continue;
         }
         if(!(thing->info->flags&MF_MISSILE)||!(thing->frame&FF_FULLBRIGHT)) continue;
+        if(explosionHides(*thing)) continue;   // a rocket gone off: the blast's own light
         float x,y,z;interpolatedPosition(*thing,fraction,x,y,z);
         float dx=x-camera.eye[0],dy=y-camera.eye[1],dz=z-camera.eye[2];
         projectiles.push_back({thing,dx*dx+dy*dy+dz*dz});
@@ -450,15 +529,17 @@ void collectFlashes(float fraction,const Uniforms &camera) {
         float x,y,z;interpolatedPosition(thing,fraction,x,y,z);
         appendLight(x,y,z+24,448,barrelLight(thing),frameGlow(thing.sprite,thing.frame),&thing,0.75f,true,0,
                     lampSpot(spriteLamp(thing.sprite,thing.frame)));
+        roomPulseAdd(x,y,448,barrelLight(thing));
     }
     std::sort(decorations.begin(),decorations.end(),[](const Candidate &a,const Candidate &b) {return a.distance<b.distance;});
+    explosionLights(fraction);   // the blasts' own, lingering (explosions.cpp); the barrels' kind
     staticFog.clear();lightKind=I_RENDER3D_LIGHT_DECORATION;
     for(size_t n=0;n<std::min(size_t(10),decorations.size());++n) {
         const mobj_t &thing=*decorations[n].thing;
         BakeLight light=decorationSource(thing);
         // Bake-only: the bake lights everything; only the fog glow remains.
         if(bakeOnlyActive) {
-            float strength=light.strength*groupFlicker(flickerGroup(thing));
+            float strength=light.strength*decorationFlicker(thing);   // its own flame, to the tic
             staticFog.push_back({light.x,light.y,light.z,light.radius,strength,{light.color[0],light.color[1],light.color[2]}});
             continue;
         }
@@ -513,8 +594,12 @@ float flashAt(float x,float y,float z,const Flash &f) {
 // open, its brighter side lights the darker side through the opening: a
 // light just outside each face on the dark side, as strong as the light
 // difference times how far the door is open (in eighths), tinted by the
-// bright side's floor. The four nearest join the dynamic lights.
-struct DoorPortal { int door;std::vector<std::pair<int,int>> faces;float fullOpen; }; // faces: line, neighbor sector
+// bright side's floor (whole-level lighting: by its baked light). The four
+// nearest join the dynamic lights.
+struct DoorPortal {
+    int door;std::vector<std::pair<int,int>> faces;float fullOpen;   // faces: line, neighbor sector
+    std::vector<std::array<float,3>> baked;   // whole-level lighting: the steady baked light outside each face (faceLight)
+};
 static std::vector<DoorPortal> doorPortals;
 static std::vector<bool> doorLines;
 bool doorLine(int line) {return line>=0&&(size_t)line<doorLines.size()&&doorLines[line];}
@@ -536,21 +621,60 @@ void findDoors() {
         doorPortals.push_back(std::move(door));
     }
 }
+bool relightHoldsSector(int sector);   // relight.cpp
+// The baked light a monster would stand in just outside a door face, on the neighbor's side: the
+// lamps and the bounce without their flicker (a blinking lamp caught dark is not the room's light).
+static std::array<float,3> faceLight(int index,int neighbor) {
+    const line_t &line=lines[index];
+    float ax=units(line.v1->x),ay=units(line.v1->y),ex=units(line.v2->x)-ax,ey=units(line.v2->y)-ay,len=std::max(1.0f,std::hypot(ex,ey));
+    float side=line.frontsector==&sectors[neighbor]?1.0f:-1.0f;   // the front side's normal is the right of v1->v2
+    StaticSample sample;
+    bakedLightAt(ax+ex*0.5f+ey/len*side*48,ay+ey*0.5f-ex/len*side*48,floorZ(&sectors[neighbor])+40,&sectors[neighbor],&sample);
+    return {sample.color[0]+sample.bounce[0],sample.color[1]+sample.bounce[1],sample.color[2]+sample.bounce[2]};
+}
 static void doorSpill(const Uniforms &camera) {
     if(!settings.doorLight)return;
+    // With light through doorways (bake_doorways.cpp, Classic) the bake holds this light for a
+    // door that stays open, once re-baked round it (relight.cpp): no second lamp on top there.
+    // A door that will close again is never re-baked, so it keeps the lamp.
+    const bool bakedDoorways=settings.doorwayLight&&bakedLightsActive&&settings.lightModel==0;
+    // Whole-level lighting has no level indoors (lighting() is the room's fill there), so each side
+    // is the baked light just outside its face, read again only when the bake changes: the lamps and
+    // the bounce a monster would stand in there. The mapper's levels said nothing of it (E2M5's first
+    // door: 128 on both sides, one lit green by nukage, the other black). Classic compares the
+    // levels, the steady ones. The outside has a level that is shown (its yard's, with the hour, the
+    // weather and the mood in it), so a door onto a yard at night lets no daylight in.
+    bool whole=settings.lightModel==1&&bakedLightsActive;
+    static unsigned readBake=~0u,readCells=~0u,readLevel=~0u;
+    if(whole&&(readBake!=lightBakeSerial||readCells!=lightCellsSerial||readLevel!=levelSerial)) {
+        readBake=lightBakeSerial;readCells=lightCellsSerial;readLevel=levelSerial;
+        for(auto &door:doorPortals) {
+            door.baked.clear();
+            for(auto [index,neighbor]:door.faces)door.baked.push_back(faceLight(index,neighbor));
+        }
+    }
+    auto level=[&](const DoorPortal &door,size_t face) {
+        int s=door.faces[face].second;
+        if(!whole||Rooms_Outside(s))return lighting(&sectors[s]);
+        if(face>=door.baked.size())return std::clamp(lampPeakLevel(s)/255.0f,0.12f,1.0f);
+        const auto &b=door.baked[face];
+        return std::clamp(std::max({b[0],b[1],b[2]}),0.12f,1.0f);
+    };
     struct Spill { float x,y,z,radius,strength,distance;std::array<float,3> color; };
     std::vector<Spill> spills;
     for(const auto &door:doorPortals) {
         const sector_t &sector=sectors[door.door];
         float open=ceilZ(&sector)-floorZ(&sector);
-        if(open<2)continue;
+        if(open<2||(bakedDoorways&&relightHoldsSector(door.door)))continue;
         float fraction=std::ceil(std::clamp(open/door.fullOpen,0.0f,1.0f)*8)/8;
-        for(auto [index,dark]:door.faces) {
-            int bright=-1;
-            for(auto [other,neighbor]:door.faces)
-                if(neighbor!=dark&&(bright<0||lighting(&sectors[neighbor])>lighting(&sectors[bright])))bright=neighbor;
-            if(bright<0)continue;
-            float difference=lighting(&sectors[bright])-lighting(&sectors[dark]);
+        for(size_t face=0;face<door.faces.size();++face) {
+            auto [index,dark]=door.faces[face];
+            int brightFace=-1;
+            for(size_t other=0;other<door.faces.size();++other)
+                if(door.faces[other].second!=dark&&(brightFace<0||level(door,other)>level(door,brightFace)))brightFace=(int)other;
+            if(brightFace<0)continue;
+            int bright=door.faces[brightFace].second;
+            float difference=level(door,brightFace)-level(door,face);
             if(difference<0.06f)continue;
             const line_t &line=lines[index];
             float ax=units(line.v1->x),ay=units(line.v1->y),ex=units(line.v2->x)-ax,ey=units(line.v2->y)-ay,len=std::hypot(ex,ey);
@@ -561,7 +685,12 @@ static void doorSpill(const Uniforms &camera) {
             if(distance>1400)continue;
             int pic=sectors[bright].floorpic;
             std::array<float,3> color={1,1,1};
-            if(pic!=skyflatnum) {
+            if(whole&&!Rooms_Outside(bright)&&(size_t)brightFace<door.baked.size()) {
+                // The bright side's baked light: green through a door by nukage, whatever its floor.
+                const auto &b=door.baked[brightFace];
+                float peak=std::max({b[0],b[1],b[2],0.01f});
+                for(int c=0;c<3;++c)color[c]=b[c]/peak;
+            } else if(pic!=skyflatnum) {
                 const auto &average=averageColor(lumpImage(firstflat+flattranslation[pic],true));
                 float peak=std::max({average[0],average[1],average[2],0.01f});
                 for(int c=0;c<3;++c)color[c]=0.5f+0.5f*average[c]/peak;
@@ -673,7 +802,7 @@ void buildLightWords() {
 }
 void clearFlashPulses() {flashPulses.clear();}
 void lightsShutdown() {
-    flashPulses.clear();glowColors.clear();burstBarrels.clear();staticFog.clear();doorPortals.clear();
+    flashPulses.clear();glowColors.clear();burstBarrels.clear();staticFog.clear();doorPortals.clear();roomPulseShutdown();
     blockerCache.clear();lightCache={};sectorSeen.clear();sectorChanged.clear();
 }
 } // namespace doom3d

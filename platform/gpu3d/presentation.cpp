@@ -24,6 +24,7 @@ int appliedFrames=2;
 bool adaptiveUncapped=false;   // Adaptive: running uncapped since frames kept running over
 int late=0,early=0,counted=0;  // Adaptive: frames over the refresh, frames well under it, of those counted
 uint64_t lastFrame=0;          // when the last frame started (ns)
+uint64_t nextFrame=0;          // the limit: when the next frame may start (ns), 0 none set
 bool supports(SDL_GPUPresentMode mode) {return SDL_WindowSupportsGPUPresentMode(device,gameWindow,mode);}
 // The display's refresh period (ns), 60 Hz where it doesn't say.
 uint64_t refreshPeriod() {
@@ -66,10 +67,28 @@ void presentationWait() {
     else if(settings.presentation==2&&supports(SDL_GPU_PRESENTMODE_MAILBOX)) mode=SDL_GPU_PRESENTMODE_MAILBOX;
     if(mode==SDL_GPU_PRESENTMODE_VSYNC&&(settings.presentation==1||settings.presentation==2))frames=3;
     if(frames!=appliedFrames) {SDL_SetGPUAllowedFramesInFlight(device,(Uint32)frames);appliedFrames=frames;}
-    if(mode!=applied&&SDL_SetGPUSwapchainParameters(device,gameWindow,SDL_GPU_SWAPCHAINCOMPOSITION_SDR,mode))applied=mode;
-    // The limit, for what is not held to the refresh already.
+    // With the composition F4 "HDR" asks for (hdr_output.cpp).
+    static SDL_GPUSwapchainComposition composed=SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+    SDL_GPUSwapchainComposition composition=hdrWanted();
+    if(mode!=applied||composition!=composed) {
+        bool worked=SDL_SetGPUSwapchainParameters(device,gameWindow,composition,mode);
+        if(worked)applied=mode;
+        if(composition!=composed)hdrApplied(composition,worked);
+        if(worked)composed=composition;
+    }
+    // The limit, for what is not held to the refresh already: frames start
+    // on a fixed schedule one period apart, so the time this function spends
+    // (the driver queries above) and the delay's own overshoot don't add to
+    // every frame (they did: 60 ran at 55, 120 at 102). A frame a whole
+    // period late, or a schedule left from a slower limit, starts it over.
     uint64_t limit=profile.enabled||applied==SDL_GPU_PRESENTMODE_VSYNC?0:limitPeriod();
-    if(limit&&lastFrame&&interval<limit)SDL_DelayPrecise(limit-interval);
+    if(limit) {
+        uint64_t t=SDL_GetTicksNS();
+        if(!nextFrame||t>nextFrame+limit||nextFrame>t+limit)nextFrame=t;
+        else if(t<nextFrame)SDL_DelayPrecise(nextFrame-t);
+        nextFrame+=limit;
+    }
+    else nextFrame=0;
     lastFrame=SDL_GetTicksNS();
 }
 } // namespace gpu3d

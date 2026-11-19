@@ -368,6 +368,23 @@ void GetPackets (void)
 //
 int      gametime;
 
+// DERP: after a hitch a single player game on the 3D renderer plays on from
+//  now rather than running every tic it missed in one frame, which made one
+//  slow frame two. Ticcmds are built at most CATCHUP_TICS ahead of the game;
+//  the clock (gametime) has moved on past the rest, so they are dropped, as
+//  vanilla drops all past BACKUPTICS/2-1. Demos, net games, -timedemo and
+//  the test drivers (their fast clock, I_MayDropTics) keep every tic.
+#define CATCHUP_TICS	2
+int I_MayDropTics (void);
+
+static int MostTicsAhead (void)
+{
+    if (r_uncapped && !netgame && !demoplayback && !demorecording
+	&& !singletics && ticdup == 1 && I_MayDropTics ())
+	return CATCHUP_TICS;
+    return BACKUPTICS/2-1;
+}
+
 void NetUpdate (void)
 {
     int             nowtime;
@@ -375,7 +392,8 @@ void NetUpdate (void)
     int				i,j;
     int				realstart;
     int				gameticdiv;
-    
+    int				most;
+
     // check time
     nowtime = I_GetTime ()/ticdup;
     newtics = nowtime - gametime;
@@ -400,11 +418,12 @@ void NetUpdate (void)
     
     // build new ticcmds for console player
     gameticdiv = gametic/ticdup;
+    most = MostTicsAhead ();
     for (i=0 ; i<newtics ; i++)
     {
 	I_StartTic ();
 	D_ProcessEvents ();
-	if (maketic - gameticdiv >= BACKUPTICS/2-1)
+	if (maketic - gameticdiv >= most)
 	    break;          // can't hold any more
 	
 	//printf ("mk:%i ",maketic);

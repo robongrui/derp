@@ -24,8 +24,15 @@ int Map_SameRoom(int a, int b);
 /* A line a path crosses, t units along it. One-sided lines have no far sector. */
 typedef struct { float t; line_t *line; sector_t *near, *far; int near_side; } crossing_t;
 
-/* Collects the lines within MAP_REACH of (x, y); cheap to repeat at one spot. */
+/* Collects the lines within MAP_REACH of (x, y); cheap to repeat at one spot.
+   Each thread has its own. */
 void Map_Gather(float x, float y);
+/* Collects the lines within MAP_REACH of every point at most half units
+   (each way) from (x, y): this thread's Map_Gather near there then uses
+   them as they are, until Map_ReleaseBlock. For measuring many points near
+   each other (room_grid.c). */
+void Map_GatherBlock(float x, float y, float half);
+void Map_ReleaseBlock(void);
 /* The gathered lines crossed walking from (x, y) along the unit direction
    (cx, cy) for length units, nearest first; at most max of them. */
 int Map_Cross(float x, float y, float cx, float cy, float length, crossing_t *out, int max);

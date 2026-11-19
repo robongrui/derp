@@ -29,7 +29,8 @@ void Stride_Tic(int player, const mobj_t *mo, const float *shift)
     t->x += Game_ShiftGrew(shift_x, t->shift_x); t->y += Game_ShiftGrew(shift_y, t->shift_y);
     t->z += Game_ShiftGrew(shift_z, t->shift_z);
     t->shift_x = shift_x; t->shift_y = shift_y; t->shift_z = shift_z;
-    int ground = mo->z <= mo->floorz + FRACUNIT / 2;
+    /* Sliding (Game_Sliding), no foot comes down: the stride holds as it does in the air. */
+    int ground = mo->z <= mo->floorz + FRACUNIT / 2 && !Game_Sliding(mo);
     if (mo != t->mo)
     {
         t->mo = mo; t->x = x; t->y = y; t->z = z; t->grounded = ground; t->walked = 0;

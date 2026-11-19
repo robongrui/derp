@@ -42,7 +42,7 @@ void beamGlint(float x,float y,float z,uint32_t seed,float rate,std::array<float
 }
 
 void beamUniforms(Uniforms &camera) {
-    Weather kind=settings.weather?falling():WEATHER_NONE;
+    Weather kind=climateNow().weather?falling():WEATHER_NONE;
     // How much of the open air is round the eye: the whiteout's (whiteout.glsl)
     // and the beam's share of the way indoors (weather.cpp).
     camera.climate[3]=kind!=WEATHER_NONE?openAirRound(camera):0.0f;

@@ -694,6 +694,15 @@ void I_SoundAt(int handle, fixed_t x, fixed_t y, fixed_t z)
   handle = x = y = z = 0;
 }
 
+// The portable mixer gathers a frame's updates; this one takes each at once.
+void I_BeginSoundUpdate(void)
+{
+}
+
+void I_EndSoundUpdate(void)
+{
+}
+
 void I_SoundOwn(void)
 {
 }
@@ -702,6 +711,20 @@ fixed_t I_SoundReach(int id)
 {
   id = 0;
   return FRACUNIT;
+}
+
+int I_LevelSound(void)
+{
+  return 0;
+}
+
+void I_FarSound(int id, fixed_t x, fixed_t y, fixed_t z, int volume)
+{
+  (void)id; (void)x; (void)y; (void)z; (void)volume;
+}
+
+void I_LevelEnding(void)
+{
 }
 
 
@@ -903,6 +926,22 @@ int I_QrySongPlaying(int handle)
   // UNUSED.
   handle = 0;
   return looping || musicdies > gametic;
+}
+
+// A shout at a map point (DERP's soldiers): not in this backend.
+int I_BarkLump(const char* name, fixed_t x, fixed_t y, fixed_t z, int loud, int pitch)
+{
+  name = NULL; x = y = z = 0; loud = 0;
+  return 0;
+}
+
+void I_BarkClear(void)
+{
+}
+
+int I_BarkVoice(void)
+{
+  return 0;
 }
 
 // A sound lump by name (DERP's episode 0.5 ending): not in this backend.

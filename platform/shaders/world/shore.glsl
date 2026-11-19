@@ -4,9 +4,60 @@
 // Shorelines (FEATURE_DAMP_SHORES). Liquids wet what they touch: walls and banks
 // above the waterline turn darker up to a ragged line, read at texel
 // centers so the damp edge steps in whole Doom pixels.
+// The shore map's distances: shoreRange onto the land, shoreReach out over the
+// liquid, where the shore ripples run further than the damp climbs (caustics.cpp).
 const float shoreRange=16.0;
+const float shoreReach=28.0;
 float shoreDistance(vec2 xy) {
-    return textureLod(shore,(xy-c.map.xy)*c.map.z/vec2(textureSize(shore,0)),0.0).r*2.0*shoreRange-shoreRange;
+    return textureLod(shore,(xy-c.map.xy)*c.map.z/vec2(textureSize(shore,0)),0.0).r*(shoreRange+shoreReach)-shoreRange;
+}
+// Shore ripples in the liquid itself: each texel of the liquid asks the shore
+// map how far the shore is and lies on a crest or not. The crests are lines of
+// equal distance from the shore, a wavelength apart, running out and fading by
+// reach, as liquids.cpp draws them in blocks (its numbers, in ripple: wavelength,
+// the clock in periods, reach, strength; a negative wavelength is blood's one
+// still dark line). At texel centers, so a crest is whole texels; at least a
+// texel wide, or a thin one would come and go between two rows. A crest
+// brightens the liquid as shaded by a step, in the liquid's own color.
+vec3 shoreRipple(vec3 color,vec3 world,vec4 ripple,vec4 shape,vec3 liquid,float away) {
+    vec2 at=floor(world.xy)+0.5;
+    float d=shoreDistance(at);
+    if(d<=0.0) return color;
+    bool still=ripple.x<0.0;
+    float r=1.5,level=1.0;
+    if(!still) {
+        // (Phases drift across the map, so one pool's walls do not pulse in lockstep.)
+        float phase=0.35*(sin(at.x*0.011+at.y*0.004)+cos(at.y*0.013-at.x*0.006));
+        float lead=fract(ripple.y+phase);
+        r=1.5+ripple.x*(lead+max(round((d-1.5)/ripple.x-lead),0.0));
+        if(r>ripple.z) return color;
+        level=round((1.0-(r-1.5)/(ripple.z-1.5))*ripple.w*4.0)/4.0;
+        if(level<=0.0) return color;
+    }
+    // As wide as the drawn ripples at least: those are blocks of Doom pixels, never
+    // under one, so from a little way off they are wider than a texel, the more so
+    // on a surface seen at a slant. A texel-wide line there read as fainter. Not
+    // so wide that two crests close up.
+    float pixel=max(dot(world-c.eye.xyz,c.forward.xyz),4.0)/(100.0*c.projection.y);   // map units to a Doom pixel
+    float slant=max(abs(normalize(c.eye.xyz-world).z),0.2);
+    // (And half as wide again: measured against the drawn ones, whose blocks round up
+    // to whole Doom pixels, these covered a third less of the liquid.)
+    float width=max(max(shape.x+r*0.06,1.0)*1.4,pixel/slant);
+    if(!still) width=min(width,ripple.x*0.6);
+    if(abs(d-r)>=width*0.5) return color;
+    // As far as the drawn ones are shown.
+    float shown=1.0-smoothstep(1100.0,1536.0,away);
+    // By the eye's exposure, as the drawn crests are (flat.frag): in a dark room the
+    // eye opens up and they brighten the more; without it these read as fainter.
+    if(!still&&c.effects.z==0.0) shown*=c.fx.x;
+    if(still) return color*mix(1.0,0.55,shown);
+    float peak=max(max(liquid.r,liquid.g),max(liquid.b,0.01));
+    vec3 lift=level*level*(0.88+0.12*liquid/peak)*shown;
+    // The crest at the wall half as much again: drawn, its blocks lie over one another
+    // there and brighten twice in places (measured: up to 1.5 times the liquid where
+    // the others are 1.2).
+    // It is the line the eye takes the ripples by; without it they read as faint.
+    return r<1.5+ripple.x?color*pow(1.0+lift,vec3(1.5)):color*(1.0+lift);
 }
 uvec4 shoreCell(vec2 xy) {
     ivec2 size=textureSize(shore,0);

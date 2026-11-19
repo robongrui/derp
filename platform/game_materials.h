@@ -11,6 +11,9 @@ extern "C" {
 /* What in the artwork glows: a DOOM_EMISSIVE_* kind (emissive.h), whose
    pixel rule then picks the glowing pixels. flat: 1 for flats. */
 int Game_GlowKind(const char *name, int flat);
+/* Plain paint that glows only where its sector is lit well above the rooms
+   beside it (lit_paint.cpp decides which sectors). */
+int Game_PaintLamp(const char *name, int flat);
 /* Machinery that throws electric sparks when shot, glowing or not. */
 int Game_SparkTexture(const char *name, int flat);
 /* Textures that may hold monitor screens; the pixels decide where. */

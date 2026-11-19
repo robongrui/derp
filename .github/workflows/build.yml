@@ -47,6 +47,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      - name: Install the shader compilers
+        run: sh scripts/install-shader-tools.sh
       - name: Configure SDL and the 3D renderer
         run: cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON
       - name: Build playable app
@@ -68,7 +70,10 @@ jobs:
           sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libxrandr-dev
           libxcursor-dev libxi-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev
           wayland-protocols libdecor-0-dev libegl-dev libdrm-dev libgbm-dev libudev-dev libdbus-1-dev
-          libasound2-dev libpulse-dev glslang-tools spirv-cross
+          libasound2-dev libpulse-dev
+      - name: Install the shader compilers
+        shell: bash
+        run: sh scripts/install-shader-tools.sh
       - name: Configure SDL and the SDL_gpu renderer
         run: cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release -DDOOM_BUILD_SDL=ON
       - name: Build playable app

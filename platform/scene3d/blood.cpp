@@ -37,24 +37,28 @@ byte bloodRemap(byte index,int tint) {
     return remap[tint][index];
 }
 static std::vector<byte> bloodShades[BLOOD_TINTS];static bool bloodShadesLoaded=false;
+// Blood's shades, dark to bright: real blood's colours, not the blood sprite's bright cartoon reds (the user:
+// the palette was too bright, its hue off). From deoxygenated (pooled, a deep 52,4,4) to oxygenated (fresh,
+// 150,14,12), each step the palette's nearest colour, so it stays the game's own; the other tints are the
+// red's channels turned (bloodRemap).
 const std::vector<byte> &bloodPalette(int tint) {
     tint=std::clamp(tint,0,BLOOD_TINTS-1);
     if(bloodShadesLoaded)return bloodShades[tint];
     bloodShadesLoaded=true;
-    int sprite=Game_Sprite(GAME_SPRITE_BLOOD);
-    if(sprite<0||sprite>=numsprites)return bloodShades[tint];
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
-    std::vector<std::pair<float,byte>> pixels;
-    const auto &blood=sprites[sprite];
-    for(int frame=0;frame<blood.numframes;++frame) {
-        const Image &image=lumpImage(firstspritelump+blood.spriteframes[frame].lump[0],false);
-        for(size_t i=0;i+1<image.pixels.size();i+=2) if(image.pixels[i+1]) {
-            const byte *rgb=palette+image.pixels[i]*3;
-            pixels.push_back({0.299f*rgb[0]+0.587f*rgb[1]+0.114f*rgb[2],image.pixels[i]});
+    if(!palette)return bloodShades[tint];
+    static const float dark[3]={52,4,4},bright[3]={150,14,12};
+    constexpr int steps=24;
+    for(int k=0;k<steps;++k) {
+        float t=k/(float)(steps-1),want[3];
+        for(int c=0;c<3;++c)want[c]=dark[c]+(bright[c]-dark[c])*t;
+        int best=0;float bestDistance=1e30f;
+        for(int n=0;n<256;++n) {
+            float dr=palette[n*3]-want[0],dg=palette[n*3+1]-want[1],db=palette[n*3+2]-want[2],d=dr*dr*2+dg*dg*4+db*db*3;
+            if(d<bestDistance) {bestDistance=d;best=n;}
         }
+        for(int t2=0;t2<BLOOD_TINTS;++t2)bloodShades[t2].push_back(bloodRemap((byte)best,t2));
     }
-    std::sort(pixels.begin(),pixels.end());
-    for(const auto &pixel:pixels)for(int t=0;t<BLOOD_TINTS;++t)bloodShades[t].push_back(bloodRemap(pixel.second,t));
     return bloodShades[tint];
 }
 bool bloodOn() {return settings.blood&&gamestate==GS_LEVEL&&!floors.empty()&&!bloodPalette().empty();}
@@ -94,11 +98,11 @@ Image &bloodSpriteImage(int lump,int tint) {
     auto normals=spriteNormals(source.width,source.height,pixels.data());
     return images.emplace(key,upload(source.width,source.height,pixels.data(),source.left,source.top,nullptr,normals.data())).first->second;
 }
-Image &splatArt(int key,int variant,const std::function<void(float,float,byte&,byte&)> &paint,bool glows) {
+Image &splatArt(int key,int variant,const std::function<void(float,float,byte&,byte&)> &paint,bool glows,int look) {
     auto found=images.find(key);if(found!=images.end())return found->second;
-    uint32_t seed=hash32(variant*7919u+17u);
+    uint32_t seed=hash32(variant*7919u+17u+(uint32_t)look*104729u);
     int width=variant==splatPool?64:variant==splatDrip?3:variant==splatSmear?32:variant>=splatSpeckFirst?8:32;
-    int height=variant==splatDrip?40:variant==splatSmear?16:width;
+    int height=variant==splatDrip?128:variant==splatSmear?16:width;
     std::vector<byte> pixels((size_t)width*height*2,0),mask(glows?(size_t)width*height:0,0);
     auto put=[&](int x,int y,float shade,float out=1) {
         if(x<0||y<0||x>=width||y>=height)return;
@@ -107,11 +111,20 @@ Image &splatArt(int key,int variant,const std::function<void(float,float,byte&,b
         if(glows)mask[i]=glow;
     };
     if(variant==splatDrip) {
-        // A run one texel wide down to a bead three wide: drawn from the
-        // bottom up as it grows, so the bead leads.
-        for(int y=0;y<height-4;++y)put(1,y,0.22f+0.12f*valueNoise(0,(float)y,3,seed));
-        for(int y=height-4;y<height;++y)for(int x=0;x<3;++x)
-            if(x==1||(y>height-4&&y<height-1))put(x,y,x==1&&y==height-3?0.6f:0.4f);
+        // A run one texel wide, now and then stepping a column aside as it finds its way down the wall
+        // (both columns on that row, so it stays joined), its head a texel wider on one side and darker
+        // than the run: more blood gathers there. The head was a 3x2 block, lighter than the run and with a
+        // painted highlight: it read as a bubble (the user); the wet coat glints instead (blood_material.glsl).
+        // look picks the side and the steps. Drawn from the bottom up as it grows, so the head leads.
+        int side=look&1?1:-1,x=1;
+        int stepA=16+(int)(hashUnit(1,0,seed)*14),stepB=stepA+20+(int)(hashUnit(2,0,seed)*30);
+        for(int y=height-4;y>=0;--y) {
+            int up=height-1-y;
+            float shade=0.22f+0.12f*valueNoise(0,(float)y,3,seed);
+            put(x,y,shade);
+            if(up==stepA||up==stepB) {x=std::clamp(x+(hashUnit(up,1,seed)<0.5f?1:-1),0,2);put(x,y,shade);}
+        }
+        put(1,height-3,0.14f);put(1,height-2,0.1f);put(1+side,height-2,0.18f);put(1,height-1,0.16f);
     } else if(variant==splatSmear) {
         // Dragged blood: thick where the body was, thinning to streaks
         // along the drag, broken where the streaks run dry.
@@ -165,13 +178,26 @@ static int bloodKey(int variant,int tint) {return bloodKeyBase+tint*16+variant;}
 static Image &bloodImage(int variant,int tint) {
     return splatArt(bloodKey(variant,tint),variant,[tint](float shade,float,byte &index,byte &){index=bloodIndex(shade,tint);},false);
 }
+// A tint's run pictures, keyed after its variants (tint*16 plus 10 to 13).
+DripLooks bloodDrips(int tint) {
+    DripLooks drips;
+    for(int look=0;look<dripLooks;++look) {
+        drips.key[look]=bloodKeyBase+tint*16+10+look;
+        drips.image[look]=&splatArt(drips.key[look],splatDrip,[tint](float shade,float,byte &index,byte &){index=bloodIndex(shade,tint);},false,look);
+    }
+    return drips;
+}
+int dripLook(const WallSplat &d,int n) {
+    return (int)(hash32((uint32_t)std::lround(d.along*8)*2654435761u^(uint32_t)std::lround(d.dz*8)*40503u^(uint32_t)(n+1)*97u)%dripLooks);
+}
 int splatVariant(int kind) {
     int pick=int(randomRange(0,4));
     return kind==BLOOD_SPECK?splatSpeckFirst+pick%splatSpecks:kind==BLOOD_SMEAR?splatSmear:1+pick%splatSplats;
 }
-struct BloodFloor { float x,y,born,size,angle,stretch;int sector,variant;bool flip,ceiling;int tint; };
+// angle and stretch: its way and stretch, drawn into its picture (blood_art.cpp); orient: a round one's turn
+struct BloodFloor { float x,y,born,size,angle,stretch;int sector,variant;bool flip,ceiling;int tint;int orient=0,seed=0; };
 using BloodWall=WallSplat;
-struct BloodPool { float x,y,born,size,angle;int sector,tint; };
+struct BloodPool { float x,y,born,size,angle;int sector,tint;float seconds=4;int orient=0,seed=0;bool spilled=false; };
 static std::vector<BloodFloor> bloodFloors;static std::vector<BloodWall> bloodWalls;static std::vector<BloodPool> bloodPools;
 static std::unordered_map<const mobj_t*,bool> pooledCorpses;
 static unsigned bloodLevelSerial;
@@ -185,7 +211,7 @@ void bloodFloorSplat(float x,float y,int sector,float size,float angle,float str
     checkBloodLevel();
     if(bloodFloors.size()>=maxFloorBlood)bloodFloors.erase(bloodFloors.begin());
     bloodFloors.push_back({x,y,born,size,angle,std::max(1.0f,stretch),sector,splatVariant(kind),kind!=BLOOD_SMEAR&&randomRange(0,1)<0.5f,ceiling,
-                           std::clamp(tint,0,BLOOD_TINTS-1)});
+                           std::clamp(tint,0,BLOOD_TINTS-1),(int)randomRange(0,8),(int)randomRange(0,4)});
 }
 bool placeWallSplat(const WallHit &hit,float x,float y,float z,float size,float stretch,float born,int variant,bool drips,WallSplat &wall) {
     WallSpan span;if(!wallSpan(lines[hit.line],hit.side,hit.section,span))return false;
@@ -200,11 +226,23 @@ bool placeWallSplat(const WallHit &hit,float x,float y,float z,float size,float 
     }
     return true;
 }
-void bloodWallSplat(const WallHit &hit,float x,float y,float z,float size,float stretch,float born,int kind,bool drips,int tint) {
+void bloodWallSplat(const WallHit &hit,float x,float y,float z,float size,float stretch,float born,int kind,bool drips,int tint,
+                    const float *velocity) {
     if(!bloodOn())return;
     checkBloodLevel();
     BloodWall wall;
     if(!placeWallSplat(hit,x,y,z,size,stretch,born,splatVariant(kind),drips,wall))return;
+    // A glancing drop streaks the way it went over the wall (along it and up or down), drawn so in its
+    // picture; one with no way given, along the wall either way. A round one: one of the grid's turns.
+    wall.stretchStep=bloodStretchStep(stretch);wall.seed=(int)randomRange(0,4);
+    if(wall.stretchStep>0) {
+        WallSpan span;float angle=randomRange(0,1)<0.5f?0:doomPi;
+        if(velocity&&wallSpan(lines[hit.line],hit.side,hit.section,span)) {
+            float ex=span.b.x-span.a.x,ey=span.b.y-span.a.y,len=std::max(1e-3f,std::hypot(ex,ey));
+            angle=std::atan2(velocity[2],(velocity[0]*ex+velocity[1]*ey)/len);
+        }
+        wall.dir=bloodDirection(angle);
+    } else wall.orient=(int)randomRange(0,8);
     wall.tint=std::clamp(tint,0,BLOOD_TINTS-1);
     if(bloodWalls.size()>=maxWallBlood)bloodWalls.erase(bloodWalls.begin());
     bloodWalls.push_back(wall);
@@ -235,6 +273,17 @@ void bloodHit(mobj_t *target,mobj_t *shooter,fixed_t fx,fixed_t fy,fixed_t fz,fi
     shotThrough(target,fx,fy,fz,fdx,fdy,damage);
     bodyHit(target,fx,fy,fz,fdx,fdy,damage);
     woundHit(target,fx,fy,fz,fdx,fdy,slope,damage,shooter);
+    // Struck where its body is armour or bare bone (the revenant: woundLastMaterial): sparks off the metal, chips
+    // off the bone and next to no blood.
+    int material=woundLastMaterial();
+    if(material!=WOUND_FLESH) {
+        float x=units(fx),y=units(fy),z=units(fz),dx=units(fdx),dy=units(fdy),length=std::hypot(dx,dy);
+        if(length<0.001f)return;
+        dx/=length;dy/=length;
+        if(material==WOUND_METAL)metalSparks(x,y,z,-dx,-dy,damage);
+        else if(bloodOn()&&settings.bloodSpray)sprayBone(target,x,y,z,dx,dy,units(slope),damage);
+        return;
+    }
     if(!bloodOn())return;
     checkBloodLevel();
     int tint=bloodTint(target);
@@ -242,6 +291,8 @@ void bloodHit(mobj_t *target,mobj_t *shooter,fixed_t fx,fixed_t fy,fixed_t fz,fi
     float x=units(fx),y=units(fy),z=units(fz),dx=units(fdx),dy=units(fdy),length=std::hypot(dx,dy);
     if(length<0.001f)return;
     dx/=length;dy/=length;
+    // Gore: a blade or a fist in it brings the blood back onto itself.
+    if(settings.bloodSpray&&goreOn()&&shooter==players[consoleplayer].mo)if(int melee=Game_MeleeWeapon(shooter))gunBloodMelee(tint,melee==2);
     if(settings.bloodSpray)sprayHit(target,x,y,z,dx,dy,units(slope),damage);
     else placeSplats(x,y,z,dx,dy,damage,tint);
 }
@@ -281,7 +332,7 @@ void flatSplat(int key,const Image &image,int sectorIndex,float cx,float cy,floa
     }
 }
 // A wall splat with its drips, lit like the wall; not drawn from behind.
-void drawWallSplat(const WallSplat &d,int key,const Image &image,int dripKey,const Image &drip,float dark,float wash,float glow,
+void drawWallSplat(const WallSplat &d,int key,const Image &image,const DripLooks &drips,float dark,float wash,float glow,
                    float now,const Uniforms &camera) {
     WallSpan span;if(!wallSpan(lines[d.line],d.side,d.section,span))return;
     float ex=span.b.x-span.a.x,ey=span.b.y-span.a.y,len=std::hypot(ex,ey);
@@ -306,25 +357,30 @@ void drawWallSplat(const WallSplat &d,int key,const Image &image,int dripKey,con
     quad(batches[key],vertex(u0,z1,texU(u0),texV(z1)),vertex(u1,z1,texU(u1),texV(z1)),
          vertex(u1,z0,texU(u1),texV(z0)),vertex(u0,z0,texU(u0),texV(z0)));
     // Drips run down from the splat's lower half over three seconds,
-    // slowing, in four-tic steps: the bead leads, the run follows.
+    // slowing, in four-tic steps: the head leads, the run follows.
     // (On Phobos nothing pulls them down.)
     for(int n=0;n<(Game_Phobos()?0:d.drips);++n) {
+        int look=dripLook(d,n);
+        if(!drips.image[look])continue;
+        const Image &drip=*drips.image[look];
         float age=std::floor((now-d.born-0.3f)*TICRATE/4)*4/TICRATE;
         if(age<=0)continue;
         float grow=std::min(1.0f,age/3),length=std::round(d.dripLength[n]*(1-(1-grow)*(1-grow))),u=d.along+d.dripU[n];
         float top=zc-h*0.35f,bottom=std::max(span.bottom,top-length);
         if(length<1||top<=bottom||u<0.5f||u>len-1.5f)continue;
         float shown=std::min((float)drip.height,top-bottom);
-        quad(batches[dripKey],vertex(u,top,0,drip.height-shown),vertex(u+drip.width,top,(float)drip.width,drip.height-shown),
+        quad(batches[drips.key[look]],vertex(u,top,0,drip.height-shown),vertex(u+drip.width,top,(float)drip.width,drip.height-shown),
              vertex(u+drip.width,bottom,(float)drip.width,(float)drip.height),vertex(u,bottom,0,(float)drip.height));
     }
 }
-// Wet blood steps from glossy to matte, darkening as it dries; values move
-// in quarters and eighths at tic-rate ages, never smoothly.
+// Fresh blood glistens, then goes matte, in quarter steps at tic-rate ages. Its colour doesn't age: one fixed
+// palette, a stain's darkness only how much blood lies there (the user, after a friend's advice: fresh hits
+// should stand out by their gloss, old stains not sink toward black; on the merged layers a tile wetted again
+// lightened its old blood with it).
 static void bloodAge(float age,float wetFor,float dryOver,float &wet,float &dark) {
     float fresh=std::clamp(1-(age-wetFor)/dryOver,0.0f,1.0f);
     wet=settings.bloodShine?std::ceil(fresh*4)/4:0;
-    dark=1-std::round((1-fresh)*0.28f*8)/8;
+    dark=1;
 }
 // Rained on (under the open sky, or on the floor a broken window lets the
 // rain soak), blood never dries dark: it pales over 6 seconds, its red
@@ -335,7 +391,7 @@ static void bloodAge(float age,float wetFor,float dryOver,float &wet,float &dark
 // (world.frag): the pale step (0-4) times two plus how much is washed away
 // (in eighths, below 1); 2 or more with the wash at 1: gone.
 static bool rainedOn(int sector,float x,float y) {
-    if(!settings.weather||weatherNow(WEATHER_RAIN)<=0.01f)return false;
+    if(!climateNow().weather||weatherNow(WEATHER_RAIN)<=0.01f)return false;
     return underSky(sector)||rainSoaked(sector,x,y);
 }
 static float rainWash(bool rained,float age,float &dark,float &spread) {
@@ -379,6 +435,75 @@ static bool boiling(int sector,float age,float x,float y,float z,float size,floa
     }
     return true;
 }
+void bloodLayerAge(float age,float &wet,float &dark) {bloodAge(age,0,1.5f,wet,dark);}
+float bloodLayerWash(bool rained,float age,float &dark) {float spread;return rainWash(rained,age,dark,spread);}
+bool bloodLayerRained(int sector,float x,float y) {return rainedOn(sector,x,y);}
+// How much blood a landed splat paints into its surface's layer (blood_layer.cpp).
+static int layerAmount(int variant) {return variant==splatSmear?50:variant>=splatSpeckFirst&&variant<splatSpeckFirst+splatSpecks?70:110;}
+// Every pool is laid here, born now or later (blood on its way). volume: how much blood it has to give, which
+// its size can outgrow when it spreads to an edge (blood_spill.cpp). One spill to a place, however many pools
+// a body lays there.
+static void addPool(float x,float y,float born,float size,int sector,int tint,float seconds,float volume) {
+    bool spilled=false;
+    for(const auto &pool:bloodPools)
+        if(pool.spilled&&pool.sector==sector&&pool.tint==tint&&std::hypot(x-pool.x,y-pool.y)<16) {spilled=true;break;}
+    bool spills=!spilled&&bloodSpill(x,y,sector,born,seconds,size,volume,tint);
+    if(bloodPools.size()>=64)bloodPools.erase(bloodPools.begin());
+    bloodPools.push_back({x,y,born,size,randomRange(0,2*doomPi),sector,tint,seconds,(int)randomRange(0,8),(int)randomRange(0,4),spills});
+}
+void bloodPoolLaid(float x,float y,float born,float size,float seconds,int tint,float volume) {
+    int sector=(int)(R_PointInSubsector((fixed_t)(x*FRACUNIT),(fixed_t)(y*FRACUNIT))->sector-sectors);
+    if(sectors[sector].floorpic==skyflatnum)return;
+    // In a liquid no pool lies: it clouds the water, nukage swallows it (blood_liquids.cpp).
+    if((size_t)sector<sectorMist.size()&&sectorMist[sector].liquid&&!waterIceHolds(x,y)) {bloodLiquidLand(x,y,sector,size*0.6f,born,tint);return;}
+    addPool(x,y,born,size,sector,tint,seconds,volume);
+}
+void bloodPoolAt(float x,float y,float size,float seconds,int tint) {
+    if(!settings.blood||bloodPalette().empty())return;
+    checkBloodLevel();
+    bloodPoolLaid(x,y,gameSeconds(),size,seconds,tint,size);
+}
+void bloodWallAdd(WallSplat &wall,int tint) {
+    wall.tint=std::clamp(tint,0,BLOOD_TINTS-1);wall.orient=(int)randomRange(0,8);wall.seed=(int)randomRange(0,4);
+    if(bloodWalls.size()>=maxWallBlood)bloodWalls.erase(bloodWalls.begin());
+    bloodWalls.push_back(wall);
+}
+// A stump's stream gathering on the floor: drops landing near a pool grow it (to 110 units at most); drops
+// landing together where there is none gather, and once enough have, start one there (their middle).
+struct Gathering { float x,y,amount,last;int tint; };
+static std::vector<Gathering> gatherings;
+static unsigned gatheringSerial;
+void bloodPoolFeed(float x,float y,float splat,float born,int tint) {
+    if(!settings.blood||bloodPalette().empty()||splat<=0)return;
+    checkBloodLevel();
+    if(gatheringSerial!=r_levelserial) {gatherings.clear();gatheringSerial=r_levelserial;}
+    for(auto &pool:bloodPools)
+        if(pool.tint==tint&&std::hypot(x-pool.x,y-pool.y)<0.45f*pool.size) {pool.size=std::min(110.0f,pool.size+splat*0.12f);return;}
+    gatherings.erase(std::remove_if(gatherings.begin(),gatherings.end(),[&](const Gathering &g){return born-g.last>3;}),gatherings.end());
+    for(auto it=gatherings.begin();it!=gatherings.end();++it) {
+        Gathering &g=*it;
+        if(g.tint!=tint||std::hypot(x-g.x,y-g.y)>20)continue;
+        g.x=(g.x*g.amount+x*splat)/(g.amount+splat);g.y=(g.y*g.amount+y*splat)/(g.amount+splat);
+        g.amount+=splat;g.last=std::max(g.last,born);
+        if(g.amount<60)return;
+        int sector=(int)(R_PointInSubsector((fixed_t)(g.x*FRACUNIT),(fixed_t)(g.y*FRACUNIT))->sector-sectors);
+        if(sectors[sector].floorpic!=skyflatnum)addPool(g.x,g.y,born,24,sector,tint,3,24);
+        gatherings.erase(it);
+        return;
+    }
+    if(gatherings.size()>=32)gatherings.erase(gatherings.begin());
+    gatherings.push_back({x,y,splat,born,tint});
+}
+// A pool under (x,y), as far as it has spread (gore's squelching steps).
+bool bloodPoolUnder(float x,float y) {
+    float now=gameSeconds();
+    for(const auto &pool:bloodPools) {
+        if(now<pool.born)continue;
+        float grow=0.3f+0.7f*std::min(1.0f,std::floor((now-pool.born)*2)/(2*pool.seconds));
+        if(std::hypot(x-pool.x,y-pool.y)<0.4f*pool.size*grow)return true;
+    }
+    return false;
+}
 void buildBlood(const Uniforms &camera) {
     if(!settings.blood||bloodPalette().empty())return;
     checkBloodLevel();
@@ -391,29 +516,59 @@ void buildBlood(const Uniforms &camera) {
         if(seen!=pooledCorpses.end()) {seen->second=true;continue;}
         if(thing->z>thing->floorz||thing->momx||thing->momy||sectors[i].floorpic==skyflatnum)continue;
         pooledCorpses[thing]=true;
-        if(bloodPools.size()>=64)bloodPools.erase(bloodPools.begin());
-        bloodPools.push_back({units(thing->x),units(thing->y),now,std::clamp(units(thing->radius)*2.4f,28.0f,64.0f),randomRange(0,2*doomPi),i,bloodTint(thing)});
+        if(woundsOnlyBurnt(thing))continue;   // burnt shut: nothing runs out of it
+        if((size_t)i<sectorMist.size()&&sectorMist[i].liquid&&!waterIceHolds(units(thing->x),units(thing->y))) {   // a body in the water clouds it
+            bloodLiquidLand(units(thing->x),units(thing->y),i,std::clamp(units(thing->radius)*1.6f,16.0f,40.0f),now,bloodTint(thing));
+            continue;
+        }
+        float size=std::clamp(units(thing->radius)*2.4f,28.0f,64.0f);
+        addPool(units(thing->x),units(thing->y),now,size,i,bloodTint(thing),4,size);
     }
     for(auto it=pooledCorpses.begin();it!=pooledCorpses.end();) it=it->second?std::next(it):pooledCorpses.erase(it);
     for(const auto &pool:bloodPools) {
         float age=now-pool.born;
-        // The pool spreads over four seconds in eight steps.
-        float grow=0.3f+0.7f*std::min(1.0f,std::floor(age*2)/8);
+        if(age<0)continue;   // fed by drops still on their way
+        // The pool spreads over its seconds (a corpse's four) in steps of half a second.
+        float grow=0.3f+0.7f*std::min(1.0f,std::floor(age*2)/(2*pool.seconds));
         float wet,dark;bloodAge(age,4,6,wet,dark);
         boiling(pool.sector,age,pool.x,pool.y,floorZ(&sectors[pool.sector]),pool.size*grow,0,0,1,camera,wet,dark,pool.tint);
         float spread,wash=rainWash(rainedOn(pool.sector,pool.x,pool.y),age,dark,spread);
         if(wash<0)continue;
-        flatSplat(bloodKey(splatPool,pool.tint),bloodImage(splatPool,pool.tint),pool.sector,pool.x,pool.y,pool.size*grow*spread,pool.angle,1,false,false,wet,dark,wash,0,camera);
+        int key;const Image &art=bloodArt(splatPool,pool.seed,pool.size*grow*spread,0,0,pool.tint,key);
+        gridFloorSplat(key,art,pool.sector,pool.x,pool.y,pool.orient,false,wet,dark,wash,camera);
     }
     bloodFloors.erase(std::remove_if(bloodFloors.begin(),bloodFloors.end(),[&](const BloodFloor &d){return now-d.born>180;}),bloodFloors.end());
+    // Landed splats are painted into the surfaces' blood layers (blood_layer.cpp) and go: overlapping ones
+    // become one stain. (On Phobos after their boiling, which is each splat's own.)
+    float settled=Game_Phobos()?boilFor:0;
+    bloodFloors.erase(std::remove_if(bloodFloors.begin(),bloodFloors.end(),[&](const BloodFloor &d) {
+        if(now<d.born+settled)return false;
+        int stretch=bloodStretchStep(d.stretch),key;bool way=stretch>0||d.variant==splatSmear;
+        const Image &art=bloodArt(d.variant,d.seed,d.size,way?bloodDirection(d.angle):0,stretch,d.tint,key);
+        bloodLayerFloor(d.sector,d.ceiling,d.tint,d.x,d.y,art,way?0:d.orient,layerAmount(d.variant),d.born);
+        return true;
+    }),bloodFloors.end());
+    for(auto &d:bloodWalls) {
+        if(d.merged||now<d.born+settled)continue;
+        int key;const Image &art=bloodArt(d.variant,d.seed,d.size,d.dir,d.stretchStep,d.tint,key);
+        bloodLayerWall(d,art,layerAmount(d.variant));
+        d.merged=true;
+    }
+    bloodWalls.erase(std::remove_if(bloodWalls.begin(),bloodWalls.end(),[](const BloodWall &d){return d.merged&&!d.drips;}),bloodWalls.end());
+    buildBloodLayer(camera,now);
+    buildGlassBlood(camera,now);
+    buildBloodLiquids(camera);
     for(const auto &d:bloodFloors) {
         if(now<d.born)continue;
         if(d.ceiling?camera.eye[2]>ceilZ(&sectors[d.sector]):camera.eye[2]<floorZ(&sectors[d.sector]))continue; // Back of the flat.
-        float wet,dark;bloodAge(now-d.born,0,3,wet,dark);
+        float wet,dark;bloodAge(now-d.born,0,1.5f,wet,dark);
         boiling(d.sector,now-d.born,d.x,d.y,d.ceiling?ceilZ(&sectors[d.sector]):floorZ(&sectors[d.sector]),d.size,0,0,d.ceiling?-1.0f:1.0f,camera,wet,dark,d.tint);
         float spread,wash=rainWash(!d.ceiling&&rainedOn(d.sector,d.x,d.y),now-d.born,dark,spread);
         if(wash<0)continue;
-        flatSplat(bloodKey(d.variant,d.tint),bloodImage(d.variant,d.tint),d.sector,d.x,d.y,d.size*spread,d.angle,d.stretch,d.flip,d.ceiling,d.ceiling?0:wet,dark,wash,0,camera);
+        // Its way drawn in when it has one (a streak, a smear); a round one turned one of the grid's ways.
+        int stretch=bloodStretchStep(d.stretch),key;bool way=stretch>0||d.variant==splatSmear;
+        const Image &art=bloodArt(d.variant,d.seed,d.size*spread,way?bloodDirection(d.angle):0,stretch,d.tint,key);
+        gridFloorSplat(key,art,d.sector,d.x,d.y,way?0:d.orient,d.ceiling,d.ceiling?0:wet,dark,wash,camera);
     }
     // Wall splats stay matte; thin spray doesn't glint believably.
     bloodWalls.erase(std::remove_if(bloodWalls.begin(),bloodWalls.end(),[&](const BloodWall &d){return now-d.born>180;}),bloodWalls.end());
@@ -422,18 +577,20 @@ void buildBlood(const Uniforms &camera) {
         WallSpan span;if(!wallSpan(lines[d.line],d.side,d.section,span))continue;
         float ex=span.b.x-span.a.x,ey=span.b.y-span.a.y,len=std::hypot(ex,ey);
         if(len<1||ex*(camera.eye[1]-span.a.y)-ey*(camera.eye[0]-span.a.x)>0)continue; // Back of the wall.
-        float wet,dark;bloodAge(now-d.born,0,3,wet,dark);
+        float wet,dark;bloodAge(now-d.born,0,1.5f,wet,dark);
         const line_t &line=lines[d.line];const sector_t *front=sides[line.sidenum[d.side]].sector;
         boiling(int(front-sectors),now-d.born,span.a.x+ex/len*d.along,span.a.y+ey/len*d.along,span.anchor+d.dz,d.size,
                             ey/len,-ex/len,0,camera,wet,dark,d.tint);
-        float spread,wash=rainWash(settings.weather&&weatherNow(WEATHER_RAIN)>0.01f&&underSky(int(front-sectors)),now-d.born,dark,spread);
+        float spread,wash=rainWash(climateNow().weather&&weatherNow(WEATHER_RAIN)>0.01f&&underSky(int(front-sectors)),now-d.born,dark,spread);
         if(wash<0)continue;
-        drawWallSplat(d,bloodKey(d.variant,d.tint),bloodImage(d.variant,d.tint),bloodKey(splatDrip,d.tint),bloodImage(splatDrip,d.tint),dark,wash,0,now,camera);
+        int key;const Image &art=bloodArt(d.variant,d.seed,d.size*spread,d.dir,d.stretchStep,d.tint,key);
+        gridWallSplat(d,key,art,bloodDrips(d.tint),dark,wash,now,camera);
     }
 #ifdef DOOM_DEVTOOLS
     devBlood(camera);
 #endif
     buildSpray(camera);
+    buildTearFibres(camera);
 }
 // Stepped with the game's wrap (carried.cpp): onto the floors and walls built
 // alike; what lands off the map has left with the rest.
@@ -444,11 +601,15 @@ void bloodCarried(float dx,float dy) {
     bloodFloors.erase(std::remove_if(bloodFloors.begin(),bloodFloors.end(),[](const BloodFloor &d){return d.sector<0;}),bloodFloors.end());
     bloodPools.erase(std::remove_if(bloodPools.begin(),bloodPools.end(),[](const BloodPool &d){return d.sector<0;}),bloodPools.end());
     bloodWalls.erase(std::remove_if(bloodWalls.begin(),bloodWalls.end(),[](const BloodWall &d){return d.line<0;}),bloodWalls.end());
+    bloodLayerShutdown();   // the layers aren't carried: what lay there goes
 }
 void bloodShutdown() {
+    bloodLayerShutdown();
+    bloodLiquidsShutdown();
     bloodFloors.clear();bloodWalls.clear();bloodPools.clear();pooledCorpses.clear();spilledTints.clear();
     for(auto &shades:bloodShades)shades.clear();
     bloodShadesLoaded=false;
     sprayShutdown();
+    tearsShutdown();
 }
 } // namespace doom3d

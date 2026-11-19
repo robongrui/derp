@@ -35,6 +35,19 @@ rcsid[] = "$Id: p_enemy.c,v 1.5 1997/02/03 22:45:11 b1 Exp $";
 #include "doomdef.h"
 #include "p_local.h"
 #include "p_phobos.h"
+#include "p_senses.h"
+#include "p_brain.h"
+#include "p_tactics.h"
+#include "p_gunwalk.h"
+#include "p_charge.h"
+#include "p_demons.h"
+#include "p_strides.h"
+#include "p_derp.h"
+#include "p_fire.h"
+#include "p_barks.h"
+#include "p_difficulty.h"
+#include "p_bullets.h"
+#include "p_rounds.h"
 #include "p_library.h"
 
 #include "s_sound.h"
@@ -165,6 +178,9 @@ P_NoiseAlert
 {
     if (P_Unseen (target))
 	return;
+    // DERP's monsters hear a gun by how loud it is, through what is between.
+    if (P_DerpNoiseAlert (target, emmiter))
+	return;
     soundtarget = target;
     validcount++;
     P_RecursiveSound (emmiter->subsector->sector, 0);
@@ -257,7 +273,7 @@ boolean P_CheckMissileRange (mobj_t* actor)
     if (P_Random () < dist)
 	return false;
 		
-    return true;
+    return P_DerpTrigger ();
 }
 
 
@@ -276,6 +292,7 @@ boolean P_Move (mobj_t*	actor)
 {
     fixed_t	tryx;
     fixed_t	tryy;
+    fixed_t	step;
     
     line_t*	ld;
     
@@ -300,8 +317,21 @@ boolean P_Move (mobj_t*	actor)
 	&& (actor->z - actor->floorz > 24*FRACUNIT || !P_Booted (actor)))
 	return false;
 		
-    tryx = actor->x + actor->info->speed*xspeed[actor->movedir];
-    tryy = actor->y + actor->info->speed*yspeed[actor->movedir];
+    // Thrown off its feet (DERP): nothing to walk on until it lands.
+    if (P_DerpAirborne (actor))
+	return false;
+
+    // Not onto a floor that hurts, by any step but its route's.
+    step = P_DerpStep (actor);
+    if (P_DerpKeepsOut (actor, actor->x + FixedMul (step, xspeed[actor->movedir]),
+			actor->y + FixedMul (step, yspeed[actor->movedir])))
+	return false;
+
+    // DERP's monsters walk this step out over the tics (p_strides.h).
+    P_DerpStepping (actor);
+    step = P_DerpStep (actor);
+    tryx = actor->x + FixedMul (step, xspeed[actor->movedir]);
+    tryy = actor->y + FixedMul (step, yspeed[actor->movedir]);
 
     try_ok = P_TryMove (actor, tryx, tryy);
 
@@ -331,7 +361,8 @@ boolean P_Move (mobj_t*	actor)
 	    // if the special is not a door
 	    // that can be opened,
 	    // return false
-	    if (P_UseSpecialLine (actor, ld,0))
+	    // (DERP: a door already up is no step taken; the frame stopped it)
+	    if (P_UseSpecialLine (actor, ld,0) && !P_DerpDoorUp (actor, ld))
 		good = true;
 	}
 	return good;
@@ -344,7 +375,8 @@ boolean P_Move (mobj_t*	actor)
 	
     if (! (actor->flags & MF_FLOAT) )	
 	actor->z = actor->floorz;
-    return true; 
+    P_DerpStepped (actor, tryx, tryy);
+    return true;
 }
 
 
@@ -617,39 +649,13 @@ void A_KeenDie (mobj_t* mo)
 // A_Look
 // Stay in state until a player is sighted.
 //
-void A_Look (mobj_t* actor)
+//
+// P_SeeYou
+// The sight sound and the chase: a monster has seen its target.
+//
+void P_SeeYou (mobj_t* actor)
 {
-    mobj_t*	targ;
-	
-    // The library's people mind nobody until hurt.
-    if (P_LibraryIndifferent (actor))
-	return;
-
-    actor->threshold = 0;	// any shot will wake up
-    targ = actor->subsector->sector->soundtarget;
-
-    if (targ
-	&& (targ->flags & MF_SHOOTABLE)
-	&& !P_Unseen (targ) )
-    {
-	actor->target = targ;
-
-	if ( actor->flags & MF_AMBUSH )
-	{
-	    if (P_CheckSight (actor, actor->target))
-		goto seeyou;
-	}
-	else
-	    goto seeyou;
-    }
-	
-	
-    if (!P_LookForPlayers (actor, false) )
-	return;
-		
-    // go into chase state
-  seeyou:
-    if (actor->info->seesound)
+    if (actor->info->seesound && !P_DerpCry (actor, BARK_IMPSEES))
     {
 	int		sound;
 		
@@ -685,6 +691,46 @@ void A_Look (mobj_t* actor)
 }
 
 
+void A_Look (mobj_t* actor)
+{
+    mobj_t*	targ;
+	
+    // The library's people mind nobody until hurt.
+    if (P_LibraryIndifferent (actor))
+	return;
+
+    // DERP's monsters take time to spot the player, and wake to what they hear.
+    if (P_BrainLook (actor))
+	return;
+
+    actor->threshold = 0;	// any shot will wake up
+    targ = actor->subsector->sector->soundtarget;
+
+    if (targ
+	&& (targ->flags & MF_SHOOTABLE)
+	&& !P_Unseen (targ) )
+    {
+	actor->target = targ;
+
+	if ( actor->flags & MF_AMBUSH )
+	{
+	    if (P_CheckSight (actor, actor->target))
+		goto seeyou;
+	}
+	else
+	    goto seeyou;
+    }
+	
+	
+    if (!P_LookForPlayers (actor, false) )
+	return;
+		
+    // go into chase state
+  seeyou:
+    P_SeeYou (actor);
+}
+
+
 //
 // A_Chase
 // Actor has a melee attack,
@@ -701,6 +747,10 @@ void A_Chase (mobj_t*	actor)
 
     // The library's people wander, or run from what hurt them.
     if (P_LibraryChase (actor))
+	return;
+
+    // A pinky in full charge: P_ChargeThink has it, there is no turning.
+    if (P_Charging (actor))
 	return;
 
     if (actor->reactiontime)
@@ -751,15 +801,21 @@ void A_Chase (mobj_t*	actor)
     if (actor->flags & MF_JUSTATTACKED)
     {
 	actor->flags &= ~MF_JUSTATTACKED;
-	if (gameskill != sk_nightmare && !fastparm)
+	// A DERP soldier in range holds its fire position: no step after it.
+	if (gameskill != sk_nightmare && !fastparm && !P_GunWalked (actor)
+	    && !P_DerpHolding (actor) && !P_DerpShooting (actor))
 	    P_NewChaseDir (actor);
 	return;
     }
     
     // check for melee attack
     if (actor->info->meleestate
-	&& P_CheckMeleeRange (actor))
+	&& P_CheckMeleeRange (actor)
+	&& !P_DerpFleeing (actor))
     {
+	// A DERP imp swipes at once, or leaps away after its blows.
+	if (P_DerpMelee (actor))
+	    return;
 	if (actor->info->attacksound)
 	    S_StartSound (actor, actor->info->attacksound);
 
@@ -773,14 +829,30 @@ void A_Chase (mobj_t*	actor)
 	actor->movecount = 0;
     if (actor->info->missilestate)
     {
+	// A DERP soldier in sight of him fires at a pace, not only when the
+	// dice say: they walked up to him and fired one shot in four.
+	boolean	overdue = P_DerpOverdue (actor);
+
 	if (gameskill < sk_nightmare
-	    && !fastparm && actor->movecount)
+	    && !fastparm && actor->movecount && !overdue)
 	{
 	    goto nomissile;
 	}
-	
-	if (!P_CheckMissileRange (actor))
+	// A DERP monster in the middle of something that will not wait (going
+	// round him, a bound, the run to cover, a doorway) goes on with it.
+	if (!P_DerpMayFire (actor))
 	    goto nomissile;
+	
+	if (!overdue && !P_CheckMissileRange (actor))
+	    goto nomissile;
+
+	// A DERP soldier with a friend where its shot may go: on the move it just
+	// goes on; else it makes room first.
+	if (actor->movedir < 8 && P_DerpLaneBlocked (actor))
+	    goto nomissile;
+	if (P_DerpAllyInTheWay (actor))
+	    return;
+	P_DerpFiring (actor);
 	
 	P_SetMobjState (actor, actor->info->missilestate);
 	actor->flags |= MF_JUSTATTACKED;
@@ -798,18 +870,26 @@ void A_Chase (mobj_t*	actor)
 	    return;	// got a new target
     }
     
-    // chase towards player
-    if (--actor->movecount<0
-	|| !P_Move (actor))
+    actor->chasetic = leveltime;
+    // chase towards player (DERP's monsters: towards where they think he is,
+    // when he is out of sight)
+    if (!P_BrainChase (actor)
+	&& (--actor->movecount<0
+	    || !P_Move (actor)))
     {
 	P_NewChaseDir (actor);
     }
+    // A DERP soldier in a fight faces him whichever way it stepped, and
+    // under fire runs for it.
+    P_DerpFacing (actor);
+    P_DerpSprint (actor);
     
     // make active sound
     if (actor->info->activesound
 	&& P_Random () < 3)
     {
-	S_StartSound (actor, actor->info->activesound);
+	if (!P_DerpHushed (actor))
+	    S_StartSound (actor, actor->info->activesound);
     }
 }
 
@@ -823,6 +903,13 @@ void A_FaceTarget (mobj_t* actor)
 	return;
     
     actor->flags &= ~MF_AMBUSH;
+
+    // Laying fire: at where it believes he is, not at him (p_fire.h).
+    if (P_DerpLaying (actor))
+    {
+	actor->angle = R_PointToAngle2 (actor->x, actor->y, actor->knownx, actor->knowny);
+	return;
+    }
 
     // Tumbling free (Phobos) it can't just turn: it twists round slowly (P_BodyThink)
     // and swings its gun at its target as far as its arms reach (P_BodyAim).
@@ -840,6 +927,29 @@ void A_FaceTarget (mobj_t* actor)
 
 
 //
+// Travelling (p_rounds.h): its aim for this shot, then the round's own grouping.
+//
+static void Aimed (mobj_t* actor, int* angle, int* slope, int scale)
+{
+    angle_t	a = *angle;
+
+    P_RoundMonsterAim (&a, slope, P_GunWalkAim (actor, scale));
+    P_RoundScatter (P_RoundOf (actor), &a, slope);
+    *angle = a;
+}
+
+
+// Finger on the trigger: who is in the way now, not when it raised the gun ten
+// tics ago. Someone there, the shot is off and it is back to its feet.
+static boolean HoldsFire (mobj_t* actor)
+{
+    if (!P_DerpLaneBlocked (actor))
+	return false;
+    P_SetMobjState (actor, actor->info->seestate);
+    return true;
+}
+
+//
 // A_PosAttack
 //
 void A_PosAttack (mobj_t* actor)
@@ -852,15 +962,24 @@ void A_PosAttack (mobj_t* actor)
 	return;
 		
     A_FaceTarget (actor);
+    if (HoldsFire (actor))
+	return;
     if (R_MuzzleFlash) R_MuzzleFlash(actor, wp_pistol, -1);
     angle = actor->angle;
-    slope = P_Brainless (actor) ? P_BodyAim (actor, &angle) : P_AimLineAttack (actor, angle, MISSILERANGE);
+    slope = P_Brainless (actor) ? P_BodyAim (actor, &angle) : P_DerpAim (actor, angle);
 
     S_StartSound (actor, sfx_pistol);
-    angle += (P_Random()-P_Random())<<20;
-    damage = ((P_Random()%5)+1)*3;
-    P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+    if (!P_DerpLayRounds (actor, 1))
+    {
+	if (P_BulletsTravel ())
+	    Aimed (actor, &angle, &slope, 256);
+	else
+	    angle += (P_Random()-P_Random())<<20;
+	damage = ((P_Random()%5)+1)*3;
+	P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+    }
     P_BodyRecoil (actor, 3);	// as the player's pistol (P_Recoil)
+    P_DerpNoise (actor, NOISE_MONSTERSHOT, actor->x, actor->y);
 }
 
 void A_SPosAttack (mobj_t* actor)
@@ -874,19 +993,44 @@ void A_SPosAttack (mobj_t* actor)
     if (!actor->target)
 	return;
 
-    S_StartSound (actor, sfx_shotgn);
     A_FaceTarget (actor);
+    if (HoldsFire (actor))
+	return;
+    S_StartSound (actor, sfx_shotgn);
     if (R_MuzzleFlash) R_MuzzleFlash(actor, wp_shotgun, -1);
     bangle = actor->angle;
-    slope = P_Brainless (actor) ? P_BodyAim (actor, &bangle) : P_AimLineAttack (actor, bangle, MISSILERANGE);
+    slope = P_Brainless (actor) ? P_BodyAim (actor, &bangle) : P_DerpAim (actor, bangle);
 
-    for (i=0 ; i<3 ; i++)
+    if (P_DerpLayRounds (actor, PUMP_PELLETS))
+	;
+    else if (P_BulletsTravel ())
     {
-	angle = bangle + ((P_Random()-P_Random())<<20);
-	damage = ((P_Random()%5)+1)*3;
-	P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+	// A shell goes where it was aimed, all of it. The Mastermind shares
+	// this attack: three rounds of a burst, each aimed for itself.
+	boolean	shell = actor->type == MT_SHOTGUY;
+	if (shell)
+	    Aimed (actor, &bangle, &slope, 256);
+	for (i=0 ; i<(shell ? PUMP_PELLETS : 3) ; i++)
+	{
+	    int	s = slope;
+	    angle = bangle;
+	    if (shell)
+		P_RoundScatter (ROUND_PELLET, (angle_t *)&angle, &s);
+	    else
+		Aimed (actor, &angle, &s, 256);
+	    damage = ((P_Random()%5)+1)*3;
+	    P_LineAttack (actor, angle, MISSILERANGE, s, damage);
+	}
     }
+    else
+	for (i=0 ; i<3 ; i++)
+	{
+	    angle = bangle + ((P_Random()-P_Random())<<20);
+	    damage = ((P_Random()%5)+1)*3;
+	    P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+	}
     P_BodyRecoil (actor, 16);	// as the player's shotgun
+    P_DerpNoise (actor, NOISE_MONSTERSHOT, actor->x, actor->y);
 }
 
 void A_CPosAttack (mobj_t* actor)
@@ -899,22 +1043,49 @@ void A_CPosAttack (mobj_t* actor)
     if (!actor->target)
 	return;
 
-    S_StartSound (actor, sfx_shotgn);
     A_FaceTarget (actor);
+    if (HoldsFire (actor))
+	return;
+    S_StartSound (actor, sfx_shotgn);
     if (R_MuzzleFlash) R_MuzzleFlash(actor, wp_chaingun, -1);
     bangle = actor->angle;
-    slope = P_Brainless (actor) ? P_BodyAim (actor, &bangle) : P_AimLineAttack (actor, bangle, MISSILERANGE);
+    slope = P_Brainless (actor) ? P_BodyAim (actor, &bangle) : P_DerpAim (actor, bangle);
 
-    angle = bangle + ((P_Random()-P_Random())<<20);
-    damage = ((P_Random()%5)+1)*3;
-    P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+    if (!P_DerpLayRounds (actor, 1))
+    {
+	angle_t	off;
+	angle = bangle;
+	// The first rounds of a burst walk onto him, a quarter of the error.
+	if (P_DerpWalkFire (actor, &off))
+	{
+	    angle += off;
+	    Aimed (actor, &angle, &slope, 64);
+	}
+	else if (P_BulletsTravel ())
+	    Aimed (actor, &angle, &slope, 256);
+	else
+	    angle += (P_Random()-P_Random())<<20;
+	damage = ((P_Random()%5)+1)*3;
+	P_LineAttack (actor, angle, MISSILERANGE, slope, damage);
+    }
     P_BodyRecoil (actor, 3);	// as the player's chaingun, a round
+    P_DerpNoise (actor, NOISE_MONSTERSHOT, actor->x, actor->y);
 }
 
 void A_CPosRefire (mobj_t* actor)
 {	
     // keep firing unless target got out of sight
     A_FaceTarget (actor);
+
+    // A friend stepped into its line: not the rest of the burst into its back.
+    if (P_DerpLaneBlocked (actor))
+    {
+	P_SetMobjState (actor, actor->info->seestate);
+	return;
+    }
+
+    if (P_DerpLaying (actor))
+	return;
 
     if (P_Random () < 40)
 	return;
@@ -925,6 +1096,8 @@ void A_CPosRefire (mobj_t* actor)
     {
 	P_SetMobjState (actor, actor->info->seestate);
     }
+    else if (P_Random () < 8)
+	P_DerpBark (actor, BARK_STILLALIVE);	// a burst into him, and there he is
 }
 
 
@@ -969,15 +1142,18 @@ void A_TroopAttack (mobj_t* actor)
     A_FaceTarget (actor);
     if (P_CheckMeleeRange (actor))
     {
-	S_StartSound (actor, sfx_claw);
+	if (!P_DerpCry (actor, BARK_IMPSWIPE))
+	    S_StartSound (actor, sfx_claw);
 	damage = (P_Random()%8+1)*3;
 	P_DamageMobj (actor->target, actor, actor, damage);
+	// DERP: a shove, maybe another swipe.
+	P_DerpClawed (actor);
 	return;
     }
 
-    
-    // launch a missile
-    P_SpawnMissile (actor, actor->target, MT_TROOPSHOT);
+
+    // launch a missile (DERP's imps lead a moving target)
+    P_DerpLead (actor, P_SpawnMissile (actor, actor->target, MT_TROOPSHOT));
 }
 
 
@@ -1262,8 +1438,9 @@ void A_VileChase (mobj_t* actor)
 		    P_SetMobjState (corpsehit,info->raisestate);
 		    corpsehit->height <<= 2;
 		    corpsehit->flags = info->flags;
-		    corpsehit->health = info->spawnhealth;
+		    corpsehit->health = P_DerpHealth (corpsehit->type);
 		    corpsehit->target = NULL;
+		    P_DerpRaised (corpsehit);
 
 		    return;
 		}
@@ -1584,6 +1761,15 @@ void A_PainDie (mobj_t* actor)
 void A_Scream (mobj_t* actor)
 {
     int		sound;
+
+    // A DERP monster shot through the head dies without a sound.
+    if (P_DerpSilent (actor))
+	return;
+    // Heard by DERP's monsters round about: one of theirs fell.
+    P_DerpNoise (actor, NOISE_DEATH, actor->x, actor->y);
+    // A DERP soldier's own (a shot through the head has returned above).
+    if (P_DerpBody (actor, BARK_DEATH))
+	return;
 	
     switch (actor->info->deathsound)
     {
@@ -1620,11 +1806,20 @@ void A_Scream (mobj_t* actor)
 
 void A_XScream (mobj_t* actor)
 {
+    P_DerpBody (actor, BARK_GIBBED);	// a scream, on top of the splat
+    if (P_DerpSoldier (actor->type))
+	P_DerpBarkNear (actor->x, actor->y, 640, BARK_FRIENDGIBBED);
     S_StartSound (actor, sfx_slop);	
+    // Torn apart is no quieter than a scream to DERP's monsters round about,
+    // unless the first shot went through the head.
+    if (!P_DerpSilent (actor))
+	P_DerpNoise (actor, NOISE_DEATH, actor->x, actor->y);
 }
 
 void A_Pain (mobj_t* actor)
 {
+    if (P_DerpBody (actor, BARK_PAIN))
+	return;
     if (actor->info->painsound)
 	S_StartSound (actor, actor->info->painsound);	
 }
@@ -1647,6 +1842,9 @@ void A_Fall (mobj_t *actor)
 void A_Explode (mobj_t* thingy)
 {
     P_RadiusAttack ( thingy, thingy->target, 128 );
+    // His rocket is heard where it goes off, not only where it left from.
+    if (thingy->type == MT_ROCKET && thingy->target && thingy->target->player)
+	P_DerpNoise (thingy->target, NOISE_MISSILE, thingy->x, thingy->y);
 }
 
 

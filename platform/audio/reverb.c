@@ -98,7 +98,9 @@ struct reverb_s {
     float flutter, flutter_delay, side_pan, tail_width, tunnel;  /* delay in samples */
     float target_flutter, target_flutter_delay, target_side_pan, target_tail_width, target_tunnel;
     float across, high, target_across, target_high, image_low[2];  /* a tube's width and height, in samples of sound */
+    float decay_heard;   /* the decay the lines last ran at: the room's, times Reverb_Stretch */
 };
+float Reverb_Stretch = 1;
 
 
 static int samples(const reverb_t *r, float ms, int most)
@@ -254,8 +256,10 @@ void Reverb_Process(reverb_t *r, const float *send, float *stereo, int frames, f
 {
     int rate = r->rate;
     float glide = 1 - expf(-frames / (GLIDE_SECONDS * rate));
-    float decay_from = r->decay, late_from = r->late;
+    float decay_from = r->decay_heard > 0 ? r->decay_heard : r->decay, late_from = r->late;
     r->decay += (r->target_decay - r->decay) * glide;
+    float decay_to = r->decay * Reverb_Stretch;
+    r->decay_heard = decay_to;
     r->damping += (r->target_damping - r->damping) * glide;
     r->late += (r->target_late - r->late) * glide;
     r->scatter += (r->target_scatter - r->scatter) * glide;
@@ -310,7 +314,7 @@ void Reverb_Process(reverb_t *r, const float *send, float *stereo, int frames, f
     {
         float trip = -3.0f * (r->line_length[j] + r->sprays[j].length) / rate;
         gain[j] = powf(10, trip / decay_from);
-        gain_step[j] = (powf(10, trip / r->decay) - gain[j]) / frames;
+        gain_step[j] = (powf(10, trip / decay_to) - gain[j]) / frames;
     }
     /* Even the smoothest room scatters a little. */
     float diffuse = 0.2f + 0.8f * r->scatter, spray = SPRAY_GAIN * r->scatter;

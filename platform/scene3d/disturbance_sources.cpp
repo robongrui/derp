@@ -65,7 +65,7 @@ void doorPuff(int s,float speed,bool stopped) {
 }
 
 void watchDisturbanceSources() {
-    if(gamestate!=GS_LEVEL||!settings.weather)return;
+    if(gamestate!=GS_LEVEL||!climateNow().weather)return;
     if(level!=r_levelserial) {disturbanceSourcesShutdown();level=r_levelserial;}
     if(falling()==WEATHER_NONE) {flights.clear();blown.clear();rested.clear();prints.clear();heights.clear();return;}
     const mobj_t *eye=players[displayplayer].mo;

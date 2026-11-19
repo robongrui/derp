@@ -2,7 +2,8 @@
  * weapon bob keeps time with: about twice a second walking and three times
  * running, harder. Landing from a fall is a step too, harder the faster the
  * fall. Each step plays the footfall and the kit after it. Monsters are
- * followed only while they wade, for their splashes. See steps.h. */
+ * followed while they wade, for their splashes, and DERP's soldiers on any
+ * floor. See steps.h. */
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
@@ -17,10 +18,15 @@
 #include "../stride.h"
 #include "../game_materials.h"
 #include "frozen.h"
+#include "gore_floor.h"
 
 #define WADERS 64
 #define MONSTER_STRIDE 44.0f  /* monsters walk in jumps; a splash every so many units */
 #define WADE_REACH 1024.0f
+#define BOOT_REACH 1100.0f    /* a soldier's boots: you follow them round a room */
+#define BOOT_LEVEL 0.6f
+#define CLAW_REACH 900.0f     /* an imp's claws: a nearer warning than boots */
+#define CLAW_LEVEL 0.6f
 
 extern int numflats;
 
@@ -87,6 +93,9 @@ static int emit_step(step_event_t *events, int count, int max, int kind, const m
     int layer_count = Step_Layers(kind, force, player ? player->armortype : 0,
                                   player ? Game_WeaponHeft(player->readyweapon) : 0, layers);
     for (int i = 0; i < layer_count; ++i) count = emit(events, count, max, layers[i].kind, mo, layers[i].level);
+    /* Gore: in a pool or among the pieces, the boot squelches too. */
+    if (Gore_Underfoot && Gore_Underfoot(units(mo->x), units(mo->y)))
+        count = emit(events, count, max, IMPACT_GORE_SQUELCH, mo, 0.5f + 0.25f * fminf(force, 2));
     return count;
 }
 
@@ -108,6 +117,25 @@ static int player_steps(step_event_t *events, int count, int max)
     return count;
 }
 
+/* DERP's soldiers wear boots: heard on any floor, so they can be heard coming. */
+static int booted(const mobj_t *mo) { return Game_MonsterBooted(mo); }
+
+/* A soldier's step: the footfall and its kit, all quieter than the player's. */
+static int emit_boot(step_event_t *events, int count, int max, int kind, const mobj_t *mo)
+{
+    impact_layer_t layers[3];
+    int layer_count = Step_Layers(kind, 0, 0, 1, layers);
+    for (int i = 0; i < layer_count; ++i) count = emit(events, count, max, layers[i].kind, mo, layers[i].level * BOOT_LEVEL);
+    return count;
+}
+
+/* An imp's step: its claws, ticking on hard floors, nearly silent on soft. */
+static int clawed(const mobj_t *mo) { return Game_MonsterClawed(mo); }
+static int emit_claw(step_event_t *events, int count, int max, int kind, const mobj_t *mo)
+{
+    return emit(events, count, max, kind == IMPACT_STEP_SOFT ? IMPACT_CLAW_SOFT : IMPACT_CLAW_HARD, mo, CLAW_LEVEL);
+}
+
 /* Monsters wading: tracked while they stand in a liquid near the listener. */
 typedef struct { const mobj_t *mo; float x, y, walked; int seen; } wader_t;
 static wader_t waders[WADERS];
@@ -124,7 +152,9 @@ static int monster_splashes(step_event_t *events, int count, int max)
         if (mo->player || !(mo->flags & MF_SHOOTABLE) || (mo->flags & MF_CORPSE) || mo->health <= 0 || !grounded(mo)) continue;
         float x = units(mo->x), y = units(mo->y);
         int kind = on_ice(floor_kind(mo->subsector->sector->floorpic), x, y);
-        if (!wet(kind) || hypotf(x - lx, y - ly) > WADE_REACH) continue;
+        int boots = !wet(kind) && booted(mo), claws = !wet(kind) && clawed(mo);
+        if ((!wet(kind) && !boots && !claws)
+            || hypotf(x - lx, y - ly) > (boots ? BOOT_REACH : claws ? CLAW_REACH : WADE_REACH)) continue;
         wader_t *w = NULL, *free_slot = NULL;
         for (int i = 0; i < WADERS && !w; ++i)
         {
@@ -141,7 +171,12 @@ static int monster_splashes(step_event_t *events, int count, int max)
         w->x = x; w->y = y; w->seen = gametic;
         if (moved > 64) continue;
         w->walked += moved;
-        if (w->walked >= MONSTER_STRIDE) { w->walked -= MONSTER_STRIDE; count = emit(events, count, max, kind, mo, 0.5f); }
+        if (w->walked >= MONSTER_STRIDE)
+        {
+            w->walked -= MONSTER_STRIDE;
+            count = boots ? emit_boot(events, count, max, kind, mo)
+                : claws ? emit_claw(events, count, max, kind, mo) : emit(events, count, max, kind, mo, 0.5f);
+        }
     }
     /* Forget those that left the liquid, died or were removed. */
     for (int i = 0; i < WADERS; ++i) if (waders[i].mo && waders[i].seen != gametic) waders[i].mo = NULL;

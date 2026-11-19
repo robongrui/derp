@@ -39,6 +39,27 @@ enum {
     IMPACT_FLYBY,          /* a bullet whizzing past the player's head */
     IMPACT_GORE_BURST,     /* a kill's wet burst, drops pattering down */
     IMPACT_GORE_SLAP,      /* a body slapping into a floor or wall */
+    IMPACT_GORE_TEAR,      /* gore: flesh ripping through, a cut or a neck */
+    IMPACT_GORE_CRACK,     /* gore: bone snapping, a spine, a skull */
+    IMPACT_GORE_BLOWUP,    /* gore: a whole body bursting, chunks coming down after */
+    IMPACT_GORE_THUD,      /* gore: a small chunk landing */
+    IMPACT_GORE_SQUELCH,   /* gore: a step in a pool or among the pieces */
+    IMPACT_GORE_STRETCH,   /* gore: a tear's fibres pulled taut, a few wet crackles (one a tic) */
+    IMPACT_GORE_SNAP,      /* gore: one fibre letting go, a small wet tick */
+    IMPACT_BODY_STONE,     /* a body hitting stone hard: a dull knock, a little grit */
+    IMPACT_BODY_WOOD,      /* on wood: a hollow knock */
+    IMPACT_BODY_METAL,     /* on metal: a dull plate, kept short */
+    IMPACT_HIT_STONE,      /* an enemy's shot on a wall nearby: stone cracking, grit */
+    IMPACT_HIT_WOOD,       /* wood knocked */
+    IMPACT_HIT_METAL,      /* a ping */
+    IMPACT_HIT_SOFT,       /* something soft */
+    IMPACT_PLAYER_ARMOR,   /* a blow on the player's armour: a hard knock */
+    IMPACT_PLAYER_BODY,    /* on the body: a deep thud */
+    IMPACT_PLAYER_CLAW,    /* a claw or a bite: wet, close */
+    IMPACT_PLAYER_BURN,    /* fire: a thump and a sizzle */
+    IMPACT_BALLOON,        /* gore: a body swelling, wet and creaking, opening up */
+    IMPACT_CLAW_HARD,      /* a clawed foot on a hard floor: quick ticks, a scrape */
+    IMPACT_CLAW_SOFT,      /* on grass, dirt or carpet: a pad, a tick or so */
     IMPACT_KINDS
 };
 
@@ -65,6 +86,7 @@ void Step_Render(int kind, unsigned seed, int rate, float *out, int frames);
 void Flyby_Render(unsigned seed, int rate, float *out, int frames);
 /* In gore_synth.c. */
 void Gore_Render(int kind, unsigned seed, int rate, float *out, int frames);
+void Hit_Render(int kind, unsigned seed, int rate, float *out, int frames);
 /* What one step plays: the footfall on the floor kind (IMPACT_STEP_ or
    IMPACT_SPLASH_) and the kit rattling after it, each a kind at a level.
    force: 0 walking, 1 running, up to 2 a hard landing. armor 0-2 and heft

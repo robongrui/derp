@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The bounce's rays traced once for all of a solve's passes (gpu_bakes.cpp's
+// GpuBounce): a thread a ray, what it met kept on the card for
+// bounce_gather.comp, ray by ray across the samples (ray * stride + sample),
+// so a pass's threads read their rays side by side.
+layout(local_size_x=64) in;
+#ifdef METAL
+#define MAP_BINDING 1
+#define SAMPLE_BINDING 2
+#define TABLE_BINDING 3
+#define STRIP_BINDING 4
+#define OUT_BINDING 5
+#else
+#define MAP_BINDING 0
+#define SAMPLE_BINDING 1
+#define TABLE_BINDING 2
+#define STRIP_BINDING 3
+#define OUT_BINDING 0
+#endif
+// job: x the first sample, y how many, z rays a sample, w 1 when the sky is an emitter (skyDome).
+// grid: the map's origin, its cell, the rays' reach. dims: map width and height, atlas stride and
+// width. kept: x the stride (samples kept).
+layout(std140,set=2,binding=0) uniform Job { uvec4 mapA; uvec4 mapB; uvec4 job; vec4 grid; uvec4 dims; uvec4 kept; };
+layout(std430,set=0,binding=MAP_BINDING) readonly buffer MapWords { uint mapWords[]; };
+// Two words of four a sample: x, y, z, sector | flags << 24; normal, the pattern's turn.
+layout(std430,set=0,binding=SAMPLE_BINDING) readonly buffer Samples { uvec4 samples[]; };
+// turn * rays + ray: the ray in the hemisphere's frame.
+layout(std430,set=0,binding=TABLE_BINDING) readonly buffer Table { vec4 table[]; };
+// Per line side (line*2+side), three words of four: atlas x, y, width, height; ax, ay, dx, dy;
+// scale, low.
+layout(std430,set=0,binding=STRIP_BINDING) readonly buffer Strips { vec4 strips[]; };
+layout(std430,set=1,binding=OUT_BINDING) writeonly buffer Out { uvec2 seen[]; };
+#include "trace.glsl"
+#include "bounce_rays.glsl"
+void main() {
+    uint i=gl_GlobalInvocationID.x,rays=job.z;
+    if(i>=job.y*rays)return;
+    uint local=i/rays,ray=i-local*rays,s=job.x+local;
+    BounceSample bs=bounceSample(s);
+    seen[ray*kept.x+s]=bounceTrace(bs,bounceDirection(bs,ray,rays),job.w!=0u);
+}

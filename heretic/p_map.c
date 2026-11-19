@@ -1297,7 +1297,7 @@ hitline:
 		P_SpawnPuff (x,y,z);
 		// DERP: wall marks and sparks in the accelerated renderer.
 		if (R_WallImpact)
-			R_WallImpact (li, P_PointOnLineSide (trace.x, trace.y, li), x, y, z);
+			R_WallImpact (li, P_PointOnLineSide (trace.x, trace.y, li), x, y, z, shootthing, trace.dx, trace.dy, FixedMul (aimslope, attackrange));
 		return false;			// don't go any farther
 	}
 	
@@ -1565,6 +1565,8 @@ void P_RadiusAttack (mobj_t *spot, mobj_t *source, int damage)
 		bombsource = source;
 	}
 	bombdamage = damage;
+	if (R_Explosion)
+		R_Explosion (spot, bombsource, damage);
 	for (y=yl ; y<=yh ; y++)
 		for (x=xl ; x<=xh ; x++)
 			P_BlockThingsIterator (x, y, PIT_RadiusAttack );

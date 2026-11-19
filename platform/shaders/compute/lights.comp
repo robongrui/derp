@@ -1,0 +1,368 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The lamps' baked light (gatherStatic in scene3d/bake_lights.cpp), a thread a
+// texel or cell: every light and pool the bake grid lists there, by
+// addBakedLight and addBakedArea (platform/baked_lighting.h) line for line,
+// with their directions, flicker groups and bump lobes. Out: the light before
+// stained glass (added on the processor) and its rounding, the direction
+// texel and the lobes.
+layout(local_size_x=64) in;
+#ifdef METAL
+#define MAP_BINDING 1
+#define ITEM_BINDING 2
+#define LIGHT_BINDING 3
+#define OUT_BINDING 4
+#else
+#define MAP_BINDING 0
+#define ITEM_BINDING 1
+#define LIGHT_BINDING 2
+#define OUT_BINDING 0
+#endif
+// job: x the first item, y how many, z flags (1 directions, 2 lobes) and the mode << 4
+// (0 the whole light, 1 a moved door's change, 2 changed lamps' change), w words out an item.
+// more: x where the door's boxes start in the light words (four floats each), y how many,
+// z the changed lamps (in the lights' part, each as it was and then as it is).
+// grid: the bake grid's origin, cell, width; size: its height, the points (lights before the
+// pools), the first window light, bakeTailShare's bits.
+// parts: where the lights (20 words), tiles (3), pools (20), pieces (2), corners (2), pool
+// samples (2) and the grid (offsets, then lists) start in the light words.
+layout(std140,set=2,binding=0) uniform Job { uvec4 mapA; uvec4 mapB; uvec4 job; vec4 grid; uvec4 size; uvec4 parts; uvec4 parts2; uvec4 more; };
+layout(std430,set=0,binding=MAP_BINDING) readonly buffer MapWords { uint mapWords[]; };
+// Two words of four an item: x, y, z, sector; normal, -.
+layout(std430,set=0,binding=ITEM_BINDING) readonly buffer Items { uvec4 items[]; };
+layout(std430,set=0,binding=LIGHT_BINDING) readonly buffer LightWords { uint lightWords[]; };
+// Six words an item: the light (rgb floats), the direction texel, lobes 0 and 1, lobe 2.
+layout(std430,set=1,binding=OUT_BINDING) writeonly buffer Out { uint results[]; };
+#include "trace.glsl"
+
+float lf(uint i) {return uintBitsToFloat(lightWords[i]);}
+int li(uint i) {return int(lightWords[i]);}
+float lum(vec3 c) {return 0.299*c.r+0.587*c.g+0.114*c.b;}
+// rayBefore while a moved door's change traces the map as it was.
+uint traceFlags=0u;
+bool rayOpen(int sector,vec3 p,vec3 v,float length) {TraceHit hit;return traceRay(sector,p,v,length,traceFlags,hit);}
+
+// doom_panel_emission (platform/flash_lighting.h), with a normal.
+float panelEmission(vec3 d,float nx,float ny,vec3 normal) {
+    if(nx==0.0&&ny==0.0)return 1.0;
+    float ahead=d.x*nx+d.y*ny+4.0,distance=sqrt(d.x*d.x+d.y*d.y+d.z*d.z);
+    float t=min(1.0,max(0.0,ahead/max(distance,1.0))),emission=t*t*(3.0-2.0*t);
+    return max(emission,max(0.0,normal.x*nx+normal.y*ny)*max(0.0,1.0-abs(ahead)/8.0));
+}
+float nearDirectionality(float directionality,float distance) {
+    float t=min(1.0,max(0.0,(distance-32.0)/32.0)),near=0.85*(1.0-t*t*(3.0-2.0*t));
+    return max(directionality,near);
+}
+float postShare(float rise) {
+    float side=sqrt(max(0.0,1.0-rise*rise)),least=rise<0.0?0.12:0.3;
+    return (least+(1.0-least)*side)*1.2;
+}
+// Light words a light: x, y, z, radius, strength, directionality, r, g, b, extent, nx, ny,
+// beam, tail, post, first tile, tiles, group, flags (1 window, 2 in a shut door), -.
+// point: the lamp as one point, its tiles left out (gatherChanged far from it).
+float addBakedLight(uint n,int sector,vec3 p,vec3 normal,inout vec3 out3,out vec3 direction,bool point) {
+    uint l=parts.x+n*20u;
+    vec3 at=vec3(lf(l),lf(l+1u),lf(l+2u));
+    float radius=lf(l+3u),strength=lf(l+4u),directionality=lf(l+5u);
+    vec3 color=vec3(lf(l+6u),lf(l+7u),lf(l+8u));
+    float extent=lf(l+9u),nx=lf(l+10u),ny=lf(l+11u),beam=lf(l+12u),tail=lf(l+13u),post=lf(l+14u);
+    uint firstTile=lightWords[l+15u];int tileCount=point?0:li(l+16u);
+    direction=vec3(0.0);
+    precise vec3 d=at-p;
+    precise float distance=sqrt(d.x*d.x+d.y*d.y+d.z*d.z);
+    float reach=tail<0.0?-tail:tail>1.0?radius*tail:radius;
+    if(distance>=reach)return 0.0;
+    float falloff=max(0.0,1.0-distance/radius),amount=strength*falloff*falloff*(3.0-2.0*falloff);
+    if(tail<0.0) {
+        float q=distance/(radius*0.375),far=1.0-distance/reach;
+        amount=strength*1.4/(1.0+q*q)*far*far;
+    } else if(tail>1.0) {
+        float near=radius/max(distance,radius*0.5),far=1.0-distance/reach;
+        amount=max(amount,strength*uintBitsToFloat(size.w)*near*near*far*far);
+    }
+    amount*=panelEmission(-d,nx,ny,normal);
+    if(post>0.0&&distance>0.001)amount*=1.0+post*(postShare(-d.z/distance)-1.0);
+    if(beam>0.0) {
+        float across=sqrt(d.x*d.x+d.y*d.y);
+        amount*=across>0.001?pow(max(0.0,-(d.x*nx+d.y*ny)/across),beam):1.0;
+    }
+    float facing=1.0;
+    if(distance>0.001) {
+        d/=distance;
+        facing=1.0+nearDirectionality(directionality,distance)*(max(0.0,dot(normal,d))-1.0);
+        if(amount*facing<1.0/512.0)return 0.0;
+        // Stop just short of the light so its own surface never blocks it.
+        if(tileCount>1&&extent<=0.0) {
+            int open=0;
+            for(int k=0;k<tileCount;++k) {
+                uint t=parts.y+(firstTile+uint(k))*3u;
+                precise vec3 v=vec3(lf(t),lf(t+1u),lf(t+2u))-p;
+                precise float length=sqrt(v.x*v.x+v.y*v.y+v.z*v.z);
+                if(length<=0.5) {++open;continue;}
+                v/=length;
+                open+=rayOpen(sector,p,v,length-0.5)?1:0;
+            }
+            if(open==0)return 0.0;
+            amount*=float(open)/float(tileCount);
+        } else if(extent<=0.0) {if(!rayOpen(sector,p,d,distance-0.5))return 0.0;}
+        else {
+            int open=0;
+            for(int k=-1;k<=1;++k) {
+                precise vec3 v=vec3(at.x-p.x,at.y-p.y,at.z+float(k)*extent*(2.0/3.0)-p.z);
+                precise float length=sqrt(v.x*v.x+v.y*v.y+v.z*v.z);
+                if(length<=0.5) {++open;continue;}
+                v/=length;
+                open+=rayOpen(sector,p,v,length-0.5)?1:0;
+            }
+            if(open==0)return 0.0;
+            amount*=float(open)/3.0;
+        }
+    } else d=vec3(0.0,0.0,1.0);
+    out3+=color*amount*facing;
+    direction=d;
+    return amount*facing;
+}
+// Light words a pool: z, clearance, ceiling, radius, strength, directionality, r, g, b, low x,
+// low y, high x, high y, first piece, pieces, first sample, samples. A piece: first corner,
+// corners.
+float areaNearest(uint a,float x,float y,out float nx,out float ny) {
+    float best=traceInf;nx=x;ny=y;
+    uint firstPiece=lightWords[a+13u];int pieces=li(a+14u);
+    for(int k=0;k<pieces;++k) {
+        uint piece=parts.w+(firstPiece+uint(k))*2u;
+        uint first=lightWords[piece];int n=li(piece+1u);
+        if(n<3)continue;
+        bool positive=false,negative=false;float local=traceInf,px=x,py=y;
+        for(int i=0;i<n;++i) {
+            uint ca=parts2.x+(first+uint(i))*2u,cb=parts2.x+(first+uint((i+1)%n))*2u;
+            float ax=lf(ca),ay=lf(ca+1u),bx=lf(cb),by=lf(cb+1u);
+            precise float ex=bx-ax,ey=by-ay,cross=ex*(y-ay)-ey*(x-ax);
+            positive=positive||cross>0.01;negative=negative||cross<-0.01;
+            precise float length2=ex*ex+ey*ey,t=length2>0.0?clamp(((x-ax)*ex+(y-ay)*ey)/length2,0.0,1.0):0.0;
+            precise float qx=ax+ex*t,qy=ay+ey*t,d=(x-qx)*(x-qx)+(y-qy)*(y-qy);
+            if(d<local) {local=d;px=qx;py=qy;}
+        }
+        if(!(positive&&negative)) {nx=x;ny=y;return 0.0;}
+        if(local<best) {best=local;nx=px;ny=py;}
+    }
+    return best;
+}
+float addBakedArea(uint index,int sector,vec3 p,vec3 normal,inout vec3 out3,out vec3 direction,out bool inside) {
+    uint a=parts.z+index*20u;
+    inside=false;direction=vec3(0.0);
+    float z=lf(a),clearance=lf(a+1u);bool ceiling=li(a+2u)!=0;
+    float radius=lf(a+3u),strength=lf(a+4u),directionality=lf(a+5u);
+    vec3 color=vec3(lf(a+6u),lf(a+7u),lf(a+8u));
+    float lowX=lf(a+9u),lowY=lf(a+10u),highX=lf(a+11u),highY=lf(a+12u);
+    uint firstSample=lightWords[a+15u];int sampleCount=li(a+16u);
+    if((ceiling?z-p.z:p.z-z)<=0.0)return 0.0;
+    float bx=max(max(lowX-p.x,0.0),p.x-highX),by=max(max(lowY-p.y,0.0),p.y-highY);
+    if(bx*bx+by*by>=radius*radius)return 0.0;
+    float nx,ny,plane=sqrt(areaNearest(a,p.x,p.y,nx,ny));
+    if(plane>=radius)return 0.0;
+    float ux=plane>0.001?(nx-p.x)/plane:0.0,uy=plane>0.001?(ny-p.y)/plane:0.0;
+    float ez=z+(ceiling?-8.0:8.0);
+    for(int step=0;step<3;++step) {
+        float reach=step==0?0.0:step==1?32.0:96.0;
+        if(reach>0.0&&plane<=0.001)break;
+        float tx=nx+ux*reach,ty=ny+uy*reach,ix,iy;
+        if(reach>0.0&&areaNearest(a,tx,ty,ix,iy)>0.0)break;
+        precise vec3 d=vec3(tx-p.x,ty-p.y,ez-p.z);
+        precise float distance=sqrt(d.x*d.x+d.y*d.y+d.z*d.z);
+        if(distance>=radius)break;
+        float falloff=1.0-distance/radius,amount=strength*falloff*falloff*(3.0-2.0*falloff),facing=1.0;
+        if(sampleCount>0) {
+            // The share of the area in view, measured from its nearest point as before.
+            if(distance>0.001) {
+                d/=distance;
+                facing=1.0+directionality*(max(0.0,dot(normal,d))-1.0);
+            } else d=vec3(0.0,0.0,ceiling?-1.0:1.0);
+            if(amount*facing<1.0/512.0)return 0.0;
+            float tz=z+(ceiling?-1.0:1.0)*max(clearance,8.0);
+            int open=0;
+            for(int k=0;k<sampleCount;++k) {
+                uint s=parts2.y+(firstSample+uint(k))*2u;
+                precise vec3 v=vec3(lf(s)-p.x,lf(s+1u)-p.y,tz-p.z);
+                precise float length=sqrt(v.x*v.x+v.y*v.y+v.z*v.z);
+                if(length<=0.5) {++open;continue;}
+                v/=length;
+                open+=rayOpen(sector,p,v,length-0.5)?1:0;
+            }
+            if(open==0)return 0.0;
+            amount*=float(open)/float(sampleCount);
+            if(abs(normal.z)<=0.5)amount=min(amount,strength*0.5);
+            out3+=color*amount*facing;
+            direction=d;inside=plane<=0.001;
+            return amount*facing;
+        }
+        if(distance>0.001) {
+            d/=distance;
+            facing=1.0+directionality*(max(0.0,dot(normal,d))-1.0);
+            if(amount*facing<1.0/512.0)continue;
+            float tz=z+(ceiling?-1.0:1.0)*max(clearance,8.0);
+            precise vec3 v=vec3(tx-p.x,ty-p.y,tz-p.z);
+            precise float length=sqrt(v.x*v.x+v.y*v.y+v.z*v.z);
+            v/=max(length,0.001);
+            if(length>0.5&&!rayOpen(sector,p,v,length-0.5))continue;
+        } else d=vec3(0.0,0.0,ceiling?-1.0:1.0);
+        if(abs(normal.z)<=0.5)amount=min(amount,strength*0.5);
+        out3+=color*amount*facing;
+        direction=d;inside=plane<=0.001;
+        return amount*facing;
+    }
+    return 0.0;
+}
+uint unit255(float v) {return uint(clamp(int(floor(clamp(v,0.0,1.0)*255.0+0.5)),0,255));}
+// Whether the way from a to b passes the box, grown (bake_moved.cpp's crosses).
+bool crosses(vec4 box,vec2 a,vec2 b,float grow) {
+    float t0=0.0,t1=1.0;
+    vec2 d=b-a,low=box.xy-grow,high=box.zw+grow;
+    for(int k=0;k<2;++k) {
+        if(abs(d[k])<1e-6) {if(a[k]<low[k]||a[k]>high[k])return false;continue;}
+        float u=(low[k]-a[k])/d[k],v=(high[k]-a[k])/d[k];
+        if(u>v) {float w=u;u=v;v=w;}
+        t0=max(t0,u);t1=min(t1,v);
+        if(t0>t1)return false;
+    }
+    return true;
+}
+// gatherMoved: the lamps whose way to the item crosses a moved door, as the map was and is.
+void moved(uint i,int sector,vec3 p,vec3 normal) {
+    uint points=size.y,firstWindow=size.z;
+    vec3 delta=vec3(0.0);bool any=false;
+    int gx=clamp(int(floor((p.x-grid.x)/grid.z)),0,int(grid.w)-1),gy=clamp(int(floor((p.y-grid.y)/grid.z)),0,int(size.x)-1);
+    uint cell=parts2.z+uint(gy*int(grid.w)+gx)*2u;
+    uint first=lightWords[cell],count=lightWords[cell+1u];
+    for(uint k=0u;k<count;++k) {
+        uint n=lightWords[parts2.w+first+k];
+        if(n>=firstWindow&&n<points)continue;
+        float lx,ly,grow;
+        if(n<points) {uint l=parts.x+n*20u;lx=lf(l);ly=lf(l+1u);grow=li(l+16u)>1?144.0:16.0;}
+        else {
+            uint a=parts.z+(n-points)*20u;
+            lx=(lf(a+9u)+lf(a+11u))*0.5;ly=(lf(a+10u)+lf(a+12u))*0.5;
+            grow=max(lf(a+11u)-lf(a+9u),lf(a+12u)-lf(a+10u))*0.5+16.0;
+        }
+        bool hit=false;
+        for(uint b=0u;b<more.y&&!hit;++b) {
+            uint at=more.x+b*4u;
+            hit=crosses(vec4(lf(at),lf(at+1u),lf(at+2u),lf(at+3u)),p.xy,vec2(lx,ly),grow);
+        }
+        if(!hit)continue;
+        vec3 was=vec3(0.0),is=vec3(0.0),to;bool inside;
+        traceFlags=rayBefore;
+        if(n<points)addBakedLight(n,sector,p,normal,was,to,false);else addBakedArea(n-points,sector,p,normal,was,to,inside);
+        traceFlags=0u;
+        if(n<points)addBakedLight(n,sector,p,normal,is,to,false);else addBakedArea(n-points,sector,p,normal,is,to,inside);
+        delta+=is-was;any=true;
+    }
+    uint o=job.w*i;
+    results[o]=floatBitsToUint(delta.r);results[o+1u]=floatBitsToUint(delta.g);results[o+2u]=floatBitsToUint(delta.b);results[o+3u]=any?1u:0u;
+}
+// gatherChanged: only the changed lamps, as they shone and as they shine, and what each
+// flicker group gains.
+void changed(uint i,int sector,vec3 p,vec3 normal) {
+    vec3 delta=vec3(0.0);bool any=false;
+    float groups[16];
+    for(int g=0;g<16;++g)groups[g]=0.0;
+    for(uint n=0u;n<more.z;++n) {
+        vec3 before=vec3(0.0),after=vec3(0.0),to;
+        for(uint now=0u;now<2u;++now) {
+            uint index=2u*n+now,l=parts.x+index*20u;
+            if(lf(l+4u)<=0.0)continue;
+            float dx=lf(l)-p.x,dy=lf(l+1u)-p.y;
+            bool point=li(l+16u)>1&&dx*dx+dy*dy>320.0*320.0;
+            if(now!=0u)addBakedLight(index,sector,p,normal,after,to,point);
+            else addBakedLight(index,sector,p,normal,before,to,point);
+        }
+        vec3 change=after-before;
+        if(change.r==0.0&&change.g==0.0&&change.b==0.0)continue;
+        delta+=change;
+        groups[li(parts.x+2u*n*20u+17u)&15]+=lum(change);
+        any=true;
+    }
+    uint o=job.w*i;
+    results[o]=floatBitsToUint(delta.r);results[o+1u]=floatBitsToUint(delta.g);results[o+2u]=floatBitsToUint(delta.b);
+    for(int g=0;g<16;++g)results[o+3u+uint(g)]=floatBitsToUint(groups[g]);
+    results[o+19u]=any?1u:0u;
+}
+void main() {
+    uint i=gl_GlobalInvocationID.x;
+    if(i>=job.y)return;
+    uint item=job.x+i;
+    uvec4 a=items[2u*item],b=items[2u*item+1u];
+    vec3 p=vec3(uintBitsToFloat(a.x),uintBitsToFloat(a.y),uintBitsToFloat(a.z));
+    vec3 normal=vec3(uintBitsToFloat(b.x),uintBitsToFloat(b.y),uintBitsToFloat(b.z));
+    int sector=int(a.w);
+    uint mode=(job.z>>4)&3u;
+    if(mode==1u) {moved(i,sector,p,normal);return;}
+    if(mode==2u) {changed(i,sector,p,normal);return;}
+    bool directed=(job.z&1u)!=0u,keep=(job.z&2u)!=0u;
+    uint points=size.y,firstWindow=size.z;
+    vec3 sum=vec3(0.0),towards=vec3(0.0),window=vec3(0.0),windowTowards=vec3(0.0),lobes=vec3(0.0);
+    float total=0.0,sheen=0.0,windowTotal=0.0;
+    float groups[16];
+    for(int g=0;g<16;++g)groups[g]=0.0;
+    // The bake grid's cell (bakeGridLights).
+    int gx=clamp(int(floor((p.x-grid.x)/grid.z)),0,int(grid.w)-1),gy=clamp(int(floor((p.y-grid.y)/grid.z)),0,int(size.x)-1);
+    uint cell=parts2.z+uint(gy*int(grid.w)+gx)*2u;
+    uint first=lightWords[cell],count=lightWords[cell+1u];
+    for(uint k=0u;k<count;++k) {
+        uint n=lightWords[parts2.w+first+k];
+        vec3 to;bool inside=false;float amount;vec3 color;
+        bool isWindow=n>=firstWindow&&n<points;
+        if(n<points) {
+            uint l=parts.x+n*20u;
+            if((lightWords[l+18u]&2u)!=0u)continue;   // a window lamp in a shut door (shutWindowLamp)
+            color=vec3(lf(l+6u),lf(l+7u),lf(l+8u));
+            if(isWindow)amount=addBakedLight(n,sector,p,normal,window,to,false);
+            else amount=addBakedLight(n,sector,p,normal,sum,to,false);
+        } else {
+            uint area=parts.z+(n-points)*20u;
+            color=vec3(lf(area+6u),lf(area+7u),lf(area+8u));
+            amount=addBakedArea(n-points,sector,p,normal,sum,to,inside);
+        }
+        if((!directed&&!keep)||amount<=0.0)continue;
+        float weight=amount*lum(color);
+        if(keep) {
+            // addLobes (scene3d/bake_basis.cpp).
+            float length=sqrt(dot(to,to));
+            if(weight>0.0&&length>1e-6) {
+                bool level=abs(normal.z)>0.5;
+                vec3 t=vec3(level?1.0:-normal.y,level?0.0:normal.x,0.0),bb=vec3(0.0,level?1.0:0.0,level?0.0:1.0);
+                vec3 dd=vec3(dot(to,t),dot(to,bb),dot(to,normal))/length;
+                lobes.x+=weight*max(0.0,dot(dd,vec3(-0.40824829,0.70710678,0.57735027)));
+                lobes.y+=weight*max(0.0,dot(dd,vec3(-0.40824829,-0.70710678,0.57735027)));
+                lobes.z+=weight*max(0.0,dot(dd,vec3(0.81649658,0.0,0.57735027)));
+            }
+        }
+        if(!directed)continue;
+        if(isWindow) {windowTowards+=to*weight;windowTotal+=weight;continue;}
+        towards+=to*weight;total+=weight;
+        if(n<points)groups[li(parts.x+n*20u+17u)&15]+=weight;
+        else if(inside&&normal.z*(li(parts.z+(n-points)*20u+2u)!=0?-1.0:1.0)>0.5)sheen+=weight;
+    }
+    // capWindowLight.
+    float wl=lum(window),scale=1.0;
+    if(wl>0.0) {scale=(1.0-exp(-wl))/wl;window*=scale;}
+    sum+=window;towards+=windowTowards*scale;total+=windowTotal*scale;
+    // encodeDirection.
+    uint direction=128u|128u<<8;
+    float length=sqrt(dot(towards,towards));
+    if(directed&&total>0.0&&length>1e-6) {
+        bool level=abs(normal.z)>0.5;
+        vec3 t=vec3(level?1.0:-normal.y,level?0.0:normal.x,0.0),bb=vec3(0.0,level?1.0:0.0,level?0.0:1.0);
+        float x=dot(towards,t)/length,y=dot(towards,bb)/length;
+        uint dx=unit255(x*0.5+0.5),dy=unit255(y*0.5+0.5),share=unit255(length/total);
+        int best=0;
+        for(int g=1;g<16;++g)if(groups[g]>0.0&&groups[g]>(best!=0?groups[best]:0.0))best=g;
+        uint mark;
+        if(best!=0)mark=uint(best*16)+uint(floor(clamp(groups[best]/total,0.0,1.0)*15.0+0.5));
+        else mark=uint(floor(clamp(sheen/total,0.0,1.0)*15.0+0.5));
+        direction=dx|dy<<8|share<<16|mark<<24;
+    } else if(!directed)direction=0u;
+    uvec3 kept=uvec3(min(floor(lobes*1024.0+0.5),vec3(65535.0)));
+    uint o=job.w*i;
+    results[o]=floatBitsToUint(sum.r);results[o+1u]=floatBitsToUint(sum.g);results[o+2u]=floatBitsToUint(sum.b);
+    results[o+3u]=direction;results[o+4u]=kept.x|kept.y<<16;results[o+5u]=kept.z;
+}

@@ -45,9 +45,9 @@ float storm() {return std::clamp(fallNow*windAmount(),0.0f,1.0f);}
 // dotted row of squares).
 void flake(const Uniforms &camera,float x,float y,float z,float distance,const sector_t &sector,uint32_t seed,bool resting,float alpha,float vx=0,float vy=0) {
     float size=distance<96&&hashUnit(9,9,seed)<0.3f?1.1f:0.6f;
-    std::array<float,3> color=weatherColor(sector,x,y,z,snowAlbedo);
+    std::array<float,3> color=weatherColor(sector,x,y,z,snowAlbedo,true,LampCatch::Matte);
     if(!resting&&distance>96)beamGlint(x,y,z,seed,0.06f,color);   // ice catching the flashlight, small far flakes only (beam_air.cpp)
-    pixelBlock(particleVertices,camera,x,y,z,size,1,color,resting,&snowAlbedo,true,nullptr,alpha);
+    pixelBlock(particleVertices,camera,x,y,z,size,1,color,resting,&snowAlbedo,true,nullptr,alpha,1,1,MODE_PARTICLE_DAYLIT);
     float step=std::hypot(vx,vy)/TICRATE,unit=std::max(distance,4.0f)/(100*camera.projection[1]);
     if(resting||storm()<0.35f||step<=unit)return;
     int pieces=std::min(4,(int)(step/unit));
@@ -56,7 +56,7 @@ void flake(const Uniforms &camera,float x,float y,float z,float distance,const s
         float back=k*pixel/step;   // share of the tic's way
         float px=x-vx/TICRATE*back,py=y-vy/TICRATE*back,pz=z+1.2f*back;
         if(!fliesOutside(sector,px,py,pz))break;   // the streak stops at a wall
-        pixelBlock(particleVertices,camera,px,py,pz,size,1,color,false,&snowAlbedo,true,nullptr,alpha*(1-0.15f*k));
+        pixelBlock(particleVertices,camera,px,py,pz,size,1,color,false,&snowAlbedo,true,nullptr,alpha*(1-0.15f*k),1,1,MODE_PARTICLE_DAYLIT);
     }
 }
 }
@@ -177,7 +177,7 @@ static void buildSnow(const Uniforms &camera) {
 // is, and past a third of a storm everything close by too (c.climate.zw,
 // world.frag), as thick as the storm (sky/snow.glsl's snowHaze does the sky).
 void snowHazeUniforms(Uniforms &camera) {
-    if(falling()!=WEATHER_SNOW||!settings.weather)return;
+    if(falling()!=WEATHER_SNOW||!climateNow().weather)return;
     float amount=std::max(storm(),whiteoutNow());   // falling snow whitens still air too (whiteout.cpp)
     if(amount<=0.05f)return;
     float luma=0.299f*camera.haze[0]+0.587f*camera.haze[1]+0.114f*camera.haze[2];

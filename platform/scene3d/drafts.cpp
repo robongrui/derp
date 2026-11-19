@@ -116,20 +116,29 @@ bool sameOpening(const Link &x,const Link &y) {
 std::vector<std::array<float,2>> heights;
 std::vector<char> panesBroken;
 float headingSeen[2]={NAN,NAN};
-bool openingsMoved(float hx,float hy) {
+// travelling: all that changed is a sector's height (a door or lift on its way).
+bool openingsMoved(float hx,float hy,bool &travelling) {
     bool moved=heights.size()!=(size_t)numsectors||panesBroken.size()!=(size_t)windowPaneCount()||hx!=headingSeen[0]||hy!=headingSeen[1];
+    bool other=moved,height=false;
     heights.resize(numsectors);panesBroken.resize(windowPaneCount());
     headingSeen[0]=hx;headingSeen[1]=hy;
     for(int s=0;s<numsectors;++s) {
         std::array<float,2> h{floorZ(&sectors[s]),ceilZ(&sectors[s])};
-        if(h!=heights[s]) {heights[s]=h;moved=true;}
+        if(h!=heights[s]) {heights[s]=h;moved=height=true;}
     }
     for(int i=0;i<(int)panesBroken.size();++i) {
         PaneView p;char broken=windowPane(i,p)&&p.broken;
-        if(broken!=panesBroken[i]) {panesBroken[i]=broken;moved=true;}
+        if(broken!=panesBroken[i]) {panesBroken[i]=broken;moved=other=true;}
     }
+    travelling=height&&!other;
     return moved;
 }
+// A door or lift on its way changes the openings at every look (each eight
+// tics), and each change found the links over all lines and solved all the
+// level's air again. While it travels the air is solved at most once a
+// second; once it has rested a look long, once more as it stands.
+int travelTic=INT_MIN/2;
+bool restDue=false;
 // The openings, found anew when they may have changed: doors and panes.
 void findLinks(float hx,float hy) {
     links.clear();
@@ -390,7 +399,8 @@ void traceTrail(const Link &l,float along,int jets,float outside,bool settles,bo
 // flow changed, and every trail soaking in or fading. The wind is steady,
 // so with the same openings the solve would come out as it did: it is
 // kept, and the openings are only found again when a sector moved, a pane
-// broke or the wind turned (a door on its way solves again).
+// broke or the wind turned (a door on its way at most once a second, and
+// again once it rests).
 // ROOMSDEBUG=1 times each solve.
 void watchDrafts() {
     if(gamestate!=GS_LEVEL||seamCells.size()<(size_t)mapWidth*mapHeight||bakeMap.sectors.size()!=(size_t)numsectors)return;
@@ -399,7 +409,7 @@ void watchDrafts() {
     // heated, no air solved, until weather comes.
     if(kind==WEATHER_NONE&&(draftSerial!=r_levelserial||trails.empty()))return;
     if(draftSerial!=r_levelserial) {
-        draftSerial=r_levelserial;solvedTic=-1;trails.clear();heights.clear();
+        draftSerial=r_levelserial;solvedTic=-1;trails.clear();heights.clear();travelTic=INT_MIN/2;restDue=false;
         // Each room heated by all its floor; openings not at all, nor a room
         // open to the outside with no door or glass between (a tunnel, a garage).
         Rooms_Build();
@@ -419,7 +429,12 @@ void watchDrafts() {
         uint64_t baked=SDL_GetTicksNS();
         float speed=std::max(1.0f,std::hypot(windNow[0],windNow[1])),outside=outsideTemperature(kind);
         bool same=!settled&&speed==solvedSpeed&&outside==outsideNow;
-        bool moved=openingsMoved(hx,hy);
+        bool travelling=false,moved=openingsMoved(hx,hy,travelling);
+        if(moved&&travelling&&same) {
+            if(leveltime-travelTic<TICRATE&&leveltime>=travelTic) {moved=false;restDue=true;}   // solved under a second ago
+            else travelTic=leveltime;
+        } else if(!moved&&restDue)moved=true;   // it came to rest: the openings as they stand
+        if(moved||!same)restDue=false;
         uint64_t looked=SDL_GetTicksNS();
         if(moved||!same) {
             std::vector<Link> before;before.swap(links);
@@ -547,7 +562,9 @@ void drawCarried(const Uniforms &camera,const WeatherKind &weather,float x,float
     static const std::array<float,3> snowAlbedo={0.84f,0.86f,0.9f},dropAlbedo={0.55f,0.58f,0.62f};
     if(weather.carried) {weather.carried(camera,x,y,z,sector,seed,alpha);return;}
     const auto &albedo=drop?dropAlbedo:snowAlbedo;
-    pixelBlock(particleVertices,camera,x,y,z,0.6f,drop?2.0f:1.0f,weatherColor(sector,x,y,z,albedo),false,&albedo,true,nullptr,alpha);
+    // Drawn at plain scale, not daylit: the lamps' share is not taken out of it.
+    pixelBlock(particleVertices,camera,x,y,z,0.6f,drop?2.0f:1.0f,weatherColor(sector,x,y,z,albedo,true,drop?LampCatch::Glint:LampCatch::Matte,false),
+               false,&albedo,true,nullptr,alpha);
 }
 // Flakes and drops riding the trails near the eye: in at the opening, along
 // the jet, sinking as it goes, stirred by it (air_push.cpp's airStir); where
@@ -691,5 +708,5 @@ float draftTemperature(int space) {
     return temperature[space];
 }
 
-void draftsShutdown() {links.clear();roomLinks.clear();trails.clear();heights.clear();panesBroken.clear();draftSerial=~0u;solvedTic=-1;outsideNow=solvedSpeed=NAN;}
+void draftsShutdown() {links.clear();roomLinks.clear();trails.clear();heights.clear();panesBroken.clear();draftSerial=~0u;solvedTic=-1;outsideNow=solvedSpeed=NAN;travelTic=INT_MIN/2;restDue=false;}
 } // namespace doom3d

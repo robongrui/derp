@@ -3,8 +3,10 @@
      DOS DOOM sounded on Sound Blaster cards. Built from the chip manual and
      the published lump formats; see opl_music_spec.md.
    - SoundFont: General MIDI instruments from a .sf2 bank, closer to the
-     Sound Canvas the scores were written on. */
+     Sound Canvas the scores were written on.
+   Or a recording plays instead of a score (recorded_music.c). */
 #include <stdio.h>
+#include <stdlib.h>
 #include "doomdef.h"
 #include "m_argv.h"
 #include "w_wad.h"
@@ -15,12 +17,15 @@
 #include "opl_genmidi.h"
 #include "opl_voices.h"
 #include "sf2_synth.h"
+#include "recorded_music.h"
 
 /* Full-volume gains. The loudest OPL score, MAP01, peaks at 0.83 on the
    chip. Through GeneralUser GS no score clips at 0.3, which sits a little
    under the OPL. */
 #define OPL_GAIN	1.0f
 #define SF2_GAIN	0.3f
+/* Recordings are mastered near full scale; this sits them by the SoundFont. */
+#define RECORDED_GAIN	0.5f
 
 static genmidi_instrument_t	instruments[GENMIDI_COUNT];
 static boolean		opl_ready, opl_failed;
@@ -28,7 +33,7 @@ static sf2_bank_t*	bank;
 static score_t		score;
 static music_player_t	player;
 static const music_synth_t*	synth;
-static boolean		song_loaded, music_paused;
+static boolean		song_loaded, music_paused, recorded;
 static float		volume = 8 / 15.0f;
 
 static boolean start_opl (int rate)
@@ -72,24 +77,48 @@ boolean MixerMusic_Register (const void* data, int size, int rate, boolean sound
     return true;
 }
 
+boolean MixerMusic_RegisterRecorded (void* bytes, int size, int rate, float gain)
+{
+    MixerMusic_UnRegister ();
+    if (M_CheckParm ("-nomusic"))
+    {
+	free (bytes);
+	return false;
+    }
+    if (!Recorded_Load (bytes, (size_t) size, rate, gain))
+    {
+	fprintf (stderr, "Could not read the recorded song.\n");
+	return false;
+    }
+    recorded = song_loaded = true;
+    return true;
+}
+
 void MixerMusic_UnRegister (void)
 {
     MixerMusic_Stop ();
     song_loaded = false;
     Score_Clear (&score);
+    if (recorded)
+	Recorded_Unload ();
+    recorded = false;
 }
 
 void MixerMusic_Play (boolean loop)
 {
     if (!song_loaded)
 	return;
-    Player_Start (&player, &score, synth, loop);
+    if (recorded)
+	Recorded_Start (loop);
+    else
+	Player_Start (&player, &score, synth, loop);
     music_paused = false;
 }
 
 void MixerMusic_Stop (void)
 {
     Player_Stop (&player);
+    Recorded_Stop ();
 }
 
 void MixerMusic_Pause (void) { music_paused = true; }
@@ -102,7 +131,7 @@ void MixerMusic_SetVolume (int level)
 
 struct tsf* MixerMusic_UseBank (struct tsf* using)
 {
-    if (synth == &SF2_Synth)
+    if (synth == &SF2_Synth && !recorded)
 	MixerMusic_UnRegister ();
     bank = using;
     return SF2_Use (using);
@@ -110,7 +139,14 @@ struct tsf* MixerMusic_UseBank (struct tsf* using)
 
 void MixerMusic_Render (float* stereo, int frames)
 {
-    if (music_paused || !player.playing)
+    if (music_paused)
+	return;
+    if (recorded)
+    {
+	Recorded_Mix (stereo, frames, volume * RECORDED_GAIN);
+	return;
+    }
+    if (!player.playing)
 	return;
     Player_Mix (&player, stereo, frames, volume * (synth == &SF2_Synth ? SF2_GAIN : OPL_GAIN));
 }

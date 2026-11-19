@@ -15,24 +15,35 @@ if [ ! -x "$source_app/Contents/MacOS/Play DERP" ]; then
     echo "Build the SDL app first; see BUILDING.md." >&2
     exit 1
 fi
-# The Heretic program goes in Contents/MacOS: the launcher hands Heretic WADs over.
-if [ ! -x "$build_dir/derp-heretic" ]; then
-    echo "Build derp-heretic too; see BUILDING.md." >&2
-    exit 1
-fi
+# The launcher (the app's program, Info.plist) and the Heretic program go in
+# Contents/MacOS beside Play DERP: the launcher starts the one a WAD needs.
+for program in derp-heretic DERP; do
+    if [ ! -x "$build_dir/$program" ]; then
+        echo "Build $program too; see BUILDING.md." >&2
+        exit 1
+    fi
+done
 mkdir -p "$output_dir"
 rm -rf "$output_app"
 ditto "$source_app" "$output_app"
 cp "$build_dir/derp-heretic" "$output_app/Contents/MacOS/derp-heretic"
+cp "$build_dir/DERP" "$output_app/Contents/MacOS/DERP"
 resources="$output_app/Contents/Resources"
 mkdir -p "$resources/Licenses"
 cp "$project_dir/LICENSE.TXT" "$resources/Licenses/GPL-3.txt"
 cp "$project_dir/NOTICE.txt" "$resources/Licenses/NOTICE.txt"
 cp "$project_dir/THIRD_PARTY.md" "$resources/Licenses/THIRD_PARTY.md"
+cp "$project_dir/barks/VOICES-LICENSE.txt" "$resources/Licenses/VOICES.txt"
 cp "$project_dir/third_party/SDL3-NOTICES.txt" "$resources/Licenses/SDL3-third-party-notices.txt"
 cp "$project_dir/PLAY.md" "$resources/PLAY.md"
 if [ -f "$build_dir/_deps/tinysoundfont-src/LICENSE" ]; then
     cp "$build_dir/_deps/tinysoundfont-src/LICENSE" "$resources/Licenses/TinySoundFont-MIT.txt"
+fi
+if [ -f "$build_dir/_deps/stb-src/LICENSE" ]; then
+    cp "$build_dir/_deps/stb-src/LICENSE" "$resources/Licenses/stb.txt"
+fi
+if [ -f "$build_dir/_deps/drlibs-src/LICENSE" ]; then
+    cp "$build_dir/_deps/drlibs-src/LICENSE" "$resources/Licenses/dr_libs.txt"
 fi
 if [ -f "$build_dir/_deps/nukedopl3-src/LICENSE" ]; then
     cp "$build_dir/_deps/nukedopl3-src/LICENSE" "$resources/Licenses/Nuked-OPL3-LGPL-2.1.txt"
@@ -50,5 +61,6 @@ if [ -f "$freedoom_dir/COPYING.txt" ]; then
     done
 fi
 codesign --force --sign - "$output_app/Contents/MacOS/derp-heretic"
+codesign --force --sign - "$output_app/Contents/MacOS/Play DERP"
 codesign --force --sign - "$output_app"
 echo "Ready: $output_app"

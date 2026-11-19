@@ -39,6 +39,36 @@ inline bool paintedSeam(const std::vector<float> &height,int w,int h,int x,int y
     }
     return false;
 }
+// paintedSeam's averages along d (d[0], d[1]), for every texel at once: the height over the seven
+// texels along the line through it, summed in paintedSeam's order, so the same to the bit. A seam
+// test is then seven lookups; as it stood it was 49 wrapped taps, most of a texture's load.
+struct PaintedLines {
+    int w=0,h=0;
+    std::vector<float> mean;
+    std::vector<int> wrapX,wrapY;   // texel columns and row starts from -pad to past the edge
+    static constexpr int pad=8;
+    PaintedLines(const std::vector<float> &height,int w,int h,const int d[4]):w(w),h(h),mean((size_t)w*h),wrapX(w+2*pad),wrapY(h+2*pad) {
+        const int along=3;
+        for(int i=0;i<w+2*pad;++i)wrapX[i]=((i-pad)%w+w)%w;
+        for(int i=0;i<h+2*pad;++i)wrapY[i]=((i-pad)%h+h)%h*w;
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
+            float sum=0;
+            for(int k=-along;k<=along;++k)sum+=height[(size_t)wrapY[y+k*d[1]+pad]+wrapX[x+k*d[0]+pad]];
+            mean[(size_t)y*w+x]=sum/(2*along+1);
+        }
+    }
+    float at(int x,int y) const {return mean[(size_t)wrapY[y+pad]+wrapX[x+pad]];}
+};
+// paintedSeam from the averages (lines: made for the same d; widest up to 4).
+inline bool paintedSeam(const PaintedLines &lines,int x,int y,const int d[4],bool bevels=true,int widest=2) {
+    const float valley=0.08f,bevel=0.3f;
+    float c=lines.at(x,y);
+    for(int across=2;across<=widest;++across) {
+        float a=lines.at(x+across*d[2],y+across*d[3]),b=lines.at(x-across*d[2],y-across*d[3]);
+        if(c<std::min(a,b)-valley||(bevels&&c<std::max(a,b)-bevel&&c<=std::min(a,b)+0.02f)) return true;
+    }
+    return false;
+}
 inline uint16_t packTileOffset(int dx,int dy) {return (uint16_t)((dx+128)<<8|(dy+128));}
 // Flats: tiles of any shape (squares, hexagons, cobbles), seams in four
 // directions. Seams thicken by a texel to close what gaps remain, the texels
@@ -54,8 +84,9 @@ inline std::vector<uint16_t> flatTiles(const std::vector<float> &height,int w,in
     auto index=[&](int x,int y){return (size_t)wrap(y,h)*w+wrap(x,w);};
     const int directions[4][4]={{1,0,0,1},{0,1,1,0},{1,1,1,-1},{1,-1,1,1}};
     std::vector<char> thin(count,0),seam(count,0);
-    for(int y=0;y<h;++y)for(int x=0;x<w;++x)for(const auto &d:directions)
-        if(paintedSeam(height,w,h,x,y,d)) {thin[(size_t)y*w+x]=1;break;}
+    const PaintedLines lines[4]={{height,w,h,directions[0]},{height,w,h,directions[1]},{height,w,h,directions[2]},{height,w,h,directions[3]}};
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x)for(int k=0;k<4;++k)
+        if(paintedSeam(lines[k],x,y,directions[k])) {thin[(size_t)y*w+x]=1;break;}
     const int steps[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
     size_t thinCount=0,seamCount=0;
     for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
@@ -140,9 +171,10 @@ inline std::vector<uint16_t> wallTiles(const std::vector<float> &height,int w,in
     if(w<16||h<16||height.size()!=count) return none;
     const int alongRows[4]={1,0,0,1},alongColumns[4]={0,1,1,0};
     std::vector<char> rows(count),columns(count);
+    const PaintedLines rowLines(height,w,h,alongRows),columnLines(height,w,h,alongColumns);
     for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
-        rows[(size_t)y*w+x]=paintedSeam(height,w,h,x,y,alongRows,false,4);
-        columns[(size_t)y*w+x]=paintedSeam(height,w,h,x,y,alongColumns,false,4);
+        rows[(size_t)y*w+x]=paintedSeam(rowLines,x,y,alongRows,false,4);
+        columns[(size_t)y*w+x]=paintedSeam(columnLines,x,y,alongColumns,false,4);
     }
     const int smallest=16;const float strong=0.5f,joint=0.7f,standout=2.5f;
     // Seam lines around a repeat of n from each line's share of seam texels,

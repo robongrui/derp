@@ -123,7 +123,7 @@ void MadeBank_Build(void)
 
 int MadeBank_Variants(int kind)
 {
-    return (kind >= IMPACT_STEP_STONE && kind <= IMPACT_SPLASH_THICK) || (kind >= IMPACT_RUN_STONE && kind <= IMPACT_GEAR_ARMOR_RUN)
+    return kind >= IMPACT_CLAW_HARD || (kind >= IMPACT_STEP_STONE && kind <= IMPACT_SPLASH_THICK) || (kind >= IMPACT_RUN_STONE && kind <= IMPACT_GEAR_ARMOR_RUN)
         ? MADE_STEP_VARIANTS : MADE_VARIANTS;
 }
 

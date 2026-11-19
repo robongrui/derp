@@ -33,6 +33,8 @@ rcsid[] = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 #include "doomstat.h"
 #include "r_state.h"
 #include "p_library.h"
+#include "p_derp.h"
+#include "p_mind.h"
 
 byte*		save_p;
 
@@ -53,7 +55,8 @@ size_t P_SaveGameBufferSize(void)
     size_t largest = 0;
     for (size_t i = 0; i < sizeof(records) / sizeof(records[0]); ++i)
         if (records[i] > largest) largest = records[i];
-    size_t size = 64 + MAXPLAYERS * (sizeof(player_t) + SAVE_ALIGNMENT);
+    // 8: Random weather's seed past the end marker (g_game.c).
+    size_t size = 64 + 8 + MAXPLAYERS * (sizeof(player_t) + SAVE_ALIGNMENT);
     size += (size_t)numsectors * 7 * sizeof(short);
     size += (size_t)numlines * (3 + 2 * 5) * sizeof(short);
     for (thinker_t *th = thinkercap.next; th != &thinkercap; th = th->next)
@@ -329,6 +332,8 @@ void P_UnArchiveThinkers (void)
 	    save_p += sizeof(*mobj);
 	    mobj->state = &states[(uintptr_t)mobj->state];
 	    mobj->target = NULL;
+	    P_DerpLoaded (mobj);
+	    P_MindReset (mobj);
 	    if (mobj->player)
 	    {
 		mobj->player = &players[(uintptr_t)mobj->player-1];

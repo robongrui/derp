@@ -1,0 +1,5 @@
+// DERP mode's looks picked by hand for TNT: Evilution (tnt.wad), in DERPINFO's words
+// (DERPINFO.md): weather, wind, the map's own hour and temperature, the sun.
+// Only maps the IWAD itself holds get them, and only in DERP mode; a map's
+// DERPINFO lump and the player's derpinfo.txt win over them. Written in game
+// with the dev tools (Shift+I saves a map); baked into the program at build.

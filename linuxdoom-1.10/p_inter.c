@@ -40,7 +40,13 @@ rcsid[] = "$Id: p_inter.c,v 1.4 1997/02/03 22:45:11 b1 Exp $";
 #include "am_map.h"
 
 #include "p_local.h"
+#include "p_barks.h"
+#include "p_derplog.h"
 #include "p_phobos.h"
+#include "p_derp.h"
+#include "p_senses.h"
+#include "p_brain.h"
+#include "p_tactics.h"
 
 #include "s_sound.h"
 
@@ -49,6 +55,9 @@ rcsid[] = "$Id: p_inter.c,v 1.4 1997/02/03 22:45:11 b1 Exp $";
 #endif
 #include "p_inter.h"
 #include "d_deh.h"
+#include "p_pickup_flash.h"
+#include "p_swept.h"
+#include "p_focus.h"
 
 
 #define BONUSADD	6
@@ -347,7 +356,8 @@ P_TouchSpecialThing
     int		i;
     fixed_t	delta;
     int		sound;
-		
+    pickup_before_t before;
+
     delta = special->z - toucher->z;
 
     if (delta > toucher->height
@@ -365,6 +375,7 @@ P_TouchSpecialThing
     // Can happen with a sliding player corpse.
     if (toucher->health <= 0)
 	return;
+    P_PickupBefore (player, &before);
 
     // Identify by sprite.
     switch (special->sprite)
@@ -655,10 +666,13 @@ P_TouchSpecialThing
 	I_Error ("P_SpecialThing: Unknown gettable thing");
     }
 	
+    // Gone: those guarding it know (DERP's monsters).
+    P_DerpKeyTaken (special);
     if (special->flags & MF_COUNTITEM)
 	player->itemcount++;
     P_RemoveMobj (special);
     player->bonuscount += BONUSADD;
+    P_PickupFlash (player, &before);
     if (player == &players[consoleplayer])
 	S_StartSound (NULL, sound);
 }
@@ -674,6 +688,11 @@ P_KillMobj
 {
     mobjtype_t	item;
     mobj_t*	mo;
+
+    // DERP: a headshot kills in silence; a kneeling body falls as it is.
+    P_DerpKilled (target, source);
+    // DERP, Authored: his kill puts a charge of slow motion back.
+    P_FocusKilled (source, target);
 	
     target->flags &= ~(MF_SHOOTABLE|MF_FLOAT|MF_SKULLFLY);
 
@@ -801,6 +820,14 @@ P_DamageMobj
     if (R_DamageHit)
 	R_DamageHit (target, inflictor, source, damage);
 	
+    // Authored: kicked off its feet and still in the air, a shotgun's hit is its end (p_swept.c).
+    if (P_SweptAirKill (target, inflictor, source))
+    {
+	if (damage < target->health)
+	    damage = target->health;
+	P_SweptBlast (target, source);
+    }
+
     player = target->player;
     if (player && gameskill == sk_baby)
 	damage >>= 1; 	// take half damage in trainer mode
@@ -838,6 +865,7 @@ P_DamageMobj
 	ang >>= ANGLETOFINESHIFT;
 	target->momx += FixedMul (thrust, finecosine[ang]);
 	target->momy += FixedMul (thrust, finesine[ang]);
+	P_DerpShove (target, source ? source : inflictor);
     }
     
     // player specific
@@ -850,6 +878,15 @@ P_DamageMobj
 	    damage = target->health - 1;
 	}
 	
+
+	// No death (F5 GOD MODE's third state, for recording): every hit
+	// lands, the director sees the health fall, but none is the last.
+	// Telefrags and crushers too, as the hell hack above.
+	if (debugnodeath && P_DebugAllowed ()
+	    && damage >= target->health)
+	{
+	    damage = target->health - 1;
+	}
 
 	// Below certain threshold,
 	// ignore damage in GOD mode, or with INVUL power.
@@ -893,6 +930,8 @@ P_DamageMobj
     }
     
     // do the damage	
+    P_DerpLogHit (target, source, damage);
+    P_DerpBarkHit (target, source, damage);
     target->health -= damage;	
     if (target->health <= 0)
     {
@@ -900,7 +939,7 @@ P_DamageMobj
 	return;
     }
 
-    if ( (P_Random () < target->info->painchance)
+    if ( P_DerpPain (target, damage)
 	 && !(target->flags&MF_SKULLFLY) )
     {
 	target->flags |= MF_JUSTHIT;	// fight back!
@@ -910,18 +949,25 @@ P_DamageMobj
 			
     target->reactiontime = 0;		// we're awake now...	
 
+    // A DERP soldier hit by a fellow soldier's stray shot does not turn on
+    // him (P_DerpFriendlyFire); demons still fight back, as in vanilla.
     if ( (!target->threshold || target->type == MT_VILE)
 	 && source && source != target
-	 && source->type != MT_VILE)
+	 && source->type != MT_VILE
+	 && !P_DerpFriendlyFire (target, source))
     {
 	// if not intent on another player,
 	// chase after this one
 	target->target = source;
 	target->threshold = BASETHRESHOLD;
+	P_DerpLog (target, "turns on #%d", source->serial);
+	P_DerpSquadAnswers (target, source);
 	if (target->state == &states[target->info->spawnstate]
 	    && target->info->seestate != S_NULL)
 	    P_SetMobjState (target, target->info->seestate);
     }
+    // Shot, a DERP monster knows where from.
+    P_BrainHit (target, source);
 			
 }
 

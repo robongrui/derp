@@ -12,11 +12,17 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
     vec3 across=vec3(c.right.xy,0);
     vec3 n=normalize(across*packed.x-vec3(0,0,1)*packed.y+toward*sqrt(saturate(1.0-dot(packed,packed))));
     vec3 view=normalize(c.eye.xyz-vWorld);
+    spriteFacing=saturate(dot(n,view));
     uvec2 mask=vLightMask;
+    // MODE_RIM: by a Flashbulb blast, a body's or a piece's edges that face the light are picked out whichever
+    // side it is seen from, so what the blast threw reads against a dark room (the backlit rim below needs the
+    // light behind it).
+    bool edged=(vMode&(MODE_RIM|MODE_SOFT|MODE_WOUND|MODE_PICKUP))==MODE_RIM;
     // MODE_WET_SPRITE: airborne blood glints on its rounded normals like the
-    // floor blood, in a brighter palette red and two hard steps.
+    // floor blood (world/blood_material.glsl), in each light's own colour and
+    // two hard steps, stronger at its rim.
     bool wetSprite=(vMode&MODE_WET_SPRITE)!=0u;
-    vec3 wetColor=wetSprite?texelFetch(paletteLUT,ivec3(round(saturate(color.rgb*1.8+0.04)*31.0)),0).rgb:vec3(0);
+    float wetCoat=wetSprite?bloodFresnel(n,view,BLOOD_COAT_FACING):0.0;
     if(c.bake.z>0.0&&vStatic!=0u) {
         // Bake-only lights: the static light in the tint takes the
         // same shaping as a dynamic light from where it mostly comes.
@@ -29,7 +35,7 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
         if(wetSprite) {
             float highlight=pow(saturate(dot(n,normalize(toLight+view))),24.0);
             highlight=highlight>0.5?1.0:highlight>0.2?0.5:0.0;
-            specular+=wetColor*tint*statics.w*highlight*0.8;
+            specular+=bloodCoat(tint,color.rgb)*statics.w*highlight*wetCoat*0.8;
         }
     }
     // Static lights' shaping, kept apart: it may take back at most what the
@@ -55,6 +61,8 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
         float facing=saturate(dot(n,toLight));
         // Backlit edges: silhouette normals that face the light glow.
         float rim=pow(1.0-saturate(dot(n,view)),2.0)*facing*saturate(0.35-dot(toLight,view));
+        // (All round the outline, most toward the light: only where it faced the light it sat on edges lit already.)
+        if(edged) rim=max(rim,pow(1.0-saturate(dot(n,view)),1.5)*(0.45+0.55*facing)*0.8);
         // Broad lights (glowing surfaces, low directionality in color.w)
         // shade the silhouette less than point lights (0.75).
         float shape=mix(1.0,0.4+0.6*facing,saturate(lights[i].color.w/0.75))+1.6*rim;
@@ -69,7 +77,7 @@ void billboardLight(vec4 color,inout vec3 pulse,inout vec3 specular) {
         if(wetSprite) {
             float highlight=pow(saturate(dot(n,normalize(toLight+view))),24.0);
             highlight=highlight>0.5?1.0:highlight>0.2?0.5:0.0;
-            specular+=wetColor*lights[i].color.rgb*amount*highlight*0.8;
+            specular+=bloodCoat(lights[i].color.rgb,color.rgb)*amount*highlight*wetCoat*0.8;
         }
     }
     pulse+=max(shaped,-0.6*tint);

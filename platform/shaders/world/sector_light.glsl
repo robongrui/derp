@@ -50,7 +50,9 @@ float flatContact(vec2 xy,uint sector,bool ceiling) {
     float value=0.0,total=0.0;
     for(int n=0;n<4;++n) {
         ivec2 o=ivec2(n&1,n>>1),cell=clamp(q+o,ivec2(0),size-1);
-        if(uint(round(texelFetch(seams,cell,0).x*65535.0))!=sector) continue;
+        // Whole-level lighting (c.bake.x 2) reads the floor as one: any cell of this floor (bake.glsl's sameFlat).
+        uint owner=uint(round(texelFetch(seams,cell,0).x*65535.0));
+        if(!sameFlat(owner,sector,ceiling)) continue;
         float w=(o.x!=0?f.x:1.0-f.x)*(o.y!=0?f.y:1.0-f.y)+1e-4;
         vec4 v=texelFetch(contact,cell,0);
         value+=(ceiling?v.g:v.r)*w;total+=w;
@@ -120,12 +122,19 @@ float flatAirAt(vec3 world,vec3 normal,uint sector) {
 // parts of it that take the sun's and the sky's tint. even: a whiteout's
 // even light there (flatAir), which takes the sun's shadows and the shade of
 // seeing less sky.
+// Whole-level lighting (c.bake.x 2; PLAN-light-model.md, step 6): the outside
+// is one thing, under the sky or under a porch's roof (sectorInfo w below 0),
+// and the sky's light there is not this rule's: it comes with the bounce,
+// from the one sky every surface is lit by (scene3d/bake_bounce.cpp). The
+// rule adds the sun where the bake saw it, by the yard's level
+// (scene3d/room_fill.cpp).
 vec3 lightRule(uint sector,float light,float visible,float open,bool windowLight,float even) {
-    bool sun=c.sun.w>0.0&&visible>=0.0;
+    bool sun=c.sun.w>0.0&&visible>=0.0,whole=c.bake.x>1.5;
     float v=sun?visible:0.0;
-    if(sectorInfo[sector].w>0.0) {
-        float shade=sun?c.outdoor.x*(1.0-even):0.0,gain=sun?c.outdoor.y*(1.0-even):0.0,room=outdoorShape(sector).y;
+    if(sectorInfo[sector].w>0.0||(whole&&sectorInfo[sector].w<0.0)) {
+        float shade=sun?c.outdoor.x*(1.0-even):0.0,gain=sun?c.outdoor.y*(1.0-even):0.0,room=whole?0.0:outdoorShape(sector).y;
         float k=light*(1.0-shade),u=light*(1.0+gain),h=mix(saturate(open),1.0,even);
+        if(whole&&c.fx2.y>0.0&&c.bake.y>0.0) {float s=(u-k)*v*max(c.phobos.w,1.0);return vec3(s,s,0.0);}   // the sun, at daylight's scale
         float d=c.fx2.y<=0.0?k:room>0.0?min(room,light):k*0.75;
         if(room>0.0) k=max(k,min(room,light));
         float level=d+(k-d)*h+(u-k)*v;
@@ -181,19 +190,20 @@ float flowLight(vec3 world,vec3 normal,uint sector,float light) {
 // surface data, sun and sky light, occlusion and the distance fade. shown is
 // the light before contact shading; sunShare and skyShare the parts that take
 // the sun's and the sky's tint.
-struct SectorLit { float light,shown,sunShare,skyShare,occlusion; vec4 baked,direction; vec3 bounce; };
-SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
+struct SectorLit { float light,shown,sunShare,skyShare,occlusion; vec4 baked,direction; vec3 bounce,basis; };
+// at: where on the map (vWorld, or for a drift heaped on a wall the ground in front).
+SectorLit sectorLighting(vec3 at,vec3 normal,bool mapped,uint sector,uint bakeFlags) {
     float light=vLight,sunShare=0.0;
     bool seamed=mapped&&c.map.w>0.0&&abs(normal.z)>0.5;
     float seamedLight=light;
-    if(seamed) light=seamedLight=seamLight(vWorld.xy,sector,normal.z<0.0,light);
-    if(mapped&&(bakeFlags&FEATURE_LIGHT_FLOW)!=0u) light=flowLight(vWorld,normal,sector,light);
+    if(seamed) light=seamedLight=seamLight(at.xy,sector,normal.z<0.0,light);
+    if(mapped&&(bakeFlags&FEATURE_LIGHT_FLOW)!=0u) light=flowLight(at,normal,sector,light);
     // A whiteout's even light (flatAir): by the sector, and wherever the
     // bake saw any sky (ambient.x), as on a map that is all streets the
     // sectors don't tell the open air; rooms that see none keep their shade.
-    vec3 bounce=vec3(0);vec2 ambient=vec2(0,1);vec4 direction=vec4(0.5,0.5,0,0);
-    vec4 baked=mapped?bakedSurface(normal,sector,bounce,ambient,direction):vec4(0,0,0,-1);
-    float even=mapped?max(flatAirAt(vWorld,normal,sector),evenAir()*smoothstep(0.0,0.25,ambient.x)):0.0;
+    vec3 bounce=vec3(0),basis=vec3(0);vec2 ambient=vec2(0,1);vec4 direction=vec4(0.5,0.5,0,0);
+    vec4 baked=mapped?bakedSurface(at,normal,sector,bounce,ambient,direction,basis):vec4(0,0,0,-1);
+    float even=mapped?max(flatAirAt(at,normal,sector),evenAir()*smoothstep(0.0,0.25,ambient.x)):0.0;
     float flowAdd=light-seamedLight;
     // Static light fills the headroom above this light, which seams and flow
     // already carry smoothly across sector edges, so a bright sector beside a
@@ -201,20 +211,38 @@ SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
     float shownLight=light;
     // Contact shading darkens the baked lamp and bounce light too (through
     // occlusion), or lamp-lit rooms would wash their corners out.
-    float contact=mapped&&c.map.w>0.0?mix(contactShade(vWorld-vec3(0.0,0.0,vLift),normal,sector),1.0,even):1.0;
+    // Whole-level lighting (c.bake.x 2) takes contact shading at wholeContact of its depth:
+    // the solve and the baked occlusion below already darken a wall's foot and a corner, and
+    // at full depth on top of them a narrow porch, all of it within reach of its wall, stood
+    // a third darker than the yard beside it, its roof's edge drawn across the floor. Without
+    // any the rooms stood flat and seemed to glow.
+    const float wholeContact=0.5;
+    float contact=mapped&&c.map.w>0.0?mix(contactShade(at-vec3(0.0,0.0,vLift),normal,sector),1.0,even):1.0;
+    if(c.bake.x>1.5) contact=mix(1.0,contact,wholeContact);
     light*=contact;
     // Sun and sky light: the one rule (lightRule), blended across seams on
-    // floors and ceilings, its change from the sector light in 1/16 steps.
+    // floors and ceilings. The sun's change from the sector light comes in
+    // 1/16 steps; the sky's does not: how much sky a wall sees fades over
+    // tens of units, and stepped it drew a hard edge where the skyline of a
+    // building behind the eye crossed a facade, a shadow with nothing to cast
+    // it (MAP13). Constant per texel all the same (the bake is read at texel
+    // centres), so it stays chunky.
     // With window light (FEATURE_WINDOW_LIGHT) the openings light indoor
     // surfaces from the bake, with direction, so they take no sky lift.
     float skyShare=0.0;
     if(mapped&&(c.sun.w>0.0||c.fx2.y>0.0)) {
         bool windowLight=(bakeFlags&FEATURE_WINDOW_LIGHT)!=0u;
         vec2 parts;
-        vec4 r=seamed?seamRule(vWorld.xy,sector,normal.z<0.0,seamedLight,flowAdd,contact,baked.a,ambient.x,windowLight,parts)
+        vec4 r=seamed?seamRule(at.xy,sector,normal.z<0.0,seamedLight,flowAdd,contact,baked.a,ambient.x,windowLight,parts)
                      :vec4(lightRule(sector,light,baked.a,ambient.x,windowLight,even),light);
-        light=r.w+round((r.x-r.w)*16.0)/16.0;
+        light=r.x-r.y+round(r.y*16.0)/16.0;
         sunShare=r.y/max(r.x,0.001);skyShare=r.z/max(r.x,0.001);
+        // Whole-level lighting outside: the lamps' headroom is the one above the sun alone
+        // (the level there is the yard's, which lights nothing itself). How a lamp counts
+        // against daylight is settled at the lamp (scene3d/bake_lights.cpp's dayWeak), not
+        // here: by the place it shines on, a pool's light was weak outside a doorway and
+        // strong just inside it, a line on the floor with the room the greener side.
+        if(c.bake.x>1.5&&sectorInfo[sector].w!=0.0) shownLight=light;
     }
     // Baked occlusion (FEATURE_BAKED_OCCLUSION) darkens the sector and baked light, not dynamic lights.
     float occlusion=1.0;
@@ -222,5 +250,5 @@ SectorLit sectorLighting(vec3 normal,bool mapped,uint sector,uint bakeFlags) {
     occlusion*=contact;
     if(c.effects.z==0.0) light*=clamp(1.0-vDistance/3200.0,0.35,1.0);
     else light=1.0;
-    return SectorLit(light,shownLight,sunShare,skyShare,occlusion,baked,direction,bounce);
+    return SectorLit(light,shownLight,sunShare,skyShare,occlusion,baked,direction,bounce,basis);
 }

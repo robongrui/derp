@@ -80,6 +80,58 @@ int main(void)
     CHECK(parse("map MAP01 { mirror = 8, 128, 8, 192, 16, 112\n mirror = none }", "MAP01", &map) == 1 && map.mirrors == 0);
     CHECK(parse(lump, "E1M1", &map) == 1 && map.mirrors == 0);
 
+    /* The sun at one of F4's hours: its own, beside the map's own sun; no sun.night. */
+    CHECK(parse("map E1M1 { sun = 200, 50\n Sun.Dusk = -100, 8\n sun.night = 10, 10\n sun.dawn = 1 }", "E1M1", &map) == 1);
+    CHECK(map.sun == 1 && map.hourSun[5] == 1 && NEAR(map.hourSunAngle[5], 260) && NEAR(map.hourSunHeight[5], 8));
+    CHECK(!map.hourSun[1] && !map.hourSun[6] && !map.hourSun[0]);
+    CHECK(parse(lump, "E1M1", &map) == 1 && !map.hourSun[5]);
+
+    /* The player's file: a line set, replaced, a second key and map added,
+       the rest kept as it stood, and taken out again. */
+    {
+        const char *file = "derp_info_test.txt";
+        int had;
+        FILE *f = fopen(file, "wb");
+        CHECK(f);
+        fputs("// mine\nmap E1M1\n{\n    weather = snow // keep\n}\nmap MAP01 { sun = 1, 2 }", f);
+        fclose(f);
+        CHECK(DerpInfo_FileSet(file, "E1M1", "sun.dusk", "260, 8", &had) && !had);
+        CHECK(DerpInfo_FileSet(file, "E1M1", "sun.dusk", "250, 9", &had) && had);
+        CHECK(DerpInfo_FileSet(file, "E1M1", "sun", "10, 20", &had) && !had);
+        CHECK(DerpInfo_FileSet(file, "MAP02", "sun", "30, 40", &had) && !had);
+        DerpInfo_Unset(&map);
+        CHECK(DerpInfo_FileRead(file, "E1M1", &map) == 1);
+        CHECK(map.weather == 2 && map.sun == 1 && NEAR(map.sunAngle, 10) && map.hourSun[5] && NEAR(map.hourSunAngle[5], 250));
+        DerpInfo_Unset(&map);
+        CHECK(DerpInfo_FileRead(file, "MAP01", &map) == 1 && NEAR(map.sunHeight, 2));
+        DerpInfo_Unset(&map);
+        CHECK(DerpInfo_FileRead(file, "MAP02", &map) == 1 && NEAR(map.sunAngle, 30));
+        CHECK(DerpInfo_FileSet(file, "E1M1", "sun.dusk", NULL, &had) && had);
+        CHECK(DerpInfo_FileSet(file, "E1M1", "sun.dusk", NULL, &had) && !had);
+        DerpInfo_Unset(&map);
+        CHECK(DerpInfo_FileRead(file, "E1M1", &map) == 1 && map.weather == 2 && !map.hourSun[5] && map.sun == 1);
+        remove(file);
+        CHECK(DerpInfo_FileSet(file, "E1M1", "sun", NULL, &had) && !had);
+        CHECK(!fopen(file, "rb"));
+    }
+
+    /* The map's own hour and temperature; night is an hour, but has no sun. */
+    CHECK(parse("map MAP01 { time = Dusk\n temperature = -45 }", "MAP01", &map) == 1);
+    CHECK(map.time == 5 && map.temperatureSet && map.temperature == -30);
+    CHECK(parse("map MAP01 { time = night\n temperature = 21.4\n time = teatime }", "MAP01", &map) == 1);
+    CHECK(map.time == 6 && map.temperature == 21);
+    CHECK(parse(lump, "E1M1", &map) == 1 && map.time == 0 && !map.temperatureSet);
+
+    /* Layers: what the one above sets wins, the rest shows through. */
+    {
+        derp_map under, over;
+        parse("map MAP01 { weather = snow\n time = dawn\n sun = 10, 20\n sun.dusk = 30, 5 }", "MAP01", &under);
+        parse("map MAP01 { weather = rain\n temperature = 5 }", "MAP01", &over);
+        DerpInfo_Over(&under, &over);
+        CHECK(under.weather == 1 && under.time == 1 && under.temperatureSet && under.temperature == 5);
+        CHECK(under.sun == 1 && NEAR(under.sunAngle, 10) && under.hourSun[5] && NEAR(under.hourSunAngle[5], 30));
+    }
+
     puts("DERPINFO checks passed");
     return 0;
 }

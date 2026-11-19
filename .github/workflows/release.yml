@@ -64,6 +64,9 @@ jobs:
           wayland-protocols libdecor-0-dev libegl-dev libdrm-dev libgbm-dev libudev-dev libdbus-1-dev
           libasound2-dev libpulse-dev
 
+      - name: Install the shader compilers
+        run: sh scripts/install-shader-tools.sh
+
       # SDL is always built from source and linked statically, so the game is a
       # single program with no SDL library to ship beside it.
       - name: Configure
@@ -73,9 +76,9 @@ jobs:
           -DDOOM_RELEASE_VERSION="$DOOM_RELEASE_VERSION" -DDOOM_GAME_DATA="$FREEDOOM_WAD"
           ${{ matrix.configure }}
 
-      # derp-heretic too: the launcher hands Heretic WADs to it, beside the game.
+      # derp-heretic and the launcher (DERP) too: the launcher starts the program a WAD needs.
       - name: Build
-        run: cmake --build build/release --config Release --parallel 4 --target doom derp-heretic
+        run: cmake --build build/release --config Release --parallel 4 --target doom derp-heretic derp-launcher
 
       - name: Package Windows or Linux
         if: matrix.platform != 'mac'

@@ -41,6 +41,8 @@ rcsid[] = "$Id: r_things.c,v 1.5 1997/02/03 16:47:56 b1 Exp $";
 #include "r_local.h"
 
 #include "doomstat.h"
+#include "p_local.h"
+#include "p_tactics.h"
 
 
 
@@ -119,17 +121,15 @@ R_InstallSpriteLump
     if ((int)frame > maxframe)
 	maxframe = frame;
 		
+    // Lumps arrive newest first (see R_InitSpriteDefs), so whatever
+    //  already claimed a frame or rotation came from a later WAD and
+    //  wins; older copies are skipped instead of being an error.
     if (rotation == 0)
     {
 	// the lump should be used for all rotations
-	if (sprtemp[frame].rotate == false)
-	    I_Error ("R_InitSprites: Sprite %s frame %c has "
-		     "multip rot=0 lump", spritename, 'A'+frame);
+	if (sprtemp[frame].rotate != -1)
+	    return;
 
-	if (sprtemp[frame].rotate == true)
-	    I_Error ("R_InitSprites: Sprite %s frame %c has rotations "
-		     "and a rot=0 lump", spritename, 'A'+frame);
-			
 	sprtemp[frame].rotate = false;
 	for (r=0 ; r<8 ; r++)
 	{
@@ -141,18 +141,15 @@ R_InstallSpriteLump
 	
     // the lump is only used for one rotation
     if (sprtemp[frame].rotate == false)
-	I_Error ("R_InitSprites: Sprite %s frame %c has rotations "
-		 "and a rot=0 lump", spritename, 'A'+frame);
-		
+	return;
+
     sprtemp[frame].rotate = true;
 
     // make 0 based
-    rotation--;		
+    rotation--;
     if (sprtemp[frame].lump[rotation] != -1)
-	I_Error ("R_InitSprites: Sprite %s : %c : %c "
-		 "has two lumps mapped to it",
-		 spritename, 'A'+frame, '1'+rotation);
-		
+	return;
+
     sprtemp[frame].lump[rotation] = lump - firstspritelump;
     sprtemp[frame].flip[rotation] = (byte)flipped;
 }
@@ -215,7 +212,7 @@ void R_InitSpriteDefs (char** namelist)
 	
 	// scan the lumps,
 	//  filling in the frames for whatever is found
-	for (l=start+1 ; l<end ; l++)
+	for (l=end-1 ; l>start ; l--)
 	{
 	    if (*(int *)lumpinfo[l].name == intname)
 	    {
@@ -528,7 +525,7 @@ void R_ProjectSprite (mobj_t* thing)
     {
 	// choose a different rotation based on player view
 	ang = R_PointToAngle (thing->x, thing->y);
-	rot = (ang-thing->angle+(unsigned)(ANG45/2)*9)>>29;
+	rot = (ang-P_DerpDrawAngle (thing)+(unsigned)(ANG45/2)*9)>>29;
 	lump = sprframe->lump[rot];
 	flip = (boolean)sprframe->flip[rot];
     }

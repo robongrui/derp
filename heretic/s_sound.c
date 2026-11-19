@@ -51,6 +51,9 @@ void S_Start(void)
 {
 	int i;
 
+	// A level starts its song from the top, even the one already playing
+	// (a reload or a restart after dying).
+	mus_song = -1;
 	S_StartSong((gameepisode-1)*9 + gamemap-1, true);
 
 	//stop all sounds

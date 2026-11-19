@@ -22,6 +22,7 @@ static int prefixed(const char *name, const char *const *list)
 }
 
 int Game_GlowKind(const char *name, int flat) { return doom_emissive_kind(name, flat); }
+int Game_PaintLamp(const char *name, int flat) { return doom_paint_lamp(name, flat); }
 int Game_SparkTexture(const char *name, int flat) { return doom_spark_texture(name, flat); }
 int Game_ScreenTexture(const char *name, int flat) { return doom_screen_texture(name, flat); }
 
@@ -40,10 +41,14 @@ int Game_IceFlat(const char *name) { (void)name; return 0; }
 /* COMPSPAN: the blank grey front of the computer desks (E1M1). */
 int Game_WornPlate(const char *name, int flat) { return !flat && !strcmp(name, "COMPSPAN"); }
 /* GRAY5's walls, columns and steps with the FLAT19 floors and FLAT18
-   ceilings that go with them. */
+   ceilings that go with them; and brick, stone and rock walls, whose grey
+   palette ramps would otherwise shine like metal in the sun (DOOM II's
+   city: BIGBRIK2's blocks read polished). */
 int Game_MatteTexture(const char *name, int flat)
 {
-    return flat ? !strcmp(name, "FLAT19") || !strcmp(name, "FLAT18") : !strcmp(name, "GRAY5");
+    static const char *const masonry[] = {"BRICK", "BIGBRIK", "STONE", "BSTONE", "GSTONE", "CEMENT", "ROCK", "SP_ROCK", NULL};
+    if (flat) return !strcmp(name, "FLAT19") || !strcmp(name, "FLAT18");
+    return !strcmp(name, "GRAY5") || prefixed(name, masonry);
 }
 int Game_HotFlat(const char *name) { return !strncmp(name, "LAVA", 4); }
 

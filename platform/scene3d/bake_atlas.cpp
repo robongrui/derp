@@ -6,8 +6,8 @@ namespace doom3d {
 std::vector<BakeStrip> bakeStrips;
 std::vector<int> bakeOrder; // Strips that have texels, tallest first.
 int atlasHeight=0;
-std::vector<uint8_t> wallBakeCells;
-std::vector<uint8_t> flatLightCells;
+std::vector<uint8_t> liveWallBakeCells;
+std::vector<uint8_t> liveFlatLightCells;
 BakeMap bakeMap;
 // Shared by the sun and light bakes, built once per level: the sector/line
 // map the rays walk, and a texel for every wall at the floor cell size.

@@ -24,11 +24,25 @@
 #define DETOUR_FULL 1.5f  /* this much longer, as dull as AROUND_HZ */
 #define OPENING_NEAR 16.0f /* in the doorway itself the opening has no direction */
 #define MAX_CROSSINGS 128
+/* Authored maps (Occlusion_SetFar): past vanilla's reach the air goes on
+   dulling, and a sound with no way at all comes through the wall. */
+#define FARTHEST 6000.0f
+#define FARTHEST_HZ 900.0f
+#define THROUGH_WALL_DB 30.0f
+#define AROUND_DB 6.0f    /* a way round half again as long as straight loses this much of the direct sound */
+#define LEDGE_DB 3.0f     /* over a ledge or round a pillar */
+static int far;
+void Occlusion_SetFar(int on) { far = on != 0; }
 
 static float distance_cutoff(float distance)
 {
     if (distance <= NEAR) return OCCLUSION_OPEN_HZ;
     float cutoff = OCCLUSION_OPEN_HZ * powf(FAR_HZ / OCCLUSION_OPEN_HZ, (distance - NEAR) / (FAR - NEAR));
+    if (far && distance > FAR)
+    {
+        float t = fminf((distance - FAR) / (FARTHEST - FAR), 1);
+        return FAR_HZ * powf(FARTHEST_HZ / FAR_HZ, t);
+    }
     return cutoff > LAST_HZ ? cutoff : LAST_HZ;
 }
 
@@ -81,9 +95,13 @@ float Occlusion_Opening(fixed_t x, fixed_t y, fixed_t z, float *way_x, float *wa
     if (here == there) return 0;
     float lx = listener->x / (float)FRACUNIT, ly = listener->y / (float)FRACUNIT;
     float sx = x / (float)FRACUNIT, sy = y / (float)FRACUNIT, apart = hypotf(sx - lx, sy - ly);
-    if (apart < 1 || apart > MAP_REACH) return 0;
-    Map_Gather(lx, ly);
-    if (in_sight(lx, ly, listener->z / (float)FRACUNIT + EAR, there, sx, sy, height_in(there, z / (float)FRACUNIT), apart) != WALL) return 0;
+    if (apart < 1 || (apart > MAP_REACH && !far)) return 0;
+    /* Past the lines gathered round the listener a straight look tells nothing. */
+    if (apart <= MAP_REACH)
+    {
+        Map_Gather(lx, ly);
+        if (in_sight(lx, ly, listener->z / (float)FRACUNIT + EAR, there, sx, sy, height_in(there, z / (float)FRACUNIT), apart) != WALL) return 0;
+    }
     Acoustic_Follow();
     acoustic_way_t way;
     acoustic_heard_t heard;
@@ -103,9 +121,10 @@ float Occlusion_Cutoff(fixed_t x, fixed_t y, fixed_t z, int walls, int distance)
     float sx = x / (float)FRACUNIT, sy = y / (float)FRACUNIT;
     float apart = hypotf(sx - lx, sy - ly);
     float cutoff = distance ? distance_cutoff(apart) : OCCLUSION_OPEN_HZ;
-    if (!walls || apart < 1 || apart > MAP_REACH) return cutoff;
+    if (!walls || apart < 1 || (apart > MAP_REACH && !far)) return cutoff;
 
     sector_t *here = listener->subsector->sector, *there = R_PointInSubsector(x, y)->sector;
+    if (here == there && apart > MAP_REACH) return cutoff;
     if (here == there)
     {
         float sz = height_in(there, z / (float)FRACUNIT);
@@ -124,4 +143,39 @@ float Occlusion_Cutoff(fixed_t x, fixed_t y, fixed_t z, int walls, int distance)
     float around = OCCLUSION_OPEN_HZ * powf(AROUND_HZ / OCCLUSION_OPEN_HZ, detour);
     if (around < muffled) muffled = around;
     return muffled < cutoff ? muffled : cutoff;
+}
+
+int Occlusion_Path(fixed_t x, fixed_t y, fixed_t z, occlusion_path_t *out)
+{
+    mobj_t *listener = players[consoleplayer].mo;
+    float sx = x / (float)FRACUNIT, sy = y / (float)FRACUNIT;
+    *out = (occlusion_path_t){ 0, 0, 0 };
+    if (gamestate != GS_LEVEL || !listener || !listener->subsector || !numlines) return 0;
+    float lx = listener->x / (float)FRACUNIT, ly = listener->y / (float)FRACUNIT;
+    float apart = hypotf(sx - lx, sy - ly);
+    out->length = apart;
+    if (apart < 1) return 1;
+    sector_t *here = listener->subsector->sector, *there = R_PointInSubsector(x, y)->sector;
+    if (here == there)
+    {
+        if (apart > MAP_REACH) return 1;
+        Map_Gather(lx, ly);
+        if (in_sight(lx, ly, listener->z / (float)FRACUNIT + EAR, there, sx, sy, height_in(there, z / (float)FRACUNIT), apart) != SIGHT)
+            out->loss = LEDGE_DB;
+        return 1;
+    }
+    Acoustic_Follow();
+    acoustic_way_t way;
+    if (!Acoustic_Way(sx, sy, (int)(there - sectors), &way))
+    {
+        out->loss = THROUGH_WALL_DB;
+        out->detour = 1;
+        return 1;
+    }
+    float detour = (way.length / apart - DETOUR_FREE) / (DETOUR_FULL - DETOUR_FREE);
+    detour = detour < 0 ? 0 : detour > 1 ? 1 : detour;
+    out->length = way.length > apart ? way.length : apart;
+    out->loss = way.loss + AROUND_DB * detour;
+    out->detour = detour;
+    return 1;
 }

@@ -53,7 +53,7 @@ void grain(const Uniforms &camera,float x,float y,float z,float hx,float hy,floa
     int pieces=std::clamp((int)std::lround(length/unit),1,6);
     for(int k=0;k<pieces;++k) {
         float back=length*k/pieces;
-        pixelBlock(particleVertices,camera,x-hx*back,y-hy*back,z,0.45f,1,color,false,&albedo,true,nullptr,alpha);
+        pixelBlock(particleVertices,camera,x-hx*back,y-hy*back,z,0.45f,1,color,false,&albedo,true,nullptr,alpha,1,1,MODE_PARTICLE_DAYLIT);
     }
 }
 }
@@ -124,8 +124,9 @@ static void buildSand(const Uniforms &camera) {
         const sector_t *at=weatherSectorAt(x,y);
         float fade=std::min({1.0f,travel/(run*0.15f),(run-travel)/(run*0.15f)});
         float alpha=(0.75f-0.35f*distance/reach)*fade*std::min(1.0f,fallNow*2);
-        auto color=weatherColor(*at,x,y,z,tone);
-        if(distance>reach*0.5f) farFall.see(color);
+        std::array<float,3> unlit;
+        auto color=weatherColor(*at,x,y,z,tone,true,LampCatch::Matte,true,&unlit);
+        if(distance>reach*0.5f) farFall.see(unlit);
         if(distance>96)beamGlint(x,y,z,own,0.03f,color);   // a grain of quartz catching the flashlight (beam_air.cpp)
         grain(camera,x,y,z,hx,hy,speed/TICRATE,distance,color,alpha);
     }
@@ -176,7 +177,7 @@ static void buildSand(const Uniforms &camera) {
             float floor=floorZ(at);
             if(z>floor+1) {
                 float speed=push*std::exp(-age/0.5f);
-                grain(camera,x,y,z,vx/std::max(push,1.0f),vy/std::max(push,1.0f),speed/TICRATE,distance,weatherColor(*at,x,y,z,tone),0.7f);
+                grain(camera,x,y,z,vx/std::max(push,1.0f),vy/std::max(push,1.0f),speed/TICRATE,distance,weatherColor(*at,x,y,z,tone,true,LampCatch::Matte),0.7f);
                 continue;
             }
             // Landed: skipping on with what it has left of the wind, in hops
@@ -189,7 +190,7 @@ static void buildSand(const Uniforms &camera) {
             const sector_t *under=weatherSectorAt(sx,sy);
             if(!under||!(under==at||under==&sectors[p.frame]||(p.inner>=0&&under==&sectors[p.inner])))continue;   // not through a wall
             if(since<1.6f&&!(under-sectors<(ptrdiff_t)sectorMist.size()&&sectorMist[under-sectors].liquid))
-                pixelBlock(particleVertices,camera,sx,sy,floorZ(under)+hop*4*f*(1-f),0.45f,1,weatherColor(*under,sx,sy,floorZ(under),tone),true,&albedo,true,nullptr,0.7f*std::min(1.0f,(1.6f-since)/0.6f));
+                pixelBlock(particleVertices,camera,sx,sy,floorZ(under)+hop*4*f*(1-f),0.45f,1,weatherColor(*under,sx,sy,floorZ(under),tone,true,LampCatch::Matte),true,&albedo,true,nullptr,0.7f*std::min(1.0f,(1.6f-since)/0.6f),1,1,MODE_PARTICLE_DAYLIT);
         }
     }
 }
@@ -218,7 +219,7 @@ void sandCarried(const Uniforms &camera,float x,float y,float z,const sector_t &
     for(float &v:tone)v=std::min(1.0f,v*1.2f);   // airborne, as buildSand's
     float now=std::floor(gameSeconds()*TICRATE)/TICRATE,f=std::fmod(now*(2+hashUnit(14,15,seed))+hashUnit(16,15,seed),1.0f);
     float floor=floorZ(&sector),hop=floor+1+(2+3*hashUnit(17,15,seed))*4*f*(1-f);
-    pixelBlock(particleVertices,camera,x,y,hop,0.45f,1,weatherColor(sector,x,y,hop,tone),false,&albedo,true,nullptr,alpha);
+    pixelBlock(particleVertices,camera,x,y,hop,0.45f,1,weatherColor(sector,x,y,hop,tone,true,LampCatch::Matte),false,&albedo,true,nullptr,alpha,1,1,MODE_PARTICLE_DAYLIT);
 }
 // How deep sand lies: blown nearly flat, it piles against the foot of a
 // wall facing the storm and drifts deep in a wall's lee near it, where the

@@ -14,6 +14,7 @@
 #include "doomdef.h"
 #include "p_local.h"
 #include "soundst.h"
+#include "../platform/audio/sound_options.h"
 
 boolean shareware = false;		// true if only episode 1 present
 boolean ExtendedWAD = false;	// true if episodes 4 and 5 present
@@ -246,7 +247,9 @@ void D_DoomLoop(void)
 		}
 
 		// Move positional sounds
+		uint64_t soundStart = I_BeginAudioTiming();
 		S_UpdateSounds(players[consoleplayer].mo);
+		I_EndAudioTiming(soundStart);
 		D_Display();
 	}
 }

@@ -21,21 +21,26 @@
 #include "r_data.h"
 #include "w_wad.h"
 #include "z_zone.h"
+#include "acoustic_graph.h"
 #include "map.h"
 #include "relief.h"
 #include "room.h"
 #include "../game_materials.h"
+#include <SDL3/SDL_thread.h>
 
 #define RAYS ROOM_RAYS
 #define SPEED 10700.0f  /* sound, in map units per second (a unit is ~3.2 cm) */
 #define METERS 0.032f
 #define EAR 41.0f       /* the listener's ear above their feet */
 #define MAX_HITS 256
+#define MOST_RAYS 256   /* Room_MeasureBare's most */
 
 extern int numtextures, numflats;
 
 static float snowing; /* how thick it snows (Room_Snow) */
 void Room_Snow(float amount) { snowing = amount < 0 ? 0 : amount > 1 ? 1 : amount; }
+static int glass_stops; /* whole window panes are walls to the rays (Room_GlassStops) */
+void Room_GlassStops(int on) { glass_stops = on != 0; }
 
 /* absorb: share of sound a bounce loses; dark: how much of its treble;
    scatter: how rough it is to sound, as roughness is to light - smooth
@@ -50,7 +55,8 @@ void Room_Snow(float amount) { snowing = amount < 0 ? 0 : amount > 1 ? 1 : amoun
 typedef struct { float absorb, dark, scatter, seams; } material_t;
 static const material_t metal = {0.06f, 0.15f, 0.10f, 0.15f}, stone = {0.10f, 0.45f, 0.65f, 0.18f},
     wood = {0.22f, 0.70f, 0.45f, 0.18f}, flesh = {0.30f, 0.80f, 0.70f, 0.25f}, liquid = {0.03f, 0.30f, 0.05f, -1},
-    soil = {0.40f, 0.75f, 0.85f, 0.25f}, fabric = {0.35f, 0.90f, 0.85f, 0.22f}, open_air = {1, 0, 1, -1};
+    soil = {0.40f, 0.75f, 0.85f, 0.25f}, fabric = {0.35f, 0.90f, 0.85f, 0.22f}, open_air = {1, 0, 1, -1},
+    pane = {0.04f, 0.10f, 0.05f, -1};
 #define RELIEF_REACH 0.25f  /* the most a texture's relief raises its class's scatter */
 
 /* What the game's texture and flat names say they are made of
@@ -81,7 +87,12 @@ static material_t with_relief(material_t m, float seams)
 }
 
 /* Per texture and flat, named once per WAD; their artwork is read the first
-   time a ray meets them, so a level's start only reads what is near. */
+   time a ray meets them, so a level's start only reads what is near, or the
+   level's all at once by Room_Prepare before measuring on other threads.
+   Only the game thread reads artwork: another meeting one not read yet
+   takes its class as named. */
+static SDL_ThreadID game_thread;
+static int may_read(void) { return !game_thread || SDL_GetCurrentThreadID() == game_thread; }
 static material_t *walls, *flats;
 static unsigned char *walls_read, *flats_read;
 static void name_materials(void)
@@ -102,7 +113,7 @@ static void name_materials(void)
 static material_t wall(int texture)
 {
     if (texture <= 0 || texture >= numtextures) return stone;
-    if (!walls_read[texture])
+    if (!walls_read[texture] && may_read())
     {
         walls_read[texture] = 1;
         int w, h;
@@ -118,10 +129,33 @@ static material_t wall(int texture)
     }
     return walls[texture];
 }
+static material_t flat(int pic);
+/* A wall texture, and the other state of a switch (SW1... / SW2...). */
+static void prepare_wall(int texture)
+{
+    if (texture <= 0 || texture >= numtextures) return;
+    wall(texture);
+    char name[9];
+    R_TextureName(texture, name);
+    if (strncmp(name, "SW1", 3) && strncmp(name, "SW2", 3)) return;
+    name[2] = name[2] == '1' ? '2' : '1';
+    int other = R_CheckTextureNumForName(name);
+    if (other > 0) wall(other);
+}
+void Room_Prepare(void)
+{
+    game_thread = SDL_GetCurrentThreadID();
+    name_materials();
+    for (int i = 0; i < numsides; ++i)
+    {
+        prepare_wall(sides[i].toptexture); prepare_wall(sides[i].midtexture); prepare_wall(sides[i].bottomtexture);
+    }
+    for (int i = 0; i < numsectors; ++i) { flat(sectors[i].floorpic); flat(sectors[i].ceilingpic); }
+}
 static material_t flat(int pic)
 {
     if (pic < 0 || pic >= numflats) return stone;
-    if (!flats_read[pic])
+    if (!flats_read[pic] && may_read())
     {
         flats_read[pic] = 1;
         if (W_LumpLength(firstflat + pic) >= 64 * 64)
@@ -138,6 +172,7 @@ static material_t flat(int pic)
 
 /* One ray: how far it gets, off what, and the floors and ceilings it crosses. */
 typedef struct {
+    int inside; /* the first line it meets has the start's sector on its near side */
     float distance; material_t surface;
     float length, sky_length, height, floor_absorb, floor_dark, ceiling_absorb, ceiling_dark;
     float floor_scatter, ceiling_scatter;
@@ -154,11 +189,18 @@ static void cross_sector(ray_t *ray, sector_t *s, float length)
     ray->floor_scatter += length * f.scatter; ray->ceiling_scatter += length * c.scatter;
 }
 
-static ray_t cast(float x, float y, float cx, float cy, sector_t *start)
+/* bare: glass marks the whole panes by line (NULL none); otherwise the
+   game's own are (Acoustic_GlassWhole), when panes stop rays at all. */
+static int whole_pane(int line, int bare, const unsigned char *glass)
 {
-    static crossing_t hits[MAX_HITS];
+    if (bare) return glass && line >= 0 && line < numlines && glass[line];
+    return glass_stops && Acoustic_GlassWhole(line);
+}
+static ray_t cast(float x, float y, float cx, float cy, sector_t *start, int bare, const unsigned char *glass)
+{
+    crossing_t hits[MAX_HITS];
     int count = Map_Cross(x, y, cx, cy, MAP_REACH, hits, MAX_HITS);
-    ray_t ray = {MAP_REACH, open_air};
+    ray_t ray = {count == 0 || hits[0].near == start, MAP_REACH, open_air};
     sector_t *here = start;
     float travelled = 0;
     for (int i = 0; i < count; ++i)
@@ -171,6 +213,12 @@ static ray_t cast(float x, float y, float cx, float cy, sector_t *start)
         if (!hit->near || !hit->far)
         {
             ray.distance = travelled; ray.surface = side >= 0 ? wall(sides[side].midtexture) : stone;
+            return ray;
+        }
+        /* A whole window pane sends the sound back, hard and bright. */
+        if (whole_pane((int)(line - lines), bare, glass))
+        {
+            ray.distance = travelled; ray.surface = pane;
             return ray;
         }
         float bottom, top;
@@ -186,6 +234,14 @@ static ray_t cast(float x, float y, float cx, float cy, sector_t *start)
     }
     cross_sector(&ray, here, MAP_REACH - travelled);
     return ray;
+}
+
+void Room_Pane(float *absorb, float *dark, float *scatter) { *absorb = pane.absorb; *dark = pane.dark; *scatter = pane.scatter; }
+void Room_Material(int number, int is_flat, float *absorb, float *dark, float *scatter)
+{
+    name_materials();
+    material_t m = is_flat ? flat(number) : wall(number);
+    *absorb = m.absorb; *dark = m.dark; *scatter = m.scatter;
 }
 
 static void dry(room_t *room) { memset(room, 0, sizeof(*room)); room->decay = room->room_decay = 0.2f; }
@@ -247,28 +303,73 @@ static tube_t tube(const ray_t *rays, float height, float sky_share)
     return t;
 }
 
+/* Out in the snow it swallows what little comes back, the treble first:
+   a hush, the echoes off the walls faint and dull. */
+static void hush(room_t *room, float out)
+{
+    float amount = snowing * out;
+    if (amount <= 0) return;
+    room->late *= 1 - 0.6f * amount;
+    room->damping = fmaxf(room->damping, 0.85f * amount);
+    room->scatter = fmaxf(room->scatter, 0.8f * amount);
+    for (int k = 0; k < ROOM_TAPS; ++k)
+    {
+        room->gain[k] *= 1 - 0.55f * amount;
+        room->dark[k] = fmaxf(room->dark[k], 0.85f * amount);
+    }
+}
+void Room_Hush(room_t *room) { hush(room, room->outdoors); }
+
+void Room_Face(room_t *room, float facing)
+{
+    float c = cosf(facing), s = sinf(facing);
+    for (int k = 0; k < ROOM_TAPS; ++k)
+        room->pan[k] = fmaxf(-1, fminf(1, -(room->from_y[k] * c - room->from_x[k] * s)));
+    room->axis = room->map_axis - facing;
+}
+
 /* The room around (x, y) in start, heard by an ear at height ear facing
-   facing (radians); its floor plan to outline. */
-static void measure(float x, float y, float ear, sector_t *start, float facing, room_t *room, room_outline_t *outline)
+   facing (radians), measured with count rays (RAYS live, a multiple of it
+   up to MOST_RAYS for Room_MeasureBare); its floor plan to outline. bare:
+   without the snow's hush and with glass (room.h's Room_MeasureBare) rather
+   than the game's panes; inside (or NULL) gets the share of rays that start
+   in start. */
+static void measure(float x, float y, float ear, sector_t *start, float facing, room_t *room, room_outline_t *outline,
+                    int bare, const unsigned char *glass, float *inside, int count)
 {
     name_materials();
     Map_Gather(x, y);
 
-    static ray_t rays[RAYS];
-    const float step = 2 * (float)M_PI / RAYS;
-    for (int i = 0; i < RAYS; ++i) rays[i] = cast(x, y, cosf(i * step), sinf(i * step), start);
+    ray_t rays[MOST_RAYS];
+    const float step = 2 * (float)M_PI / count;
+    const int each = count / RAYS; /* rays to one of the RAYS directions */
+    int own = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        rays[i] = cast(x, y, cosf(i * step), sinf(i * step), start, bare, glass);
+        own += rays[i].inside;
+    }
+    if (inside) *inside = own / (float)count;
+    /* The floor plan in RAYS directions, each as far as the farthest of the
+       rays round it: a doorway between two of them still opens the plan. */
     if (outline)
     {
         outline->x = x; outline->y = y;
-        for (int i = 0; i < RAYS; ++i) outline->reach[i] = rays[i].distance;
+        for (int i = 0; i < RAYS; ++i)
+        {
+            float reach = 0;
+            for (int j = i * each - each / 2; j <= i * each + (each - 1) / 2; ++j)
+                reach = fmaxf(reach, rays[(j + count) % count].distance);
+            outline->reach[i] = reach;
+        }
     }
 
     /* The floor plan the rays outline, and its walls. */
     float area = 0, perimeter = 0, wall_absorb = 0, wall_dark = 0, wall_scatter = 0, open = 0;
     ray_t total = {0};
-    for (int i = 0; i < RAYS; ++i)
+    for (int i = 0; i < count; ++i)
     {
-        const ray_t *a = &rays[i], *b = &rays[(i + 1) % RAYS];
+        const ray_t *a = &rays[i], *b = &rays[(i + 1) % count];
         area += 0.5f * a->distance * b->distance * sinf(step);
         float chord = sqrtf(a->distance * a->distance + b->distance * b->distance
                             - 2 * a->distance * b->distance * cosf(step));
@@ -276,7 +377,7 @@ static void measure(float x, float y, float ear, sector_t *start, float facing, 
         wall_absorb += chord * 0.5f * (a->surface.absorb + b->surface.absorb);
         wall_dark += chord * 0.5f * (a->surface.dark + b->surface.dark);
         wall_scatter += chord * 0.5f * (a->surface.scatter + b->surface.scatter);
-        if (a->surface.absorb >= 1) open += 1.0f / RAYS;
+        if (a->surface.absorb >= 1) open += 1.0f / count;
         total.length += a->length; total.sky_length += a->sky_length; total.height += a->height;
         total.floor_absorb += a->floor_absorb; total.floor_dark += a->floor_dark;
         total.ceiling_absorb += a->ceiling_absorb; total.ceiling_dark += a->ceiling_dark;
@@ -298,7 +399,10 @@ static void measure(float x, float y, float ear, sector_t *start, float facing, 
        cross-section alone, Sabine over one slice of it with the walls
        absorbing as little as they do at a graze; how long the tube is
        doesn't enter. A water floor's low absorption shows here on its own. */
-    tube_t shape = tube(rays, height, sky_share);
+    /* The tube is read off RAYS rays, however many were cast. */
+    ray_t tube_rays[RAYS];
+    for (int i = 0; i < RAYS; ++i) tube_rays[i] = rays[i * each];
+    tube_t shape = tube(tube_rays, height, sky_share);
     float width_m = shape.width * METERS;
     float slice = width_m * (floor_absorb + ceiling_absorb) + 2 * height_m * shape.absorb;
     float along = TUBE_GRAZING * 0.161f * width_m * height_m / fmaxf(slice, 0.01f);
@@ -320,7 +424,7 @@ static void measure(float x, float y, float ear, sector_t *start, float facing, 
 
     /* An echo off the walls in each eighth of the circle, panned to where it is
        as the listener faces; Doom's angles turn left, so left is +90 degrees. */
-    const int per_tap = RAYS / 8;
+    const int per_tap = count / 8;
     for (int k = 0; k < 8; ++k)
     {
         /* The walls that answer set the delay; open air only weakens the echo. */
@@ -340,6 +444,7 @@ static void measure(float x, float y, float ear, sector_t *start, float facing, 
         room->delay[k] = 2 * distance / SPEED;
         room->gain[k] = reflect * 0.35f / (1 + distance / 320);
         room->pan[k] = -sinf(bearing);
+        room->from_x[k] = cosf(bearing + facing); room->from_y[k] = sinf(bearing + facing);
         /* Down a tube the far reaches answer late and spread thin along its
            walls: no clean copy off the far end, a smear into the tail. The
            echoes off the side walls stay, close and dense. */
@@ -353,6 +458,8 @@ static void measure(float x, float y, float ear, sector_t *start, float facing, 
        carries it. */
     room->tunnel = shape.tunnel;
     room->axis = shape.axis - facing;
+    room->map_axis = shape.axis;
+    room->outdoors = out;
     room->width = shape.width;
     room->height = height;
     room->flutter_delay = 2 * shape.width / SPEED;
@@ -364,22 +471,10 @@ static void measure(float x, float y, float ear, sector_t *start, float facing, 
     room->delay[ceiling] = 2 * fmaxf(above, 8) / SPEED;
     room->gain[ceiling] = Map_Sky(start) ? 0 : (1 - flat(start->ceilingpic).absorb) * 0.25f / (1 + fmaxf(above, 8) / 320);
     room->pan[ceiling] = 0;
+    room->from_x[ceiling] = room->from_y[ceiling] = 0;
     room->spread[ceiling] = flat(start->ceilingpic).scatter;
     room->dark[ceiling] = flat(start->ceilingpic).dark;
-    /* Out in the snow it swallows what little comes back, the treble first:
-       a hush, the echoes off the walls faint and dull. */
-    float hush = snowing * out;
-    if (hush > 0)
-    {
-        room->late *= 1 - 0.6f * hush;
-        room->damping = fmaxf(room->damping, 0.85f * hush);
-        room->scatter = fmaxf(room->scatter, 0.8f * hush);
-        for (int k = 0; k < ROOM_TAPS; ++k)
-        {
-            room->gain[k] *= 1 - 0.55f * hush;
-            room->dark[k] = fmaxf(room->dark[k], 0.85f * hush);
-        }
-    }
+    if (!bare) hush(room, out);
 }
 
 static void dry_outline(room_outline_t *outline, float x, float y)
@@ -396,12 +491,21 @@ void Room_Measure(room_t *room, room_outline_t *outline)
     { dry(room); dry_outline(outline, 0, 0); return; }
     float x = listener->x / (float)FRACUNIT, y = listener->y / (float)FRACUNIT;
     measure(x, y, listener->z / (float)FRACUNIT + EAR, listener->subsector->sector,
-            listener->angle * (2 * (float)M_PI / 4294967296.0f), room, outline);
+            listener->angle * (2 * (float)M_PI / 4294967296.0f), room, outline, 0, NULL, NULL, RAYS);
 }
 
 void Room_MeasureAt(float x, float y, float facing, room_t *room, room_outline_t *outline)
 {
     if (gamestate != GS_LEVEL || !numlines) { dry(room); dry_outline(outline, x, y); return; }
     sector_t *sector = R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT))->sector;
-    measure(x, y, Map_Floor(sector) + EAR, sector, facing, room, outline);
+    measure(x, y, Map_Floor(sector) + EAR, sector, facing, room, outline, 0, NULL, NULL, RAYS);
+}
+
+void Room_MeasureBare(float x, float y, float facing, const unsigned char *glass, int rays, room_t *room,
+                      room_outline_t *outline, float *inside)
+{
+    if (gamestate != GS_LEVEL || !numlines) { dry(room); dry_outline(outline, x, y); if (inside) *inside = 0; return; }
+    sector_t *sector = R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT))->sector;
+    rays = rays < RAYS ? RAYS : rays > MOST_RAYS ? MOST_RAYS : rays / RAYS * RAYS;
+    measure(x, y, Map_Floor(sector) + EAR, sector, facing, room, outline, 1, glass, inside, rays);
 }

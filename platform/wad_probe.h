@@ -8,6 +8,7 @@ typedef struct {
     int full_game;
     int has_palette; /* PLAYPAL: missing from DOOM 64 and other non-DOOM games. */
     int game;        /* DOOM_WAD_*: which game program plays it */
+    int music_only;  /* a soundtrack pack (D_* lumps alone, such as HQPSXMUS.WAD, or the re-release's extras.wad): not a game or add-on */
 } doom_wad_info;
 
 /* Heretic and Hexen ship TINTTAB (translucency), DOOM does not; Hexen's maps

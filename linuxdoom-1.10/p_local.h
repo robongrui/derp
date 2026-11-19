@@ -111,6 +111,13 @@ boolean P_LookAims (mobj_t* mo);
 // The next P_LineAttack is such a shot: it starts at the eye and also stops
 // on floors and ceilings. P_LineAttack clears it.
 extern boolean la_freeaim;
+extern int la_round;
+extern boolean la_spent;
+extern mobj_t* la_hit;
+// The shot at once, whatever the rules; and a stretch of a travelling one (p_bullets.c). True: it stopped.
+void P_LineAttackNow (mobj_t* t1, angle_t angle, fixed_t distance, fixed_t slope, int damage);
+boolean P_ShotStretch (mobj_t* t1, fixed_t x, fixed_t y, fixed_t z, angle_t angle, fixed_t distance, fixed_t slope,
+		       int damage, boolean freeaim, sector_t** sector, fixed_t end[3]);
 // Where each hitscan shot went: from the shooter to where it stopped, and
 // what it hit (NULL for walls, floors, the sky or the end of its range).
 // For sounds that follow the bullet, such as a near miss whizzing past.

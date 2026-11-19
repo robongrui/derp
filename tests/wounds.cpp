@@ -14,6 +14,14 @@ int numsprites=NUMSPRITES;
 int leveltime=0;
 spritedef_t *sprites=nullptr;
 game_thing_role Game_ThingRole(int) {return GAME_THING_OTHER;}
+int Game_MeleeWeapon(const struct mobj_s *) {return 0;}
+int Game_BodyMaterials(int) {return 0;}
+int Game_BodyBall(int) {return 0;}
+int Game_BodyFat(int) {return 0;}
+int Game_DrawAngle(const struct mobj_s *,unsigned *) {return 0;}
+int M_CheckParm(char *) {return 0;}
+int myargc=0;
+char **myargv=nullptr;
 }
 
 namespace doom3d {
@@ -24,6 +32,27 @@ static unsigned bodyQuadCalls=0;
 bool craterMask(const mobj_t&,const Image&,std::vector<byte>&,bool) {return false;}
 void forgetCraters(const mobj_t*) {}
 void cratersShutdown() {}
+bool stainMask(const mobj_t &,const Image &,bool,float,float,std::vector<byte> &) {return false;}
+void forgetStains(const mobj_t *) {}
+void stainsShutdown() {}
+void bodyJolt(const mobj_t *,int,int) {}
+void forgetJolt(const mobj_t *) {}
+void fatHit(const mobj_t *,float,float,int) {}
+void forgetWobble(const mobj_t *) {}
+void wobblesShutdown() {}
+void joltsShutdown() {}
+// Gore's skin suit (skeletons.cpp): off here, the wounds as without gore.
+bool goreOn() {return false;}
+const SpriteSkeleton *spriteSkeleton(const Image&) {return nullptr;}
+void skeletonPlace(const SpriteSkeleton&,int,float,float,float&,float&) {}
+void skeletonPoint(const SpriteSkeleton&,int,float,float,float&,float&) {}
+bool skeletonBonesJoin(int,int) {return false;}
+const int skeletonBoneEnds[SKELETON_BONES][2]={};
+const GutsPatch &gutsOf(const mobj_t&) {static GutsPatch guts;return guts;}
+byte gutsColour(const GutsPatch&,int,int,uint32_t) {return 0;}
+byte bloodRemap(byte index,int) {return index;}
+const byte *playpal() {static byte palette[768]={};return palette;}
+byte boneMapColour(int) {return 0;}
 int bloodTint(const mobj_t*) {return BLOOD_RED;}
 const std::vector<byte> &bloodPalette(int) {
     static const std::vector<byte> shades={16,32,48,64,80,96,112,128,144};

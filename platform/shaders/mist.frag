@@ -24,14 +24,23 @@ void main() {
         // (-1..1), v from the floor (0) to past the opening (1). Soft at the
         // sides, the ends and where it meets geometry, faded near the eye, with
         // cloud noise drifting up the beam a step per tic. The result keeps
-        // to 1/32 steps on an ordered dither in Doom pixels.
+        // to 1/32 steps on an ordered dither in Doom pixels, the dither
+        // shifted by the ribbon's number: a beam is many ribbons deep, each
+        // faint enough to be a step or two, and on one dither they all lit
+        // the same pixels, so the beam was that stipple many times over
+        // instead of their sum (shifted, the stipples fill each other in).
         float across=1.0-vUV.x*vUV.x;
-        float along=smoothstep(0.0,0.1,vUV.y)*(1.0-smoothstep(0.55,1.0,vUV.y));
+        // The ends fade over a set distance, not a share of the beam: a tall
+        // beam that lost its upper half to the fade stopped in mid air, well
+        // short of the opening its light came through.
+        float reach=float((vMode>>MODE_SUNBEAM_LENGTH_SHIFT)&255u)*8.0,at=vUV.y*reach;
+        float along=smoothstep(0.0,min(24.0,reach*0.25),at)*(1.0-smoothstep(reach-min(64.0,reach*0.5),reach,at));
         float near=smoothstep(16.0,80.0,distance)*saturate((sceneZ-layerZ)/24.0);
         float tic=floor(c.fog.w*35.0);
         float noise=textureLod(cloud,vec2(dot(vWorld.xy,vec2(0.7071)),vWorld.z-tic*0.35)/112.0,0.0).r;
         float glow=vLight*across*across*along*near*(0.5+noise)*0.05;
-        glow=floor(glow*32.0+bayer4(ivec2(floor(gl_FragCoord.xy/max(c.fx2.x,1.0)))))/32.0;
+        float shift=float((vMode>>MODE_SUNBEAM_SEED_SHIFT)&255u)*0.618034;
+        glow=floor(glow*32.0+fract(bayer4(ivec2(floor(gl_FragCoord.xy/max(c.fx2.x,1.0))))+shift))/32.0;
         outColor=vec4(vTint*c.fx.x*transmission,glow*(1.0-whiteout(vWorld,false)));   // lost in a blizzard (whiteout.glsl)
         return;
     }

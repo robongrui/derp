@@ -12,12 +12,16 @@ comes from elsewhere, and its license.
 | [SDL](https://libsdl.org/) 3.4.18 | downloaded by `CMakeLists.txt`, linked into the program | zlib, with the notices in [`third_party/SDL3-NOTICES.txt`](third_party/SDL3-NOTICES.txt) |
 | [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3), Nuke.YKT | downloaded by `CMakeLists.txt`, linked into the program | GNU LGPL 2.1 or later |
 | [TinySoundFont](https://github.com/schellingb/TinySoundFont), Bernhard Schelling | downloaded by `CMakeLists.txt`, linked into the program | MIT |
+| [dr_mp3](https://github.com/mackron/dr_libs) 0.7.3, David Reid (after [minimp3](https://github.com/lieff/minimp3), lieff) | downloaded by `CMakeLists.txt`, linked into the program; decodes recorded music such as the PlayStation soundtrack pack | public domain or MIT-0 |
+| [stb_vorbis](https://github.com/nothings/stb) 1.22, Sean Barrett | downloaded by `CMakeLists.txt`, linked into the program; decodes the Ogg Vorbis tracks of the re-release's extras.wad | public domain or MIT |
 | [GeneralUser GS](https://schristiancollins.com/generaluser.php) 2.0.3, S. Christian Collins | SoundFont downloaded by `CMakeLists.txt`, shipped in `soundfonts/` | its own license, allowing use in software ([`soundfonts/GeneralUser-GS-LICENSE.txt`](https://github.com/mrbumpy409/GeneralUser-GS/blob/main/documentation/LICENSE.txt)) |
 | [SADIE II](https://www.york.ac.uk/sadie-project/database.html), University of York | measured heads D1 (KU100) and D2 (KEMAR), reduced by `scripts/make_hrtf.py` into `platform/audio/hrtf_ku100.inc` and `hrtf_kemar.inc` | Apache 2.0; Armstrong et al., "A Perceptual Evaluation of Individual and Non-Individual HRTFs: A Case Study of the SADIE II Database", doi:10.3390/app8112029 |
 | [Freedoom](https://freedoom.github.io/) 0.13.0 | game data in the downloads only, not in this repository | BSD 3-Clause |
 | [12dicts](http://wordlist.aspell.net/12dicts/) 6.0.2, Alan Beale | the word list `2of12`, cut to plain lowercase words, in `scp_7179_b/words/` and the episode's WAD | public domain, acknowledgment requested ([`scp_7179_b/words/README.md`](scp_7179_b/words/README.md)) |
 | ["SCP-7179"](https://scpwiki.com/scp-7179), Calibold, from the [SCP Wiki](https://scpwiki.com/) | the idea behind episode 0.5, SCP_7179_B (`scp_7179_b/`) | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/); the SCP Wiki's licensing guide allows games under GPL 3 |
 | Microsoft Sam (SAPI 4), rendered with [OpenSAPI4](https://github.com/phyce/OpenSAPI4) | one spoken word in episode 0.5's WAD | Microsoft's voice, credited here |
+| DERP mode's monster voices and cries, generated with [ElevenLabs](https://elevenlabs.io) (Text to Speech in voices designed for DERP, and Sound Effects) and edited for the game | `barks/derp-cries.wad` (in this repository and the downloads) and `derp-voices.wad` (a separate download) | not GPL: their own licence, [`barks/VOICES-LICENSE.txt`](barks/VOICES-LICENSE.txt), free to use with DERP and to pass on unmodified, not to extract and use on their own |
+| The kick's leg frames and the kneeling soldiers' frames, AI-generated with ChatGPT (OpenAI) as stand-in art (the kneeling soldiers drawn after id Software's zombieman and shotgun guy) and converted to DOOM's palette by `scripts/make_kick_frames.py` and `scripts/make_kneel_frames.py` | `platform/kick_frames_stock.h`, `platform/kneel_frames_stock.h` | released with DERP under GPL 3; OpenAI's terms assign the output to its user |
 
 **DOOM source.** id Software released the Linux DOOM source under the GPL on
 3 October 1999, "either version 2 of the License, or (at your option) any
@@ -40,7 +44,7 @@ Heretic and Hexen code is published under that notice, and GZDoom ships
 Raven-derived code under GPL 3. DERP follows that reading and uses
 the Heretic source under GPL 3.
 
-**SDL, Nuked OPL3, TinySoundFont and GeneralUser GS** are not in this
+**SDL, Nuked OPL3, TinySoundFont, dr_mp3, stb_vorbis and GeneralUser GS** are not in this
 repository; CMake downloads the pinned versions while building. Each release
 has a `DERP-source.tar.gz` with this repository and the exact library
 sources and SoundFont the downloads were built from, so the game, with or
@@ -65,3 +69,7 @@ DeHackEd's "Hit points" or BEX's `GOTARMOR`, appear exactly as patch files
 spell them. The OPL music player is built from the Yamaha YMF262 register
 manual and the Doom Wiki's GENMIDI and MUS pages; its behaviour is written up
 in [`platform/audio/opl_music_spec.md`](platform/audio/opl_music_spec.md).
+
+**Kick art.** The kicking leg's frames (`platform/kick_frames_stock.h`, made by
+`scripts/make_kick_frames.py`) are generated stand-in art, to be replaced by an
+artist's.

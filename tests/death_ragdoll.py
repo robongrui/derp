@@ -37,6 +37,7 @@ import math
 import os
 import random
 import sys
+from functools import reduce
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from death_lab import Picture, png, read_wad  # noqa: E402
@@ -118,6 +119,11 @@ class Doll:
     friction = 'contact'
     STICK, SLIDE = 0.6, 0.5     # contact friction: static and sliding, per unit pushed back up (cloth on stone; 1.0 held bodies hanging)
     SLICK_EDGES = True          # no friction where a rounded step edge pushes (it gripped a body hanging off a ledge)
+    # Soft joint limits (ragdoll.cpp soften): over the last LIMIT_ZONE radians before a stop (lengths:
+    # FOLD_ZONE, SPINE_ZONE of the length) the speed heading into it is taken out, eased, all of it at
+    # the stop. The hard limits turn a limb back with its speed and stay as the backstop.
+    SOFT_LIMITS = True
+    LIMIT_ZONE, FOLD_ZONE, SPINE_ZONE = 0.3, 0.07, 0.05
 
     def __init__(self, rest):
         self.rest = rest
@@ -156,14 +162,19 @@ class Doll:
         dt = 1.0 / SUBSTEPS
         k_sub = 1 - (1 - min(k, 0.99)) ** (1.0 / SUBSTEPS)
         for _ in range(SUBSTEPS):
+            vs = {}
             for n in self.p:
-                cur, old = self.p[n], self.prev[n]
-                v = sub(cur, old)
+                cur = self.p[n]
+                v = sub(cur, self.prev[n])
                 if self.friction == 'damped' and cur[2] <= RADIUS[n] + self.ground(cur) + 0.05:      # on the floor: friction
                     v = (v[0] * 0.6, v[1] * 0.6, v[2])
-                v = scale(v, 0.9 if self.lying() else 0.985)   # down: it stops soon
+                vs[n] = scale(v, 0.9 if self.lying() else 0.985)   # down: it stops soon
+            if self.SOFT_LIMITS:
+                self.soften(vs)
+            for n in self.p:
+                cur = self.p[n]
                 self.prev[n] = cur
-                self.p[n] = add(add(cur, v), (0, 0, -GRAVITY * dt * dt))
+                self.p[n] = add(add(cur, vs[n]), (0, 0, -GRAVITY * dt * dt))
             if shape is not None and k_sub > 0:
                 shape_match(self, shape, k_sub)
             self.pressed = {}
@@ -285,6 +296,109 @@ class Doll:
             if want != d:
                 self.swing(s, d, want)
         self.knees()
+
+    @staticmethod
+    def zone_share(left, zone):
+        s = min(max(1 - left / zone, 0.0), 1.0)
+        return s * s * (3 - 2 * s)
+
+    def pelvis_spin(self, v):
+        """The pelvis' spin (radians a substep) from the hips' line and the spine above them as a
+        rigid frame: half the sum of each axis crossed with its own turn."""
+        p = self.p
+        across, rise = sub(p['hip_r'], p['hip_l']), sub(p['spine'], mid(p['hip_l'], p['hip_r']))
+        la, lr = math.sqrt(dot(across, across)), math.sqrt(dot(rise, rise))
+        if la < 1e-3 or lr < 1e-3:
+            return (0.0, 0.0, 0.0)
+        e1, d1 = scale(across, 1 / la), scale(sub(v['hip_r'], v['hip_l']), 1 / la)
+        e2, d2 = scale(rise, 1 / lr), scale(sub(v['spine'], mid(v['hip_l'], v['hip_r'])), 1 / lr)
+        e3, d3 = cross(e1, e2), add(cross(d1, e2), cross(e1, d2))
+        return scale(add(add(cross(e1, d1), cross(e2, d2)), cross(e3, d3)), 0.5)
+
+    def slow_leg(self, v, s, axis, share, pelvis):
+        """share of a leg's turn against the pelvis about axis (through its hip, positive into the
+        stop) out of knee and ankle. Against the pelvis: a body turning over as one swings its legs
+        with it, and braking that as a joint's speed spun bodies up to 500 degrees (ragdoll.cpp)."""
+        h, k = 'hip_' + s, 'knee_' + s
+        r = sub(self.p[k], self.p[h])
+        rr = dot(r, r)
+        if share <= 0 or rr < 1e-6:
+            return
+        w = dot(cross(r, sub(v[k], v[h])), axis) / rr - dot(pelvis, axis)
+        if w <= 0:
+            return
+        for n in (k, 'ank_' + s):
+            v[n] = sub(v[n], cross(scale(axis, w * share), sub(self.p[n], self.p[h])))
+
+    def slow_closing(self, v, a, b, share, also=()):
+        """share of how fast b closes on a out of b's speed (a length's stop)."""
+        u = unit(sub(self.p[b], self.p[a]))
+        c = dot(sub(v[b], v[a]), u)
+        if share <= 0 or c >= 0:
+            return
+        for n in (b,) + tuple(also):
+            v[n] = sub(v[n], scale(u, c * share))
+
+    def rigid(self, v):
+        """The rigid motion in the speeds v: the middle c, its speed and the spin about it."""
+        p, k = self.p, len(self.p)
+        c = scale(reduce(add, p.values()), 1 / k)
+        vc = scale(reduce(add, v.values()), 1 / k)
+        turning, inertia = (0.0, 0.0, 0.0), [[0.0] * 3 for _ in range(3)]
+        for n in p:
+            r = sub(p[n], c)
+            rr = dot(r, r)
+            turning = add(turning, cross(r, v[n]))
+            for i in range(3):
+                for j in range(3):
+                    inertia[i][j] += (rr if i == j else 0.0) - r[i] * r[j]
+        cols = [tuple(inertia[i][j] for i in range(3)) for j in range(3)]
+        det = lambda a, b, d: dot(a, cross(b, d))
+        d = det(*cols)
+        spin = (0.0, 0.0, 0.0) if d <= 1e-3 else \
+            (det(turning, cols[1], cols[2]) / d, det(cols[0], turning, cols[2]) / d, det(cols[0], cols[1], turning) / d)
+        return c, vc, spin
+
+    def soften(self, v):
+        """The soft zones of limits(), on the speeds v, once a substep. They brake one side of a
+        joint only, so the push or turn of the whole body that took out is handed back as one rigid
+        motion: a stop never turns the body (ragdoll.cpp: side-on leg sweeps twisted 530 degrees)."""
+        was = dict(v)
+        self.soften_joints(v)
+        c, vc, spin = self.rigid({n: sub(v[n], was[n]) for n in v})
+        for n in v:
+            v[n] = sub(sub(v[n], vc), cross(spin, sub(self.p[n], c)))
+
+    def soften_joints(self, v):
+        p = self.p
+        for s in ('l', 'r'):
+            rel = math.dist(p['neck'], p['hip_' + s]) / self.len[('neck', 'hip_' + s)]
+            self.slow_closing(v, 'hip_' + s, 'neck', 0.5 * self.zone_share(rel - 0.9, self.SPINE_ZONE), ('head', 'sh_l', 'sh_r'))
+        n = self.pelvis_front()
+        hips = mid(p['hip_l'], p['hip_r'])
+        up = unit(sub(p['spine'], hips))
+        side = unit(sub(p['hip_r'], p['hip_l']))
+        pelvis = self.pelvis_spin(v)
+        for s in ('l', 'r'):
+            h, k, a = 'hip_' + s, 'knee_' + s, 'ank_' + s
+            d = unit(sub(p[k], p[h]))
+            ahead = sub(n, scale(d, dot(n, d)))
+            if math.sqrt(dot(ahead, ahead)) > 1e-3:          # back: 30 degrees behind the hips
+                left = math.asin(min(max(dot(d, n), -1.0), 1.0)) + 0.5236
+                self.slow_leg(v, s, unit(cross(unit(ahead), d)), self.zone_share(left, self.LIMIT_ZONE), pelvis)
+            chest = sub(up, scale(d, dot(up, d)))
+            if math.sqrt(dot(chest, chest)) > 1e-3:          # forward: flexed 110 degrees toward the chest
+                left = math.acos(min(max(dot(d, up), -1.0), 1.0)) - 1.2238
+                self.slow_leg(v, s, unit(cross(d, unit(chest))), self.zone_share(left, self.LIMIT_ZONE), pelvis)
+            thigh, shin = sub(p[k], p[h]), sub(p[a], p[k])
+            tt, ss = dot(thigh, thigh), dot(shin, shin)
+            if tt > 1e-6 and ss > 1e-6:                      # the knee straightening: its stop is the straight leg
+                bend = math.asin(min(max(dot(cross(unit(thigh), unit(shin)), side), -1.0), 1.0))
+                opening = dot(cross(shin, sub(v[a], v[k])), side) / ss - dot(cross(thigh, sub(v[k], v[h])), side) / tt
+                if opening < 0:
+                    v[a] = sub(v[a], cross(scale(side, opening * self.zone_share(bend, self.LIMIT_ZONE)), shin))
+            full = self.len[(h, k)] + self.len[(k, a)]       # the fold: never tighter than 55% of the leg
+            self.slow_closing(v, h, a, self.zone_share(math.dist(p[a], p[h]) / full - 0.55, self.FOLD_ZONE))
 
     def swing(self, s, d, want, k=0.5):
         """Turn a whole leg (knee and ankle, and where they were) about its hip, part of the way

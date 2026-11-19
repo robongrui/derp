@@ -57,9 +57,9 @@ std::array<float,3> emberColor(float heat,uint32_t seed,float now) {
 void flake(const Uniforms &camera,float x,float y,float z,float distance,const sector_t &sector,uint32_t seed,float age,bool resting,float alpha) {
     float size=distance<96&&hashUnit(9,9,seed)<0.3f?1.1f:0.6f;
     bool light=!resting&&std::fmod(age*(0.8f+0.6f*hashUnit(10,9,seed))+hashUnit(11,9,seed),1.0f)<0.5f;
-    auto color=weatherColor(sector,x,y,z,albedo);
+    auto color=weatherColor(sector,x,y,z,albedo,true,LampCatch::Matte);
     for(float &v:color)v=std::min(1.0f,v*(light?1.2f:0.85f));
-    pixelBlock(particleVertices,camera,x,y,z,size,1,color,resting,&albedo,true,nullptr,alpha);
+    pixelBlock(particleVertices,camera,x,y,z,size,1,color,resting,&albedo,true,nullptr,alpha,1,1,MODE_PARTICLE_DAYLIT);
 }
 // An ember: glowing as a monster's eyes do (the glow list, drawn into the
 // bloom too), its own colour rather than the palette's nearest, a size up

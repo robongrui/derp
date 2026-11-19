@@ -470,23 +470,33 @@ void P_GroupLines (void)
 	
 // build line tables for each sector	
 	linebuffer = Z_Malloc (total*sizeof(*linebuffer), PU_LEVEL, 0);
+	// Each sector its slice of the buffer by its count, then every line handed to its
+	// sectors in one pass, in map order: the order the old test of every line against
+	// every sector gave (sectors x lines, far more tests on big maps).
+	sector = sectors;
+	for (i=0 ; i<numsectors ; i++, sector++)
+	{
+		sector->lines = linebuffer;
+		linebuffer += sector->linecount;
+		sector->linecount = 0;
+	}
+	li = lines;
+	for (i=0 ; i<numlines ; i++, li++)
+	{
+		li->frontsector->lines[li->frontsector->linecount++] = li;
+		if (li->backsector && li->backsector != li->frontsector)
+			li->backsector->lines[li->backsector->linecount++] = li;
+	}
 	sector = sectors;
 	for (i=0 ; i<numsectors ; i++, sector++)
 	{
 		M_ClearBox (bbox);
-		sector->lines = linebuffer;
-		li = lines;
-		for (j=0 ; j<numlines ; j++, li++)
+		for (j=0 ; j<sector->linecount ; j++)
 		{
-			if (li->frontsector == sector || li->backsector == sector)
-			{
-				*linebuffer++ = li;
-				M_AddToBox (bbox, li->v1->x, li->v1->y);
-				M_AddToBox (bbox, li->v2->x, li->v2->y);
-			}
+			li = sector->lines[j];
+			M_AddToBox (bbox, li->v1->x, li->v1->y);
+			M_AddToBox (bbox, li->v2->x, li->v2->y);
 		}
-		if (linebuffer - sector->lines != sector->linecount)
-			I_Error ("P_GroupLines: miscounted");
 			
 		// set the degenmobj_t to the middle of the bounding box
 		sector->soundorg.x = (bbox[BOXRIGHT]+bbox[BOXLEFT])/2;

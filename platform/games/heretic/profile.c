@@ -113,6 +113,8 @@ game_blood_tint Game_BloodTint(int type) { (void)type; return GAME_BLOOD_RED; }
 
 /* A pod bursts in four frames and explodes on the third (A_Explode in
    S_POD_DIE3), so its frames take the barrel's places 1 to 4. */
+int Game_Explosions(void) { return 0; }
+
 int Game_BlastFrame(const struct mobj_s *thing)
 {
     int state;
@@ -129,11 +131,36 @@ void Game_MuzzleFlash(int weapon, float *radius, float *strength, int *flashstat
         ? wpnlev1info[weapon].flashstate : -1;
 }
 
+/* Heretic's weapons throw their own art; no fire at a barrel. */
+int Game_MuzzleFire(int weapon) { (void)weapon; return 0; }
+
+int Game_MonsterBooted(const struct mobj_s *mo) { (void)mo; return 0; }
+int Game_MonsterClawed(const struct mobj_s *mo) { (void)mo; return 0; }
+
 int Game_WeaponHeft(int weapon)
 {
     if (weapon == wp_phoenixrod || weapon == wp_mace) return 2;
     if (weapon == wp_crossbow || weapon == wp_blaster || weapon == wp_skullrod) return 1;
     return 0;
+}
+
+game_skeleton Game_Skeleton(int type) { (void)type; return GAME_SKELETON_NONE; }
+int Game_BodyMaterials(int type) { (void)type; return 0; }
+int Game_BulletCount(void) { return 0; }
+int Game_BulletStretch(int index, float from[3], float to[3]) { (void)index; (void)from; (void)to; return 0; }
+int Game_HeadKill(const struct mobj_s *thing) { (void)thing; return 0; }
+int Game_BodyBall(int type) { (void)type; return 0; }
+int Game_DeathSpawns(int type) { (void)type; return 0; }
+int Game_BodyFat(int type) { (void)type; return 0; }
+int Game_MouthOpen(const struct mobj_s *thing) { (void)thing; return 0; }
+int Game_SkeletonFinished(int type) { (void)type; return 0; }
+
+int Game_ShootsHitscan(const struct mobj_s *monster) { (void)monster; return 0; }
+
+int Game_MeleeWeapon(const struct mobj_s *shooter)
+{
+    if (!shooter || !shooter->player) return 0;
+    return shooter->player->readyweapon == wp_staff ? 1 : shooter->player->readyweapon == wp_gauntlets ? 2 : 0;
 }
 
 /* lookdir 173 aims at slope 1 (P_SpawnPlayerMissile); -110 to 90 as the
@@ -183,13 +210,27 @@ int Game_HasEffect(game_effect effect)
     case GAME_EFFECT_WINDOW_GLASS: case GAME_EFFECT_SHOOTABLE_LIGHTS: case GAME_EFFECT_FLASHLIGHT:
     case GAME_EFFECT_WIND: case GAME_EFFECT_NATURAL_FALLOFF: case GAME_EFFECT_FREE_AIM:
     case GAME_EFFECT_AUTHORED_EPISODES: case GAME_EFFECT_PHOBOS: case GAME_EFFECT_TUNED_MOVEMENT: case GAME_EFFECT_MONSTER_BLOOD:
-    case GAME_EFFECT_RANDOM_PITCH: return 0;
+    case GAME_EFFECT_RANDOM_PITCH: case GAME_EFFECT_SLIME_BARRELS: return 0;   /* (the pod is green all over) */
     }
     return 1;
 }
 
 extern boolean MenuActive, askforquit;
 int Game_TakesText(void) { return MenuActive || askforquit || chatmodeon; }
+
+/* Heretic's bar (with its gargoyles reaching up over the view) stays part of the one picture. */
+int Game_StatusBarTop(void) { return 0; }
+const char *Game_BorderFlat(void) { return "FLAT513"; }
+
+/* Slow motion is free in Heretic: no meter, no shootslide. */
+int Game_SlowRules(void) { return 0; }
+int Game_SlowCosts(void) { return 0; }
+int Game_SlowLeft(void) { return 1; }
+int Game_SlowAsked(void) { return 0; }
+void Game_SlowHand(int slow) { (void)slow; }
+void Game_SlowClock(double scale) { (void)scale; }
+void Game_SlowFree(int free) { (void)free; }
+int Game_SlowGlass(int *fill, int *most, int *flowing) { (void)fill; (void)most; (void)flowing; return 0; }
 
 /* The Torch (P_PlayerThink) sets colormaps 1 (brightest) to 7, wandering
    between them; running out it blinks to 0, which puts the flame out. */
@@ -209,7 +250,13 @@ int Game_Torch(float *flame)
 void Game_Sun(game_sun *sun) { *sun = (game_sun){ 1, 0.4f, 0.3f, 0.6f, 1 }; }
 
 void Game_SetPhobos(int on) { (void)on; }
+void Game_SetAuthored(int on) { (void)on; }
+void Game_SetAiTiming(uint64_t (*clock)(void)) { (void)clock; }
+game_ai_timing Game_TakeAiTiming(void) { return (game_ai_timing){0}; }
+int Game_AiActive(void) { return 0; }
 void Game_SetWeather(int choice) { (void)choice; }
+extern unsigned climateseed;
+unsigned Game_ClimateSeed(void) { return climateseed; }
 int Game_NukageRain(void) { return 0; }
 void Game_SetPhobosRules(int player, int enemies, int air, int recoil) { (void)player; (void)enemies; (void)air; (void)recoil; }
 int Game_Phobos(void) { return 0; }
@@ -231,6 +278,9 @@ float Game_LibraryRinging(void) { return 0; }
 int Game_LibraryKnocks(void) { return 0; }
 float Game_LibraryFallSpeed(void) { return 0; }
 int Game_InLibrary(void) { return 0; }
+int Game_StockMap(void) { return 0; }
+int Game_Sleeper(float x, float y, float near, float far, unsigned pick, game_sleeper *out)
+{ (void)x; (void)y; (void)near; (void)far; (void)pick; (void)out; return 0; }
 float Game_LibraryChasm(float *side) { *side = 0; return 0; }
 float Game_LibraryTired(void) { return 0; }
 int Game_LibraryFall(float speed[3]) { (void)speed; return 0; }
@@ -242,6 +292,22 @@ int Game_Vents(game_vent *vents, int most) { (void)vents; (void)most; return 0; 
 int Game_Adrift(const struct mobj_s *thing) { (void)thing; return 0; }
 float Game_Draft(const struct mobj_s *thing, float way[3]) { (void)thing; (void)way; return 0; }
 int Game_Tumble(const struct mobj_s *thing, float fraction, float up[3]) { (void)thing; (void)fraction; (void)up; return 0; }
+int Game_Kneeling(const struct mobj_s *thing) { (void)thing; return 0; }
+void Game_KneelForTest(struct mobj_s *thing) { (void)thing; }
+float Game_Crouch(const struct mobj_s *thing) { (void)thing; return 0; }
+float Game_Hang(const struct mobj_s *thing, float fraction) { (void)thing; (void)fraction; return 0; }
+float Game_Swept(const struct mobj_s *thing, float fraction, float *dx, float *dy) { (void)thing; (void)fraction; (void)dx; (void)dy; return 0; }
+float Game_SweptDead(const struct mobj_s *thing, float fraction, float *dx, float *dy, float *up) { (void)thing; (void)fraction; (void)dx; (void)dy; (void)up; return 0; }
+int Game_Sliding(const struct mobj_s *thing) { (void)thing; return 0; }
+float Game_SlideView(int player, float fraction) { (void)player; (void)fraction; return 0; }
+int Game_Kick(int player, int *frame, float *dip) { (void)player; (void)frame; (void)dip; return 0; }
+int Game_HeadStrikes(float x, float y, float z, float radius, int player) { (void)x; (void)y; (void)z; (void)radius; (void)player; return 0; }
+int Game_DrawAngle(const struct mobj_s *thing, unsigned *angle) { (void)thing; (void)angle; return 0; }
+unsigned Game_SweptFacing(const struct mobj_s *thing) { return ((const mobj_t *)thing)->angle; }
+float Game_SweptRoll(const struct mobj_s *thing) { (void)thing; return 0; }
+int Game_WalkingShot(const struct mobj_s *thing, unsigned *heading) { (void)thing; (void)heading; return 0; }
+int Game_Lean(const struct mobj_s *thing, float *dx, float *dy) { (void)thing; (void)dx; (void)dy; return 0; }
+int Game_StrideLegs(const struct mobj_s *thing) { (void)thing; return 0; }
 float Game_LookKick(void) { return 0; }
 int Game_ViewFlipped(void) { return 0; }
 void Game_FlipView(void) {}
@@ -252,6 +318,12 @@ int Game_ModeChanged(void) { return 0; }
 /* Heretic's maps keep the light they were made with. */
 /* No authored episodes: Heretic keeps its derived look. */
 void Game_Mood(int episode, int map, game_mood *mood) { (void)episode; (void)map; (void)mood; }
+const char *Game_AuthoredInfo(int episode, int map, size_t *length, const char **file)
+{
+    (void)episode; (void)map; (void)length;
+    if (file) *file = NULL;
+    return NULL;
+}
 int Game_BrokenWindows(int episode, int map, game_spot *spots, int max) { (void)episode; (void)map; (void)spots; (void)max; return 0; }
 int Game_Courtyards(int episode, int map, int *sectors, int max) { (void)episode; (void)map; (void)sectors; (void)max; return 0; }
 
@@ -260,6 +332,9 @@ float Game_WaterClarity(void) { return 1; }
 
 /* Heretic's palette has its own ramps, and its grey is mostly stone. */
 int Game_SurfaceGloss(void) { return 1; }
+
+/* No flashlight, and the Torch runs out: the hero light starts faint. */
+int Game_HeroLight(void) { return 1; }
 
 /* Specials 40-51 (P_XYMovement): east, north, south, west, each light,
    medium and strong, as windTab's 5, 10 and 25 thrust. */
@@ -320,6 +395,7 @@ float Game_SoundCarry(int id) { (void)id; return 1; }
 
 /* Heretic's traces aren't hooked yet: no near misses. */
 void Game_TraceShots(game_shot_traced traced) { (void)traced; }
+void Game_TraceShotsAlso(game_shot_traced traced) { (void)traced; }
 
 /* FONTA, the menus' small font: FONTA_S, then '!' onward. Heretic draws
    it one pixel tighter than the patches are wide (MN_DrTextA). */
@@ -348,4 +424,10 @@ int Game_MenuSound(game_menu_sound sound)
     case GAME_MENU_CLOSE: return sfx_dorcls;
     }
     return sfx_None;
+}
+int Game_StartLift(int tag)
+{
+    line_t line = {0};
+    line.tag = (short)tag;
+    return tag ? EV_DoPlat(&line, perpetualRaise, 0) : 0;
 }

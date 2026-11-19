@@ -42,6 +42,9 @@ void I_ShutdownGraphics(void);
 
 // Takes full 8 bit values.
 void I_SetPalette (byte* palette);
+// The pickup flash by item (p_pickup_flash.c): colour (palette units; NULL: the WAD's own
+// bonus colour) and how much of it (0 none). Only the 3D renderer shows it.
+void I_PickupTint (const byte* color, float amount);
 
 void I_UpdateNoBlit (void);
 

@@ -1,0 +1,23 @@
+DERP voice packs (derp-cries.wad, derp-voices.wad) - licence
+
+The voice packs are a separate work from DERP. DERP's source code is licensed under the
+GNU GPL version 3 (see LICENSE.TXT and NOTICE.txt). That licence does not cover these
+packs; this file does.
+
+  derp-cries.wad   the monsters' sounds without words (imp noises, the soldiers' pain,
+                   idle, gibbed and death sounds). Ships with the game.
+  derp-voices.wad  the soldiers' spoken lines. A separate download.
+
+Copyright (c) 2026 robongrui.
+
+You may use the packs with DERP or any game or mod built from DERP's source, and give
+copies of the unmodified packs to others, as long as this licence goes with them.
+
+You may not extract their sounds to distribute or use them on their own, for example as
+samples, in a sound library or in other projects.
+
+The sounds were generated with ElevenLabs (elevenlabs.io) under a paid plan and edited
+for the game: the spoken lines with Text to Speech, in voices designed for DERP, and the
+sounds without words with Sound Effects.
+
+The packs are provided "as is", without warranty of any kind.

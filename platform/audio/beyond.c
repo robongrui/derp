@@ -46,7 +46,8 @@ static float reach_toward(const room_outline_t *o, float dx, float dy)
 
 /* Whether the run of rays from best, best_length long, opens on a space
    clearly bigger than the room; if so, b has it. */
-static int beyond_run(const room_t *room, const room_outline_t *outline, int best, int best_length, float facing, beyond_t *b)
+static int beyond_run(const room_t *room, const room_outline_t *outline, int best, int best_length, float facing, beyond_t *b,
+                      beyond_measure_fn measure, void *context)
 {
     /* The walls either side of it are about as far as the opening. */
     float before = outline->reach[(best + ROOM_RAYS - 1) % ROOM_RAYS];
@@ -56,7 +57,7 @@ static int beyond_run(const room_t *room, const room_outline_t *outline, int bes
 
     int centre = (best + best_length / 2) % ROOM_RAYS;
     float angle = centre * 2 * PI_F / ROOM_RAYS, along = opening + 0.5f * (outline->reach[centre] - opening);
-    Room_MeasureAt(outline->x + cosf(angle) * along, outline->y + sinf(angle) * along, facing, &b->room, &b->outline);
+    measure(outline->x + cosf(angle) * along, outline->y + sinf(angle) * along, facing, &b->room, &b->outline, context);
     if (b->outline.volume < BIGGER * outline->volume) return 0;
     int tunnel_end = room->tunnel > 0.5f && fabsf(cosf(angle - facing - room->axis)) > ALONG;
     int more_tunnel = tunnel_end && b->room.tunnel > 0.5f && b->room.width < WIDER * room->width;
@@ -70,12 +71,24 @@ static int beyond_run(const room_t *room, const room_outline_t *outline, int bes
     for (int k = 0; k < ROOM_TAPS; ++k)
     {
         b->room.pan[k] = fmaxf(-1, fminf(1, pan + 0.25f * b->room.pan[k]));
+        b->room.from_x[k] = cosf(angle) + 0.25f * b->room.from_x[k];
+        b->room.from_y[k] = sinf(angle) + 0.25f * b->room.from_y[k];
         b->room.delay[k] += delay;
     }
     return 1;
 }
 
+static void measure_live(float x, float y, float facing, room_t *room, room_outline_t *outline, void *context)
+{
+    (void)context;
+    Room_MeasureAt(x, y, facing, room, outline);
+}
 void Beyond_Measure(const room_t *room, const room_outline_t *outline, float facing, beyond_t *b)
+{
+    Beyond_MeasureWith(room, outline, facing, b, measure_live, NULL);
+}
+void Beyond_MeasureWith(const room_t *room, const room_outline_t *outline, float facing, beyond_t *b,
+                        beyond_measure_fn measure, void *context)
 {
     memset(b, 0, sizeof(*b));
     b->room.decay = b->room.room_decay = 0.2f;
@@ -108,7 +121,7 @@ void Beyond_Measure(const room_t *room, const room_outline_t *outline, float fac
     {
         int pick = 0;
         for (int r = 1; r < runs; ++r) if (run_weight[r] > run_weight[pick]) pick = r;
-        if (beyond_run(room, outline, run_start[pick], run_length[pick], facing, b)) return;
+        if (beyond_run(room, outline, run_start[pick], run_length[pick], facing, b, measure, context)) return;
         run_weight[pick] = run_weight[--runs]; run_start[pick] = run_start[runs]; run_length[pick] = run_length[runs];
     }
     b->coupling = 0;

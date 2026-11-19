@@ -10,23 +10,35 @@ static const char *const names[IMPACT_KINDS] = {
     "step-stone", "step-metal", "step-wood", "step-soft", "splash-water", "splash-thick",
     "run-stone", "run-metal", "run-wood", "run-soft", "gear-light", "gear-slung", "gear-heavy", "gear-armor",
     "gear-light-run", "gear-slung-run", "gear-heavy-run", "gear-armor-run", "flyby",
-    "gore-burst", "gore-slap",
+    "gore-burst", "gore-slap", "gore-tear", "gore-crack", "gore-blowup", "gore-thud", "gore-squelch", "gore-stretch", "gore-snap",
+    "body-stone", "body-wood", "body-metal",
+    "hit-stone", "hit-wood", "hit-metal", "hit-soft",
+    "player-armor", "player-body", "player-claw", "player-burn", "balloon",
+    "claw-hard", "claw-soft",
 };
 static const float seconds[IMPACT_KINDS] = { 0.5f, 0.5f, 0.55f, 0.9f, 0.6f, 0.9f, 0.7f, 1.8f, 2.1f, 1.8f, 2.1f,
                                                 0.3f, 0.3f, 0.3f, 0.3f, 0.4f, 0.4f,
                                                 0.3f, 0.3f, 0.3f, 0.3f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f,
-                                                0.3f, 0.5f, 0.4f };
+                                                0.3f, 0.5f, 0.4f, 0.45f, 0.25f, 1.0f, 0.25f, 0.3f, 0.12f, 0.1f,
+                                                0.2f, 0.25f, 0.35f, 0.25f, 0.2f, 0.3f, 0.15f,
+                                                0.35f, 0.35f, 0.3f, 0.45f, 2.2f,
+                                                0.2f, 0.2f };
 
 const char *Impact_Name(int kind) { return kind >= 0 && kind < IMPACT_KINDS ? names[kind] : "?"; }
-int Impact_Rate(int kind) { return kind >= IMPACT_GLASS_TINKLE && kind <= IMPACT_GLASS_FRACTURE_BIG ? 22050 : 11025; }
+int Impact_Rate(int kind)
+{
+    return (kind >= IMPACT_GLASS_TINKLE && kind <= IMPACT_GLASS_FRACTURE_BIG) || kind >= IMPACT_CLAW_HARD ? 22050 : 11025;
+}
 int Impact_Length(int kind, int rate) { return kind >= 0 && kind < IMPACT_KINDS ? (int)(seconds[kind] * rate) : 0; }
 
 void Impact_Render(int kind, unsigned seed, int rate, float *out, int frames)
 {
-    if (kind <= IMPACT_SCREEN_DIES) Spark_Render(kind, seed, rate, out, frames);
+    if (kind >= IMPACT_CLAW_HARD) Step_Render(kind, seed, rate, out, frames);
+    else if (kind <= IMPACT_SCREEN_DIES) Spark_Render(kind, seed, rate, out, frames);
     else if (kind <= IMPACT_GLASS_BIG) Glass_Render(kind, seed, rate, out, frames);
     else if (kind <= IMPACT_GLASS_FRACTURE_BIG) Fracture_Render(kind, seed, rate, out, frames);
     else if (kind == IMPACT_FLYBY) Flyby_Render(seed, rate, out, frames);
+    else if (kind >= IMPACT_HIT_STONE) Hit_Render(kind, seed, rate, out, frames);
     else if (kind >= IMPACT_GORE_BURST) Gore_Render(kind, seed, rate, out, frames);
     else Step_Render(kind, seed, rate, out, frames);
 }

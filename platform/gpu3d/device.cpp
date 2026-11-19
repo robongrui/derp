@@ -1,6 +1,10 @@
 /* The SDL_gpu device: creation and shutdown, samplers, the fixed textures,
    texture uploads, and the texture hooks the scene builds with (scene3d.h). */
 #include "internal.h"
+#include "../gpu_compute.h"
+#include <thread>
+#include <string>
+#include <cstring>
 
 namespace gpu3d {
 SDL_GPUDevice *device;
@@ -8,7 +12,7 @@ SDL_GPUShaderFormat shaderFormat;
 static SDL_GPUCommandBuffer *uploadCommand; // Texture uploads, submitted before the frame that uses them.
 SDL_GPUTextureFormat depthFormat,swapchainFormat;
 int maxSamples=1;bool forceSingleSample=false;
-SDL_GPUSampler *linearRepeat,*linearClamp,*nearestClamp;
+SDL_GPUSampler *linearRepeat,*linearClamp,*nearestClamp,*nearestRepeat;
 SDL_GPUTexture *settingsTexture,*hudTexture,*paletteTexture,*paletteLUT,*dummySeam,*dummyContact,*dummyBake,*dummyRelief,*solidTexel;
 static std::array<unsigned,256> paletteKey;
 SDL_GPUTexture *createTexture(SDL_GPUTextureFormat format,int w,int h,SDL_GPUTextureUsageFlags usage,
@@ -18,40 +22,133 @@ SDL_GPUTexture *createTexture(SDL_GPUTextureFormat format,int w,int h,SDL_GPUTex
     info.layer_count_or_depth=(Uint32)depth;info.num_levels=1;info.sample_count=samples;
     return SDL_CreateGPUTexture(device,&info);
 }
+// Small uploads share staging buffers: each takes the next free bytes of the
+// open one instead of a transfer buffer of its own (a level's sprite precache
+// makes about a thousand textures in a row). The open one is let go when it
+// fills or when the uploads are submitted; SDL frees it once the GPU has
+// copied from it, and nothing written to it is overwritten before then.
+// Large uploads (the bakes) keep a buffer of their own.
+constexpr Uint32 stagingSize=4u<<20,stagingAlign=512;
+static SDL_GPUTransferBuffer *staging;
+static Uint32 stagingUsed;
+static bool stagingCycle=false;   // the next map takes a fresh backing: what was staged is in flight
+struct Staged { SDL_GPUTransferBuffer *buffer=nullptr; Uint32 offset=0; byte *data=nullptr; bool own=false; };
+// Room for bytes, mapped; nullptr data when no buffer could be made.
+// Large ones in play (the re-bakes' light, a few times a second while a door moves) share one
+// kept buffer, mapped with cycling: one of their own each, freed after, made SDL defragment its
+// memory in the next frame's submission (15 to 25 ms frames behind every re-bake). At load
+// (bigger than it, the bakes' whole atlases) they still take one of their own.
+static SDL_GPUTransferBuffer *bigStaging;
+static Uint32 bigStagingSize;
+constexpr Uint32 bigStagingMost=64u<<20;
+static Staged stage(Uint32 bytes) {
+    Staged s;
+    if(bytes>stagingSize/4&&bytes<=bigStagingMost) {
+        if(!bigStaging||bigStagingSize<bytes) {
+            if(bigStaging)SDL_ReleaseGPUTransferBuffer(device,bigStaging);
+            Uint32 size=stagingSize;
+            while(size<bytes)size<<=1;
+            SDL_GPUTransferBufferCreateInfo info={SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,size,0};
+            bigStaging=SDL_CreateGPUTransferBuffer(device,&info);bigStagingSize=bigStaging?size:0;
+        }
+        s.buffer=bigStaging;
+        // Cycled: copies recorded from it before (not yet run) keep what they read.
+        if(s.buffer)s.data=(byte*)SDL_MapGPUTransferBuffer(device,s.buffer,true);
+        return s;
+    }
+    if(bytes>stagingSize/4) {
+        SDL_GPUTransferBufferCreateInfo info={SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,bytes,0};
+        s.buffer=SDL_CreateGPUTransferBuffer(device,&info);s.own=true;
+        if(s.buffer)s.data=(byte*)SDL_MapGPUTransferBuffer(device,s.buffer,false);
+        return s;
+    }
+    Uint32 at=(stagingUsed+stagingAlign-1)&~(stagingAlign-1);
+    // Kept, not made anew each time (freeing one makes SDL defragment in the next submission):
+    // full, or once what it held is submitted, it is cycled, which gives it fresh memory while
+    // the copies recorded from it keep theirs. Not cycled otherwise: those copies read it when
+    // the uploads are submitted.
+    bool cycle=stagingCycle;
+    stagingCycle=false;
+    if(!staging) {
+        SDL_GPUTransferBufferCreateInfo info={SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,stagingSize,0};
+        staging=SDL_CreateGPUTransferBuffer(device,&info);at=0;cycle=false;
+        if(!staging) {stagingUsed=0;return s;}
+    } else if(at+bytes>stagingSize) {at=0;cycle=true;}
+    byte *mapped=(byte*)SDL_MapGPUTransferBuffer(device,staging,cycle);
+    if(!mapped)return s;
+    stagingUsed=at+bytes;
+    s.buffer=staging;s.offset=at;s.data=mapped+at;
+    return s;
+}
+// The data written: unmapped, and a buffer of its own released once its copies are recorded (SDL keeps it until they ran).
+static void staged(const Staged &s) {SDL_UnmapGPUTransferBuffer(device,s.buffer);}
+static void unstage(const Staged &s) {if(s.own)SDL_ReleaseGPUTransferBuffer(device,s.buffer);}
 // Uploads go through their own command buffer so they can be recorded at any
 // point, even while the frame is inside a render pass.
 static void upload(SDL_GPUTexture *texture,int w,int h,int depth,const void *pixels,Uint32 bytes,Uint32 pixelsPerRow) {
-    SDL_GPUTransferBufferCreateInfo info={SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,bytes,0};
-    SDL_GPUTransferBuffer *transfer=SDL_CreateGPUTransferBuffer(device,&info);
-    if(!transfer)I_Error((char*)"Could not allocate a GPU upload: %s",SDL_GetError());
-    memcpy(SDL_MapGPUTransferBuffer(device,transfer,false),pixels,bytes);
-    SDL_UnmapGPUTransferBuffer(device,transfer);
+    Staged transfer=stage(bytes);
+    if(!transfer.data)I_Error((char*)"Could not allocate a GPU upload: %s",SDL_GetError());
+    memcpy(transfer.data,pixels,bytes);
+    staged(transfer);
     if(!uploadCommand)uploadCommand=SDL_AcquireGPUCommandBuffer(device);
     SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(uploadCommand);
-    SDL_GPUTextureTransferInfo source={transfer,0,pixelsPerRow,(Uint32)h};
+    SDL_GPUTextureTransferInfo source={transfer.buffer,transfer.offset,pixelsPerRow,(Uint32)h};
     SDL_GPUTextureRegion target={};
     target.texture=texture;target.w=(Uint32)w;target.h=(Uint32)h;target.d=(Uint32)depth;
     SDL_UploadToGPUTexture(copy,&source,&target,true);
     SDL_EndGPUCopyPass(copy);
-    SDL_ReleaseGPUTransferBuffer(device,transfer);
+    unstage(transfer);
 }
 void flushUploads() {
     if(uploadCommand&&!SDL_SubmitGPUCommandBuffer(uploadCommand))
         fprintf(stderr,"GPU upload failed: %s\n",SDL_GetError());
     uploadCommand=nullptr;
+    // What was staged is submitted: the next uploads start on fresh memory.
+    stagingUsed=0;stagingCycle=true;
+}
+static void releaseStaging() {
+    if(device) {
+        if(staging)SDL_ReleaseGPUTransferBuffer(device,staging);
+        if(bigStaging)SDL_ReleaseGPUTransferBuffer(device,bigStaging);
+    }
+    staging=nullptr;bigStaging=nullptr;stagingUsed=0;bigStagingSize=0;stagingCycle=false;
+}
+// Damage and pickup flashes step through the same few palettes, and each
+// table takes millions of color tests: keep every one met or built ahead
+// (Doom has 14; a gamma change brings new ones, so the oldest go past a few
+// dozen).
+static std::vector<std::pair<std::array<unsigned,256>,std::vector<unsigned>>> paletteTables;
+constexpr size_t keptPaletteTables=64;
+static bool paletteTableKept(const std::array<unsigned,256> &key) {
+    return std::any_of(paletteTables.begin(),paletteTables.end(),[&](const auto &t){return t.first==key;});
+}
+static void keepPaletteTable(const std::array<unsigned,256> &key,std::vector<unsigned> colors) {
+    if(paletteTables.size()>=keptPaletteTables)paletteTables.erase(paletteTables.begin());
+    paletteTables.push_back({key,std::move(colors)});
+}
+void prebuildPaletteLUTs() {
+    // Only palette mode and retro reflections look up the live palette.
+    if(!(settings.palette||(settings.reflections&&settings.retroReflections)))return;
+    std::vector<std::array<unsigned,256>> missing;
+    for(const auto &palette:gamePalettes())
+        if(!paletteTableKept(palette)&&std::find(missing.begin(),missing.end(),palette)==missing.end())missing.push_back(palette);
+    if(missing.empty())return;
+    std::vector<std::vector<unsigned>> built(missing.size());
+    std::vector<std::thread> workers;
+    try {for(size_t i=1;i<missing.size();++i)workers.emplace_back([&,i]{built[i]=paletteLUTColors(missing[i].data());});}
+    catch(...) {}   // no more threads: the rest are built here
+    built[0]=paletteLUTColors(missing[0].data());
+    for(std::thread &worker:workers)worker.join();
+    for(size_t i=1;i<missing.size();++i)if(built[i].empty())built[i]=paletteLUTColors(missing[i].data());
+    for(size_t i=0;i<missing.size();++i)keepPaletteTable(missing[i],std::move(built[i]));
 }
 void updatePaletteLUT(const unsigned *palette) {
     if(paletteLUT&&std::equal(palette,palette+256,paletteKey.begin()))return;
     std::copy(palette,palette+256,paletteKey.begin());
-    // Damage and pickup flashes step through the same few palettes, and each
-    // table takes millions of color tests: keep every one met (Doom has 14;
-    // a gamma change brings new ones, so the oldest go past a few dozen).
-    static std::vector<std::pair<std::array<unsigned,256>,std::vector<unsigned>>> tables;
-    auto found=std::find_if(tables.begin(),tables.end(),[&](const auto &t){return t.first==paletteKey;});
-    if(found==tables.end()) {
-        if(tables.size()>=32)tables.erase(tables.begin());
-        tables.push_back({paletteKey,paletteLUTColors(palette)});
-        found=tables.end()-1;
+    auto found=std::find_if(paletteTables.begin(),paletteTables.end(),[&](const auto &t){return t.first==paletteKey;});
+    if(found==paletteTables.end()) {
+        keepPaletteTable(paletteKey,paletteLUTColors(palette));
+        found=paletteTables.end()-1;
     }
     const std::vector<unsigned> &colors=found->second;
     if(!paletteLUT)paletteLUT=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,32,32,SDL_GPU_TEXTUREUSAGE_SAMPLER,
@@ -69,6 +166,14 @@ static SDL_GPUSampler *sampler(SDL_GPUFilter filter,SDL_GPUSamplerAddressMode ad
 
 using namespace gpu3d;
 GpuTexture::~GpuTexture() {if(texture&&device)SDL_ReleaseGPUTexture(device,texture);}
+GpuTextureRef gpuCreateVolume(GpuFormat format,int w,int h,int depth,const void *pixels) {
+    SDL_GPUTextureFormat textureFormat=format==GpuFormat::R8?SDL_GPU_TEXTUREFORMAT_R8_UNORM:format==GpuFormat::RG8?SDL_GPU_TEXTUREFORMAT_R8G8_UNORM:SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    int pixelBytes=format==GpuFormat::R8?1:format==GpuFormat::RG8?2:4;
+    SDL_GPUTexture *texture=createTexture(textureFormat,w,h,SDL_GPU_TEXTUREUSAGE_SAMPLER,SDL_GPU_SAMPLECOUNT_1,SDL_GPU_TEXTURETYPE_3D,depth);
+    if(!texture)return nullptr;
+    upload(texture,w,h,depth,pixels,(Uint32)((size_t)w*h*depth*pixelBytes),(Uint32)w);
+    return GpuTextureRef(new GpuTexture{texture});
+}
 GpuTextureRef gpuCreateTexture(GpuFormat format,int w,int h,const void *pixels,int bytesPerRow,int levels) {
     SDL_GPUTextureFormat textureFormat=format==GpuFormat::R8?SDL_GPU_TEXTUREFORMAT_R8_UNORM:format==GpuFormat::RG8?SDL_GPU_TEXTUREFORMAT_R8G8_UNORM:
         format==GpuFormat::RGBA8?SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM:SDL_GPU_TEXTUREFORMAT_R16G16B16A16_UNORM;
@@ -86,24 +191,23 @@ GpuTextureRef gpuCreateTexture(GpuFormat format,int w,int h,const void *pixels,i
     if(!texture)return nullptr;
     Uint32 bytes=0;
     for(int level=0;level<levels;++level)bytes+=(Uint32)(std::max(1,w>>level)*std::max(1,h>>level)*pixelBytes);
-    SDL_GPUTransferBufferCreateInfo transferInfo={SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,bytes,0};
-    SDL_GPUTransferBuffer *transfer=SDL_CreateGPUTransferBuffer(device,&transferInfo);
-    if(!transfer) {SDL_ReleaseGPUTexture(device,texture);return nullptr;}
-    memcpy(SDL_MapGPUTransferBuffer(device,transfer,false),pixels,bytes);
-    SDL_UnmapGPUTransferBuffer(device,transfer);
+    Staged transfer=stage(bytes);
+    if(!transfer.data) {if(transfer.own&&transfer.buffer)SDL_ReleaseGPUTransferBuffer(device,transfer.buffer);SDL_ReleaseGPUTexture(device,texture);return nullptr;}
+    memcpy(transfer.data,pixels,bytes);
+    staged(transfer);
     if(!uploadCommand)uploadCommand=SDL_AcquireGPUCommandBuffer(device);
     SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(uploadCommand);
-    Uint32 offset=0;
+    Uint32 offset=transfer.offset;
     for(int level=0;level<levels;++level) {
         Uint32 lw=(Uint32)std::max(1,w>>level),lh=(Uint32)std::max(1,h>>level);
-        SDL_GPUTextureTransferInfo source={transfer,offset,lw,lh};
+        SDL_GPUTextureTransferInfo source={transfer.buffer,offset,lw,lh};
         SDL_GPUTextureRegion target={};
         target.texture=texture;target.mip_level=(Uint32)level;target.w=lw;target.h=lh;target.d=1;
         SDL_UploadToGPUTexture(copy,&source,&target,false);
         offset+=lw*lh*(Uint32)pixelBytes;
     }
     SDL_EndGPUCopyPass(copy);
-    SDL_ReleaseGPUTransferBuffer(device,transfer);
+    unstage(transfer);
     return GpuTextureRef(new GpuTexture{texture});
 }
 void gpuUpdateTexture(const GpuTextureRef &texture,GpuFormat format,const std::vector<std::array<int,4>> &rects,const void *pixels,int bytesPerRow) {
@@ -112,22 +216,24 @@ void gpuUpdateTexture(const GpuTextureRef &texture,GpuFormat format,const std::v
     Uint32 bytes=0;
     for(const auto &r:rects)bytes+=(Uint32)(r[2]*r[3]*pixelBytes);
     if(!bytes)return;
-    SDL_GPUTransferBufferCreateInfo info={SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,bytes,0};
-    SDL_GPUTransferBuffer *transfer=SDL_CreateGPUTransferBuffer(device,&info);
-    if(!transfer) {fprintf(stderr,"GPU upload failed: %s\n",SDL_GetError());return;}
-    byte *mapped=(byte*)SDL_MapGPUTransferBuffer(device,transfer,false);
+    Staged transfer=stage(bytes);
+    if(!transfer.data) {
+        if(transfer.own&&transfer.buffer)SDL_ReleaseGPUTransferBuffer(device,transfer.buffer);
+        fprintf(stderr,"GPU upload failed: %s\n",SDL_GetError());return;
+    }
+    byte *mapped=transfer.data;
     Uint32 offset=0;
     for(const auto &r:rects)for(int row=0;row<r[3];++row) {
         memcpy(mapped+offset,(const byte*)pixels+(size_t)(r[1]+row)*bytesPerRow+(size_t)r[0]*pixelBytes,(size_t)r[2]*pixelBytes);
         offset+=(Uint32)(r[2]*pixelBytes);
     }
-    SDL_UnmapGPUTransferBuffer(device,transfer);
+    staged(transfer);
     if(!uploadCommand)uploadCommand=SDL_AcquireGPUCommandBuffer(device);
     SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(uploadCommand);
-    offset=0;
+    offset=transfer.offset;
     for(const auto &r:rects) {
         if(r[2]<=0||r[3]<=0)continue;
-        SDL_GPUTextureTransferInfo source={transfer,offset,(Uint32)r[2],(Uint32)r[3]};
+        SDL_GPUTextureTransferInfo source={transfer.buffer,offset,(Uint32)r[2],(Uint32)r[3]};
         SDL_GPUTextureRegion target={};
         target.texture=texture->texture;target.x=(Uint32)r[0];target.y=(Uint32)r[1];target.w=(Uint32)r[2];target.h=(Uint32)r[3];target.d=1;
         // No cycling: the rest of the texture must keep its contents.
@@ -135,7 +241,7 @@ void gpuUpdateTexture(const GpuTextureRef &texture,GpuFormat format,const std::v
         offset+=(Uint32)(r[2]*r[3]*pixelBytes);
     }
     SDL_EndGPUCopyPass(copy);
-    SDL_ReleaseGPUTransferBuffer(device,transfer);
+    unstage(transfer);
 }
 int gpuMaxSamples() {return maxSamples;}
 // The device's own description (SDL 3.4), read once.
@@ -192,8 +298,30 @@ bool platformReadMask(const char *path,int w,int h,std::vector<float> &values) {
 
 int I_Render3DInit(SDL_Window *window) {
     bool debug=M_CheckParm((char*)"-gpudebug")!=0;
-    // SDL picks Metal on macOS and Vulkan elsewhere; SDL_GPU_DRIVER overrides it.
-    device=SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV|SDL_GPU_SHADERFORMAT_MSL,debug,nullptr);
+#ifdef __linux__
+    // Mesa's AMD driver (RADV) compiles compute kernels for 64-wide waves, and its compiler
+    // (ACO) turned the lamps' bake (lights.comp) into junk that way on the Steam Deck (Mesa
+    // 26.2): lamp light black or wildly bright in most texels. 32-wide waves bake it as the
+    // processor does. Read when the Vulkan instance is made, so set before it; other drivers
+    // ignore it, and a RADV_PERFTEST that already names a wave size is left as it is.
+    {
+        const char *was=getenv("RADV_PERFTEST");
+        if(!was||!strstr(was,"cswave")) {
+            std::string wanted=was&&*was?std::string(was)+",cswave32":std::string("cswave32");
+            setenv("RADV_PERFTEST",wanted.c_str(),1);
+        }
+    }
+#endif
+    // SDL picks Metal on macOS and Vulkan elsewhere; SDL_GPU_DRIVER overrides it. Only the shader
+    // backends this build holds (scripts/gpu_shaders.cmake: the platform's own by default).
+    SDL_GPUShaderFormat formats=0;
+#ifdef DOOM_SHADERS_SPIRV
+    formats|=SDL_GPU_SHADERFORMAT_SPIRV;
+#endif
+#ifdef DOOM_SHADERS_MSL
+    formats|=SDL_GPU_SHADERFORMAT_MSL;
+#endif
+    device=SDL_CreateGPUDevice(formats,debug,nullptr);
     if(!device) {fprintf(stderr,"GPU renderer unavailable: %s\n",SDL_GetError());return 0;}
     shaderFormat=(SDL_GetGPUShaderFormats(device)&SDL_GPU_SHADERFORMAT_SPIRV)?SDL_GPU_SHADERFORMAT_SPIRV:SDL_GPU_SHADERFORMAT_MSL;
     if(!SDL_ClaimWindowForGPUDevice(device,window)) {
@@ -211,10 +339,11 @@ int I_Render3DInit(SDL_Window *window) {
     int msaa=M_CheckParm((char*)"-gpumsaa");
     forceSingleSample=msaa&&msaa+1<myargc&&atoi(myargv[msaa+1])==1;
     linearRepeat=sampler(SDL_GPU_FILTER_LINEAR,SDL_GPU_SAMPLERADDRESSMODE_REPEAT);
+    nearestRepeat=sampler(SDL_GPU_FILTER_NEAREST,SDL_GPU_SAMPLERADDRESSMODE_REPEAT);
     linearClamp=sampler(SDL_GPU_FILTER_LINEAR,SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE);
     nearestClamp=sampler(SDL_GPU_FILTER_NEAREST,SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE);
     if(!linearRepeat||!linearClamp||!nearestClamp||!createPipelines()) {I_Render3DShutdown();return 0;}
-    hudTexture=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,SCREENWIDTH,SCREENHEIGHT,SDL_GPU_TEXTUREUSAGE_SAMPLER);
+    hudTexture=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,SCREENWIDTH,SCREENHEIGHT,SDL_GPU_TEXTUREUSAGE_SAMPLER);hudCurrent=false;
     settingsTexture=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,DOOM_SETTINGS_WIDTH,DOOM_SETTINGS_HEIGHT,SDL_GPU_TEXTUREUSAGE_SAMPLER);
     paletteTexture=createTexture(SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,256,1,SDL_GPU_TEXTUREUSAGE_SAMPLER);
     dummySeam=createTexture(SDL_GPU_TEXTUREFORMAT_R16G16B16A16_UNORM,1,1,SDL_GPU_TEXTUREUSAGE_SAMPLER);
@@ -239,11 +368,13 @@ int I_Render3DInit(SDL_Window *window) {
 void I_Render3DShutdown(void) {
     if(device)SDL_WaitForGPUIdle(device);
     sceneShutdown();
+    gpucompute::shutdown();
     flushUploads();
-    releaseTargets();releaseReflection();width=height=0;
+    releaseStaging();
+    releaseTargets();releaseReflection();releaseSkyCache();width=height=0;
     for(SDL_GPUTexture **t:{&settingsTexture,&hudTexture,&paletteTexture,&paletteLUT,&dummySeam,&dummyContact,&dummyBake,&dummyRelief,&solidTexel})release(*t);
     releasePipelines();
-    for(SDL_GPUSampler **s:{&linearRepeat,&linearClamp,&nearestClamp})release(*s,SDL_ReleaseGPUSampler);
+    for(SDL_GPUSampler **s:{&linearRepeat,&linearClamp,&nearestClamp,&nearestRepeat})release(*s,SDL_ReleaseGPUSampler);
     releaseFrameUploads();releaseLoading();
     if(device) {
         if(gameWindow)SDL_ReleaseWindowFromGPUDevice(device,gameWindow);

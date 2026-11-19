@@ -24,7 +24,9 @@ layout(std140,set=1,binding=1) uniform Plane { vec4 plane; };
 out float gl_ClipDistance[1];
 #endif
 void main() {
-    vec3 position=inPosition+vec3(0,0,inLift);
+    // (c.shadowSkip.w, here only: a shadow volume's near corners stepped back along the light's way
+    // by their tint for the sprites' round, scene3d/shadows.cpp. 0 everywhere else: nothing moves.)
+    vec3 position=inPosition+vec3(0,0,inLift)+inTint*c.shadowSkip.w;
     vUV=inUV;vLight=inLight;vMode=inMode;vWorld=position;vTint=inTint;vLightMask=inLightMask;vSun=inSun;vStatic=inStatic;vLampTint=inLampTint;vLift=inLift;
     if((inMode&MODE_SCREEN)!=0u) {gl_Position=vec4(inPosition.xy,0,1);vDistance=0;}
     else {

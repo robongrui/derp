@@ -22,6 +22,7 @@ struct Pass {
     LoadingShow show=nullptr;
     std::thread::id thread;
     bool planned[stageCount]={},level=false;
+    bool restored[stageCount]={};   // came from the bake cache (loadingRestored)
     int stage=-1,loop=0;
     float part=0,loopPart=0;
     uint64_t start=0,stageStart=0,shown=0;
@@ -43,6 +44,7 @@ void endStage(uint64_t now) {
 } // namespace
 
 void planLoading(LoadStage stage,bool planned) {pass.planned[(int)stage]=planned;}
+void loadingRestored(LoadStage stage) {if(pass.show)pass.restored[(int)stage]=true;}
 void loadingStage(LoadStage stage) {
     if(!pass.show)return;
     uint64_t now=SDL_GetTicksNS();
@@ -73,7 +75,11 @@ void loadingTick(float part) {
     pass.shown=now;
     pass.show(title(),pass.stage>=0?stageNames[pass.stage]:"",fraction());
 }
+static bool afterLoad=false;
+bool firstFrameAfterLoad() {return afterLoad&&!loadingOnThisThread();}
+void frameAfterLoadDone() {if(!loadingOnThisThread())afterLoad=false;}
 void runLoading(int width,int height,LoadingShow show) {
+    afterLoad=false;
     pass=Pass{};
     pass.show=show;pass.thread=std::this_thread::get_id();pass.start=SDL_GetTicksNS();
     prepareFrame(width,height);
@@ -83,11 +89,13 @@ void runLoading(int width,int height,LoadingShow show) {
     if(pass.shown)pass.show(title(),"",1);
     std::string times;
     for(int s=0;s<stageCount;++s)if(pass.took[s]>0) {
-        stageMs[s]=std::max(1.0,pass.took[s]);
-        char entry[64];snprintf(entry,sizeof(entry),"%s%s %.0f ms",times.empty()?"":", ",stageNames[s],pass.took[s]);
+        // A stage the bake cache restored says nothing of how long baking it takes.
+        if(!pass.restored[s])stageMs[s]=std::max(1.0,pass.took[s]);
+        char entry[96];snprintf(entry,sizeof(entry),"%s%s %.0f ms%s",times.empty()?"":", ",stageNames[s],pass.took[s],pass.restored[s]?" (cached)":"");
         times+=entry;
     }
     if(!times.empty())fprintf(stderr,"3D loading: %s; %.0f ms in all.\n",times.c_str(),(now-pass.start)/1e6);
+    afterLoad=pass.level;
     pass.show=nullptr;
 }
 } // namespace doom3d

@@ -12,6 +12,15 @@
 #include "z_zone.h"
 
 derp_map DerpInfo_Map = { -1, -1, -1, -1, 0, 0, -1, -1, -1, -1, -1, -1, -1 };
+char DerpInfo_MapName[9];
+unsigned DerpInfo_Serial;
+
+const char *DerpInfo_TimeName(int hour)
+{
+    static const char *const names[] = { NULL, "dawn", "morning", "noon", "afternoon", "dusk", "night" };
+    return hour >= 0 && hour < 7 ? names[hour] : NULL;
+}
+const char *DerpInfo_HourName(int hour) { return hour == 6 ? NULL : DerpInfo_TimeName(hour); }
 
 void DerpInfo_Unset(derp_map *map)
 {
@@ -21,6 +30,32 @@ void DerpInfo_Unset(derp_map *map)
     map->library = -1;
     map->farFogNear = map->farFogFar = -1; map->farFogColor = -1;
     map->mirrors = 0;
+    memset(map->hourSun, 0, sizeof map->hourSun);
+    map->time = 0;
+    map->temperatureSet = 0; map->temperature = 0;
+}
+
+void DerpInfo_Over(derp_map *under, const derp_map *over)
+{
+    int i;
+    if (over->weather >= 0) under->weather = over->weather;
+    if (over->weatherAmount >= 0) under->weatherAmount = over->weatherAmount;
+    if (over->wind >= 0) under->wind = over->wind;
+    if (over->sun >= 0) { under->sun = over->sun; under->sunAngle = over->sunAngle; under->sunHeight = over->sunHeight; }
+    if (over->phobos >= 0) under->phobos = over->phobos;
+    if (over->gravity >= 0) under->gravity = over->gravity;
+    if (over->windAmount >= 0) under->windAmount = over->windAmount;
+    if (over->library >= 0) under->library = over->library;
+    if (over->farFogNear >= 0 || over->farFogFar >= 0) { under->farFogNear = over->farFogNear; under->farFogFar = over->farFogFar; }
+    if (over->farFogColor >= 0) under->farFogColor = over->farFogColor;
+    if (over->mirrors > 0) { under->mirrors = over->mirrors; memcpy(under->mirror, over->mirror, sizeof under->mirror); }
+    for (i = 0; i < 7; ++i)
+        if (over->hourSun[i]) {
+            under->hourSun[i] = 1;
+            under->hourSunAngle[i] = over->hourSunAngle[i]; under->hourSunHeight[i] = over->hourSunHeight[i];
+        }
+    if (over->time) under->time = over->time;
+    if (over->temperatureSet) { under->temperatureSet = 1; under->temperature = over->temperature; }
 }
 
 /* No <strings.h> on MSVC. */
@@ -29,6 +64,14 @@ static int same(const char *a, const char *b)
     for (; *a && *b; ++a, ++b)
         if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
     return *a == *b;
+}
+
+/* Whether text starts with prefix, case aside. */
+static int startsWith(const char *text, const char *prefix)
+{
+    for (; *prefix; ++text, ++prefix)
+        if (tolower((unsigned char)*text) != tolower((unsigned char)*prefix)) return 0;
+    return 1;
 }
 
 typedef struct {
@@ -95,6 +138,17 @@ static int flag(const char *token, int *out)
     return 0;
 }
 
+/* An angle, then a height over the horizon (1 to 90), in degrees. */
+static int sunPlace(char values[][64], int count, float *angle, float *height)
+{
+    float a, b;
+    if (count != 2 || !number(values[0], &a) || !number(values[1], &b)) return 0;
+    a = fmodf(a, 360);
+    *angle = a < 0 ? a + 360 : a;
+    *height = b < 1 ? 1 : b > 90 ? 90 : b;
+    return 1;
+}
+
 /* One key's values (up to six) into map; whether they made sense. */
 static int apply(const char *key, char values[][64], int count, derp_map *map)
 {
@@ -110,6 +164,7 @@ static int apply(const char *key, char values[][64], int count, derp_map *map)
         else if (same(values[0], "ash")) map->weather = 5;
         else if (same(values[0], "fog")) map->weather = 6;
         else if (same(values[0], "dryice")) map->weather = 7;
+        else if (same(values[0], "firestorm")) map->weather = 8;
         else return 0;
         return 1;
     }
@@ -130,10 +185,30 @@ static int apply(const char *key, char values[][64], int count, derp_map *map)
     }
     if (same(key, "sun")) {
         if (count == 1 && (same(values[0], "none") || same(values[0], "hidden"))) { map->sun = 0; return 1; }
-        if (count != 2 || !number(values[0], &a) || !number(values[1], &b)) return 0;
-        a = fmodf(a, 360);
-        map->sun = 1; map->sunAngle = a < 0 ? a + 360 : a;
-        map->sunHeight = b < 1 ? 1 : b > 90 ? 90 : b;
+        if (!sunPlace(values, count, &map->sunAngle, &map->sunHeight)) return 0;
+        map->sun = 1;
+        return 1;
+    }
+    /* sun.dusk: the sun at one of F4's hours. */
+    if (startsWith(key, "sun.")) {
+        for (i = 1; i < 6; ++i)
+            if (same(key + 4, DerpInfo_HourName(i))) {
+                if (!sunPlace(values, count, &map->hourSunAngle[i], &map->hourSunHeight[i])) return 0;
+                map->hourSun[i] = 1;
+                return 1;
+            }
+        return -1;
+    }
+    if (same(key, "time")) {
+        if (count != 1) return 0;
+        for (i = 1; i < 7; ++i)
+            if (same(values[0], DerpInfo_TimeName(i))) { map->time = i; return 1; }
+        return 0;
+    }
+    if (same(key, "temperature")) {
+        if (count != 1 || !number(values[0], &a)) return 0;
+        a = a < -30 ? -30 : a > 50 ? 50 : a;
+        map->temperatureSet = 1; map->temperature = (int)lroundf(a);
         return 1;
     }
     if (same(key, "phobos")) {
@@ -241,12 +316,16 @@ void DerpInfo_Level(const char *mapname)
 {
     int i, blocks = 0;
     DerpInfo_Unset(&DerpInfo_Map);
+    ++DerpInfo_Serial;
+    if (mapname != DerpInfo_MapName) snprintf(DerpInfo_MapName, sizeof DerpInfo_MapName, "%s", mapname);
     for (i = 0; i < numlumps; ++i) {
         char where[64];
         if (strncmp(lumpinfo[i].name, "DERPINFO", 8)) continue;
         snprintf(where, sizeof where, "lump %d", i);
         blocks += DerpInfo_Parse((const char *)W_CacheLumpNum(i, PU_CACHE), (size_t)W_LumpLength(i), mapname, where, &DerpInfo_Map);
     }
+    /* The player's own, last: it wins over every WAD's. */
+    blocks += DerpInfo_FileRead(DERPINFO_PLAYER_FILE, mapname, &DerpInfo_Map);
     if (blocks) {
         const derp_map *m = &DerpInfo_Map;
         fprintf(stderr, "DERPINFO %s: weather %d, amount %.2f, wind %.0f at %.2f, sun %d (%.0f, %.0f), phobos %d, gravity %g, library %d.\n",

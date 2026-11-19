@@ -186,7 +186,7 @@ void fogBankUniforms(Uniforms &camera) {
 // blizzard's do; the layer alone stood under a crisp sky. Run after the
 // other hazes (scene.cpp).
 void dryIceHazeUniforms(Uniforms &camera) {
-    if(!dry()||!settings.weather||camera.bank[3]<=0)return;
+    if(!dry()||!climateNow().weather||camera.bank[3]<=0)return;
     float amount=std::min(1.0f,fallNow);
     for(int c=0;c<3;++c)camera.haze[c]+=(camera.bankColor[c]-camera.haze[c])*amount;
 }

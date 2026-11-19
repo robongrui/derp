@@ -1,0 +1,35 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Sun visibility (sunVisibility in platform/baked_lighting.h): sunRays' four
+// to sixteen rays a point toward the sun, the same for every point, counted
+// as they reach the sky.
+layout(local_size_x=64) in;
+#ifdef METAL
+#define MAP_BINDING 1
+#define POINT_BINDING 2
+#define OUT_BINDING 3
+#else
+#define MAP_BINDING 0
+#define POINT_BINDING 1
+#define OUT_BINDING 0
+#endif
+// job: x the first point, y how many, z how many rays. rays: their unit directions.
+layout(std140,set=2,binding=0) uniform Job { uvec4 mapA; uvec4 mapB; uvec4 job; vec4 rays[16]; };
+layout(std430,set=0,binding=MAP_BINDING) readonly buffer MapWords { uint mapWords[]; };
+// x, y, z, sector | flags << 24.
+layout(std430,set=0,binding=POINT_BINDING) readonly buffer Points { uvec4 points[]; };
+layout(std430,set=1,binding=OUT_BINDING) writeonly buffer Out { uint results[]; };
+#include "trace.glsl"
+void main() {
+    uint i=gl_GlobalInvocationID.x;
+    if(i>=job.y)return;
+    uvec4 a=points[job.x+i];
+    vec3 o=vec3(uintBitsToFloat(a.x),uintBitsToFloat(a.y),uintBitsToFloat(a.z));
+    int sector=int(a.w&0xFFFFFFu);
+    uint open=0u;
+    for(uint n=0u;n<job.z;++n) {
+        TraceHit hit;
+        if(traceRay(sector,o,rays[n].xyz,traceInf,a.w>>24,hit))++open;
+    }
+    results[i]=open;
+}

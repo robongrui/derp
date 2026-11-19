@@ -19,6 +19,10 @@ typedef struct {
 /* Finds the space beyond the listener's room, from the room and floor plan
    Room_Measure gave, for a listener facing (radians, a map angle). */
 void Beyond_Measure(const room_t *room, const room_outline_t *outline, float facing, beyond_t *beyond);
+/* The same, measuring the space with measure (Room_MeasureAt's arguments, and context). */
+typedef void (*beyond_measure_fn)(float x, float y, float facing, room_t *room, room_outline_t *outline, void *context);
+void Beyond_MeasureWith(const room_t *room, const room_outline_t *outline, float facing, beyond_t *beyond,
+                        beyond_measure_fn measure, void *context);
 /* How much a sound at (x, y) is in the space beyond rather than in the
    listener's room: 0 here or anywhere else, 1 in there. */
 float Beyond_Share(const beyond_t *beyond, float x, float y);

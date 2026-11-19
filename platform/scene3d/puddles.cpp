@@ -45,13 +45,15 @@ static byte rampIndex(int pic,float shade) {
 }
 // The base artwork: the middle's dark shades (a drip run is all edge: bright
 // and glowing).
-static Image &puddleImage(int pic,int variant) {
+static Image &puddleImage(int pic,int variant,int look=0) {
     bool water=liquidLook(pic)==LIQUID_LOOK_WATER,run=variant==splatDrip&&!water,glows=run&&liquidGlows(pic);
-    return splatArt(puddleKey(pic,variant),variant,[&](float shade,float,byte &index,byte &glow) {
+    // Runs in dripLooks shapes, keyed after the variants (pic*16 plus 10 to 13).
+    int key=variant==splatDrip?puddleKeyBase+pic*16+10+look:puddleKey(pic,variant);
+    return splatArt(key,variant,[&](float shade,float,byte &index,byte &glow) {
         shade=std::clamp(shade,0.0f,1.0f);
         index=rampIndex(pic,water?shade*0.33f:run?0.75f+0.25f*shade:0.1f+0.3f*shade);
         glow=run?255:0;
-    },glows);
+    },glows,look);
 }
 // Splats on Doom's texel grid: the base artwork redrawn at one texel a unit,
 // size across and stretch times that along way dir (eighths of a half turn),
@@ -221,7 +223,9 @@ void buildPuddles(const Uniforms &camera) {
         splat.along=std::round(splat.along-image.width*0.5f)+image.width*0.5f;
         splat.dz=std::round(splat.dz+image.height*0.5f)-image.height*0.5f;
         for(int n=0;n<splat.drips;++n)splat.dripU[n]=std::round(splat.along+splat.dripU[n])-splat.along;
-        drawWallSplat(splat,key,image,puddleKey(p.pic,splatDrip),puddleImage(p.pic,splatDrip),1,0,1,now,camera);
+        DripLooks drips;
+        for(int look=0;look<dripLooks;++look) {drips.key[look]=puddleKeyBase+p.pic*16+10+look;drips.image[look]=&puddleImage(p.pic,splatDrip,look);}
+        drawWallSplat(splat,key,image,drips,1,0,1,now,camera);
     }
 }
 void puddlesShutdown() {puddles.clear();puddleWalls.clear();liquidShades.clear();gridKeys.clear();}

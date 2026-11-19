@@ -1,6 +1,7 @@
 /* Level geometry built at load: BSP floor polygons, sector classification
    (liquids, pits, outdoor) and the map-space seam and contact maps. */
 #include "internal.h"
+#include "../rooms.h"
 #include "../audio/ambience_spots.h"
 
 namespace doom3d {
@@ -310,16 +311,17 @@ float sectorHeight(const sector_t *sector,bool ceiling) {
     return old+(now-old)*renderFraction;
 }
 const game_mood &levelMood() {
-    static game_mood mood={1,1,0,0,-1,1,{1,1,1},0};static unsigned serial=~0u;static int authored=-1,phobos=-1,hour=-1,heat=-1,amount=-1;
-    if(serial!=r_levelserial||authored!=settings.authored||phobos!=Game_Phobos()||hour!=settings.timeOfDay||heat!=settings.temperature||amount!=settings.fallAmount) {
-        serial=r_levelserial;authored=settings.authored;phobos=Game_Phobos();hour=settings.timeOfDay;heat=settings.temperature;amount=settings.fallAmount;
+    static game_mood mood={1,1,0,0,-1,1,{1,1,1},0};static unsigned serial=~0u,info=~0u;static int authored=-1,phobos=-1,hour=-1,heat=-1,amount=-1;
+    if(serial!=r_levelserial||info!=mapInfoVersion()||authored!=settings.authored||phobos!=Game_Phobos()||hour!=climateNow().timeOfDay||heat!=climateNow().temperature||amount!=climateNow().fallAmount) {
+        serial=r_levelserial;info=mapInfoVersion();authored=settings.authored;phobos=Game_Phobos();hour=climateNow().timeOfDay;heat=climateNow().temperature;amount=climateNow().fallAmount;
         mood={1,1,0,0,-1,1,{1,1,1},0};
         // Phobos' look comes with its physics, F4 Authored episodes or not (Game_Mood).
         if(authored||phobos)Game_Mood(gameepisode,gamemap,&mood);
-        // Then what the map's own DERPINFO asks, in any gameplay: how much
-        // falls, the wind, whether the sun shows (sun.cpp places it; what
-        // falls, weather.cpp's falling).
-        const derp_map &own=DerpInfo_Map;
+        // Then what the map's own DERPINFO asks, in any gameplay (and DERP
+        // mode's authored look under it, mapInfo): how much falls, the wind,
+        // whether the sun shows (sun.cpp places it; what falls, weather.cpp's
+        // falling).
+        const derp_map &own=mapInfo();
         if(own.weatherAmount>=0)mood.rainAmount=own.weatherAmount;
         if(own.wind>=0)mood.rainAngle=own.wind;
         if(own.sun>=0)mood.sun=own.sun;
@@ -331,9 +333,23 @@ const game_mood &levelMood() {
 float lighting(const sector_t *sector,bool bright) {
     if(bright) return 1;
     float level=lampLightLevel(sector)/255.0f;
-    if(bakedLightsActive&&lampDrop.size()==(size_t)numsectors)level-=lampDrop[sector-sectors];
+    // Whole-level lighting (PLAN-light-model.md): a room is lit by its lights, not its number. What
+    // is left of the number is the room's fill. Out under the sky and under porches the number
+    // stays for now (step 6).
+    if(settings.lightModel==1&&bakedLightsActive&&sector->ceilingpic!=skyflatnum&&!Rooms_Outside(int(sector-sectors))) {
+        size_t index=sector-sectors;
+        level=roomFillNow(sector);   // the room's fill (room_fill.cpp)
+        if(index<shotDim.size())level*=shotDim[index];
+        return level;
+    }
+    // Whole-level lighting outside, under the sky or a porch: the yard's level, not the sector's
+    // (room_fill.cpp); what the sky and the sun make of it there is lightRule's.
+    bool yarded=false;
+    if(settings.lightModel==1&&bakedLightsActive)
+        if(float yard=yardLevelNow(sector);yard>=0) {level=yard;yarded=true;}
+    if(!yarded&&bakedLightsActive&&lampDrop.size()==(size_t)numsectors)level-=lampDrop[sector-sectors];
     // The episode's mood (Game_Mood) can darken the outdoors.
-    if(sector->ceilingpic==skyflatnum)level*=levelMood().outdoor;
+    if(sector->ceilingpic==skyflatnum||yarded)level*=levelMood().outdoor;
     level=std::clamp(level,0.12f,1.0f);
     size_t index=sector-sectors;
     if(index<shotDim.size())level*=shotDim[index]; // Rooms whose lamps were shot out (shot_lights.cpp).

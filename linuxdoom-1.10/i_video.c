@@ -606,6 +606,11 @@ void I_SetPalette (byte* palette)
     UploadNewPalette(X_cmap, palette);
 }
 
+void I_PickupTint (const byte* color, float amount)
+{
+    (void)color; (void)amount;
+}
+
 
 //
 // This function is probably redundant,

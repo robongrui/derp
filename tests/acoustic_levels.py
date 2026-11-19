@@ -20,6 +20,11 @@ what the reverb hears.
       <out dir>/<map>-<spot>.room, a summary to the console
   py tests/acoustic_levels.py check <probe exe> <iwad> <out dir> [--doom2]
       probes and checks what tunnels should sound like (the ctest)
+  py tests/acoustic_levels.py grid <probe exe> <iwad> <out dir> [--doom2] [maps]
+      bakes each level's room grid (platform/audio/room_grid.h) and sets
+      what it gives against the live measurement at every spot and walk
+      step; fails if any spot is further off than the live measurement
+      itself changes one running step (32 units) away
   py tests/acoustic_levels.py map02 <probe exe> <doom2.wad> <out dir>
       measures DOOM II's MAP02 at the water channel round the middle building
       (128 wide, 96 high, roofed) and its two lower crawlways
@@ -99,7 +104,9 @@ def read_room(path):
                 room[words[0]] = words[1]
     return room
 
-def probe(exe, iwad, out, doom2=False, only=None):
+GRID_LINES = []
+
+def probe(exe, iwad, out, doom2=False, only=None, extra=()):
     """Measures the levels' spots; returns {(map, spot): room} and {(map, walk): [rooms]}."""
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
@@ -109,7 +116,7 @@ def probe(exe, iwad, out, doom2=False, only=None):
     for i, (name, rects, start, spots, walk_list) in enumerate(LEVELS):
         if only and name not in only:
             continue
-        command = [os.path.abspath(exe), os.path.abspath(iwad), '-file', wad, '-out', out, '-name', name]
+        command = [os.path.abspath(exe), os.path.abspath(iwad), '-file', wad, '-out', out, '-name', name] + list(extra)
         command += ['-warp', str(i + 1)] if doom2 else ['-warp', '1', str(i + 1)]
         for spot, x, y, facing in spots:
             command += ['-at', '%s:%g,%g,%g' % (spot, x, y, facing)]
@@ -119,6 +126,7 @@ def probe(exe, iwad, out, doom2=False, only=None):
         if result.returncode:
             raise SystemExit('%s: probe failed (%d)\n%s%s' % (name, result.returncode, result.stdout, result.stderr))
         print(''.join(l + '\n' for l in result.stdout.splitlines() if l.startswith(('spot', 'walk'))), end='')
+        GRID_LINES.extend(l for l in result.stdout.splitlines() if l.startswith('grid'))
         for spot, *_ in spots:
             rooms[(name, spot)] = read_room(os.path.join(out, '%s-%s.room' % (name, spot)))
         for walk, x0, y0, x1, y1, steps, facing in walk_list:
@@ -210,6 +218,12 @@ def main():
         probe(args[1], args[2], args[3], doom2, args[4:])
     elif len(args) == 4 and args[0] == 'map02':
         map02(args[1], args[2], args[3])
+    elif len(args) >= 4 and args[0] == 'grid':
+        probe(args[1], args[2], args[3], doom2, args[4:], ['-grid'])
+        print(''.join(l + '\n' for l in GRID_LINES), end='')
+        over = [l for l in GRID_LINES if ' OVER ' in l]
+        if over or not any(l.startswith('grid summary') for l in GRID_LINES):
+            raise SystemExit('%d spots further from the live measurement than it moves itself' % len(over))
     elif len(args) == 4 and args[0] == 'check':
         check(args[1], args[2], args[3], doom2)
     else:

@@ -1,305 +1,260 @@
 # Play DERP
 
-**On Windows and Linux**, put your `.wad` files into the `wads` folder next to
-`Play DERP.exe` (or `play-derp`) and start the game. Base games are found automatically;
-with several, the game asks which one to play, and also offers the included
-Freedoom. One custom map WAD in the folder is loaded on top of the base game;
-with several, the game asks. A `.deh` or `.bex` patch with the same name as the
-map is applied too. With no WADs in the folder, Freedoom starts. The rules below
-are the same on the Mac.
+## Starting a game
 
-**On the Mac**, double-click **Play DERP.app**. No installation is needed, and
-you can move the app to Applications.
+Start the launcher: **DERP.exe** on Windows, **derp** on Linux, **Play
+DERP.app** on the Mac (starting `Play DERP` itself opens it too). Nothing needs
+installing.
 
-If you have the source code rather than a download, build it first as
-described in [BUILDING.md](BUILDING.md).
+The launcher lists every game WAD it finds: in the `wads` folder next to it, in
+the folders named by `DOOMWADDIR` and `DOOMWADPATH`, and in DOOM and Heretic
+games installed through Steam or GOG. The included Freedoom is always there.
+Pick a game on the left and press **Play** (or Enter). Heretic WADs start the
+Heretic program by themselves.
 
-At startup, choose **Choose WAD Folder…**, then select the folder directly
-containing your `.wad` files. The loader finds base games and custom WADs;
-if there are several, it asks which one to play. Put the required DOOM or
-DOOM II base game in the same folder as your custom map. Without a base game
-in the folder, compatible DOOM episode maps use the included Freedoom Phase 1.
-DOOM II maps need a DOOM II base game or Freedoom Phase 2. The loader remembers
-the last folder. Cancel quits; **Play Freedoom** launches the bundled game.
+Drop files on the launcher's window or its icon and each goes where it
+belongs:
 
-Custom maps made for vanilla DOOM or "limit-removing" ports work, including
-their DEHACKED patches: a patch inside the WAD is applied automatically, and a
-`.deh` or `.bex` file with the same name next to the WAD is loaded with it.
-Maps for Boom, MBF21, GZDoom or other extended engines are not supported.
-
-Press **Esc**, choose **New Game**, choose an episode, then choose a difficulty.
-Use the arrow keys and Return to select menu items.
-
-| Action | Control |
+| Dropped | Goes to |
 | --- | --- |
-| Move forward/back | W / S |
-| Move sideways | A / D |
-| Turn | Mouse, or left/right arrows |
-| Look up/down | Move the mouse vertically |
-| Fire | Left mouse button, or Control |
-| Open doors / use switches | Space |
+| A game WAD | The games list |
+| Custom WADs, `.deh` and `.bex` patches | The load list, in the order they load. A patch named like a WAD comes along with it. |
+| PlayStation, 3DO and re-release music packs, music-only WADs | The music |
+| `.sf2` SoundFonts | The SoundFont |
+
+A whole folder works too. Files are never copied: the launcher remembers where
+they are, and each game WAD keeps its own load list. DOOM II maps need DOOM II
+or Freedoom: Phase 2, and DOOM episode maps need DOOM or Freedoom: Phase 1; the
+launcher says so before starting and offers the right one.
+
+The launcher's **Settings** page has the same options as F4 in the game.
+**Reset to defaults** there fixes a setting that keeps the game from starting.
+The launcher works with a gamepad.
+
+With the source code instead of a download, build it first as described in
+[BUILDING.md](BUILDING.md).
+
+### Custom maps
+
+Maps made for vanilla DOOM or limit-removing ports work, with their DEHACKED
+patches. A patch inside the WAD is applied automatically, and a `.deh` or
+`.bex` file named like the WAD next to it is loaded with it. Maps for Boom,
+MBF21, GZDoom or other extended engines are not supported. SIGIL loaded on
+The Ultimate DOOM plays as episode 5.
+
+In the game, press **Esc**, choose **New Game**, an episode and a difficulty.
+
+## Controls
+
+| Action | Keyboard and mouse |
+| --- | --- |
+| Move | W A S D |
+| Turn | Mouse, or ← → |
+| Look up and down | Mouse |
+| Fire | Left mouse button, or Ctrl |
+| Use, open doors | Space |
 | Run | Hold Shift |
-| Select weapon | 1–7 |
-| Map | Tab |
-| Menu / release mouse | Esc |
-| Save / load | F2 / F3, or the menu |
-| Fullscreen | F11 |
+| Jump | E |
+| Crouch, slide | C |
+| Kick | Q |
+| Shootslide | Right mouse button |
+| Slow motion | X, or F12 |
+| Weapons | 1–8, mouse wheel |
+| Flashlight | F |
+| Automap | Tab |
+| Menu, release the mouse | Esc |
+| Save, load | F2, F3 |
+| Quicksave, quickload | F6, F9 |
 | Settings | F4 |
 | Screenshot | F7 |
-| Flashlight (3D renderer) | F |
+| Show FPS, step through | The key left of 1 |
+| Fullscreen | F11 |
 | Cheat menu (fly, no monsters, map warp) | F5 |
-| Quit | Command-Q |
+| Quit | Command-Q on the Mac |
 
-On keyboards with media function keys, hold **Fn** when using the F keys.
-Change sound volume and mouse sensitivity under **Options**. Every action can
-be bound to two keys or mouse buttons and a gamepad button under
-**F4 → Controls → Bindings** (mouse buttons 4 and 5 and the wheel included).
+Crouch, slide, kick and the shootslide work in DERP mode; jump works there and
+on Phobos. The slow motion key needs **F4 → Graphics → Combat → Slow motion**
+set to Key or When shooting. In DERP mode it then runs on the hourglass beside
+the status bar, and the shootslide works whatever that is set to. On keyboards
+with media keys, hold **Fn** for the F keys.
+
+Every action can take two keys or mouse buttons and one gamepad button under
+**F4 → Controls → Bindings**. Mouse buttons 4 and 5 and the wheel can be bound,
+and a wheel notch can pick a weapon slot. Sound volume and mouse sensitivity
+are under **Options** in the game menu.
 
 ### Gamepads and the Steam Deck
 
 Plug in a gamepad (Xbox, PlayStation, Switch Pro, 8BitDo, the Steam Deck's own
-controls and most others) and play: no setup is needed. The left stick moves,
-as fast as it is tilted, and the right stick turns and looks like the mouse.
+controls and most others) and play. The left stick moves as fast as it is
+tilted, and the right stick turns and looks like the mouse.
 
 | Action | Gamepad |
 | --- | --- |
 | Move | Left stick |
-| Turn and look | Right stick (held all the way over it turns faster) |
+| Turn and look | Right stick (held all the way over, it turns faster) |
 | Fire | RT |
 | Use | X |
+| Jump | A |
+| Crouch, slide | B |
+| Kick | Y |
+| Shootslide | L3 |
 | Flashlight | LT |
-| Jump (Phobos only) | A |
-| Next / previous weapon | RB / LB |
+| Next, previous weapon | RB, LB |
 | Center view | R3 |
-| Map | Back (in the map, LB/RB zoom) |
+| Gyro aim while held | R4 |
+| Automap | Back (in the map, LB and RB zoom) |
 | Menu | Start |
 | Settings (F4) | Hold Back, press Start |
 
 In the menus the d-pad or left stick moves, **A** picks and **B** goes back;
-**A** and **B** answer yes and no. Picking a save slot with the pad names the
-save after the map and the time, so **A** saves at once. In Heretic, A and B
-fly up and down, the d-pad's left and right walk the inventory, LT uses the
-artifact and Y the Tome of Power.
+they also answer yes and no. Picking a save slot with the pad names the save
+after the map and the time, so **A** saves at once. In Heretic, A and B fly up
+and down, the d-pad's left and right walk the inventory, LT uses the artifact
+and Y the Tome of Power.
 
-**F4 → Controls** has the rest: turn and look speed, the stick dead zone, the
-turn boost, swapped sticks, gyro aim (DualSense, DualShock 4, Switch Pro, the
-Deck with Steam Input off; on, or only while R4 is held), and rumble. The
-rumble kicks with every shot, swells with the BFG, buzzes with the chainsaw,
-and lets you feel the hits you take and the falls you land; explosions and
-heavy steps near you rumble as loud as you hear them. Joysticks SDL knows no
-pad layout for work as DOOM's own digital joystick.
+**F4 → Controls** has turn and look speed, the stick dead zone, the turn
+boost, swapped sticks, gyro aim (DualSense, DualShock 4, Switch Pro, and the
+Deck with Steam Input off; always on, or only while R4 is held) and rumble.
+Joysticks SDL has no pad layout for work as DOOM's own digital joystick.
 
 On a **Steam Deck** the game starts fullscreen (`-window` keeps a window). Add
 it to Steam as a non-Steam game, with the WAD beside it or `-iwad` in its
-launch options, and pick Steam's **Gamepad** controller layout.
+launch options, and pick Steam's **Gamepad** controller layout. The
+**Handheld** preset in F4 is made for it.
 
-Movement accelerates and changes direction faster, with less glide after
-releasing the keys and reduced camera/weapon bob. Walking and running
-retain their original top speeds. **F4 → Game → Play → Movement** picks
-Normal, Normal plus (a running diagonal held for a moment builds up to DOOM's
-full strafe-running) or Classic; launching with `-classicmovement` also restores
-the original feel. Demo playback, recording and netgames always use the
-original movement.
+### Movement and aim
 
-The **3D** renderer draws the level at the window's actual pixel
-resolution, including Retina pixels. Resize the window to any aspect ratio,
-or press F11 to fill your display. It uses 4× antialiasing when supported and
-interpolates the camera and moving sprites between the original game ticks.
-Enemies have subtle floor shadows made from their animated WAD sprite silhouettes.
-Shadows fade and spread beneath airborne enemies and stay within their sector's
-floor geometry. Player shots and enemy ranged attacks briefly light nearby
-walls, floors, ceilings and sprites with a color taken from the WAD's flash
-artwork. Glowing projectiles carry matching colored lights as they travel and
-through their bright impact frames: green balls cast green light, for example.
-Walls and closed doors block these lights. Nearby enemies also cast a shadow
-away from the strongest light. These effects are available in the 3D renderer.
+DERP's movement starts and stops sooner than DOOM's, glides less after you let
+go, and moves no faster diagonally than straight ahead. Walking and running
+keep their top speeds. **F4 → Game → Play → Movement** offers:
 
-Press **F** to toggle the flashlight in the 3D renderer. Its warm, soft-edged beam
-follows mouse look and stops at walls and closed doors. It is carried at your
-right shoulder, a little behind your eyes, so wall edges, door frames and
-ledges cast visible shadows, as muzzle flashes and projectiles do; it backs
-out of walls you hug and sways gently with your weapon as you walk. The
-artwork under the beam supplies a subtle ambient tint: red surfaces warm the
-view and green surfaces add a green tint. The color fades smoothly as you aim
-elsewhere or switch the flashlight off. With **Classic flashlight** off, the
-beam also bounces a soft light in the color of what it hits onto the
-surroundings. Aiming into sky produces no tint.
-Launch with `-flashlight` to start with the light on. `-flashlighttint 0` disables
-the tint, `-flashlighttint 1` selects the default, and `-flashlighttint 2` makes it stronger.
+- **Normal**, as above.
+- **Normal plus**: holding a running diagonal for about half a second builds
+  up to DOOM's faster strafe-running.
+- **Classic**: DOOM's own movement. `-classicmovement` picks it for a session.
 
-Press **F4** for the settings panel. It opens inside the game as a text-mode
-style panel over the paused, dimmed view. Its options are sorted into four
-groups, Game, Controls, Graphics and Sound, each with its own tabs; the description of
-the highlighted option is shown at the bottom, options that only refine
-another one are greyed out while that one is off, and a small diamond marks
-each option you changed from its default.
+DERP mode runs slower than DOOM, at Quake's pace. Demos and netgames always
+move as in DOOM.
 
-Use **Up/Down** (or the mouse wheel) to choose an option, **Left/Right** or
-**Return** to change it, **Tab** (Shift+Tab backwards) to step through every
-page, **PgUp/PgDn** to switch groups, **1**, **2**, ... to jump to a tab in
-the group, **Backspace** to reset one option, **R** to restore all defaults,
-and **Esc** or **F4** to close the panel and apply the changes. The mouse works too: click an option to change it (right-click goes
-backwards), click a slider to set it, and click a tab to open it. **F7** still
-takes a screenshot.
+With free look, bullets and missiles go where you look, so you can miss.
+**F4 → Controls → Aim → Classic aim** brings back DOOM's autoaim, following
+the view only when nothing is in front. That is the easier aim on a gamepad.
+Demos and netgames aim as in vanilla. The same page has **Invert look**, the
+crosshair and **Weapon bob** (Classic, Sync to footsteps or Off).
 
-**Display**
+## The settings panel
 
-- **Renderer:** accelerated 3D or the classic 320×200 software view.
-- **Window size:** the window itself made exactly 1280×720, 1600×900, 1920×1080, 2560×1440 or 3840×2160 pixels, for recordings and screenshots at a standard size; the picture inside still draws at the Resolution setting. Free (the default) lets you drag it to any size.
-- **Resolution:** native pixels, 75%, or 50% for a lighter GPU workload.
-- **Anti-aliasing (MSAA):** off by default, or 2x, 4x or 8x as far as the GPU offers; smooths the edges of walls, floors and ledges while texels and sprites stay crisp.
-- **Field of view:** 60–120 degrees, measured against the classic 4:3 view.
-- **Widescreen:** show more world at the sides rather than stretching it.
-- **FPS display:** optional. **Free look**, **Invert look**, **Classic aim** (bullets autoaim as in DOOM instead of going where you look), the crosshair and **Weapon bob** are under **F4 → Controls → Aim**. Weapon bob is Classic by default, DOOM's own steady sway. Sync to footsteps swings the weapon like a pendulum, through the bottom of the screen as each footstep sounds, and Off keeps the weapon still.
-- **Retro scanlines** and **Doom palette colors:** the palette option quantizes the final image, including colored lighting, fog and bloom, to the WAD palette; off by default.
+**F4** opens the settings over the paused, dimmed game. Options are sorted
+into four groups, each with tabs:
 
-**Textures**
+| Group | Tabs |
+| --- | --- |
+| Game | World (gameplay mode, gore, weather and climate), Phobos, Play (movement, saving) |
+| Controls | Aim, Gamepad, Rumble, Bindings |
+| Graphics | Display, Surfaces, Lighting, Live light, Sky and air, Liquids, Combat |
+| Sound | Music (music and effects playback), Made-up sounds, Hearing |
 
-- **Walls and floors:** crisp pixels, smooth bilinear, or sharp bilinear, which keeps texels flat and only softens the step between them (**Edge softness** sets how far). **Palette mipmaps** keep distant smooth or sharp surfaces from shimmering.
-- **Sprites:** crisp pixels (default) or soft bilinear filtering.
-- **Bump detail and metal gloss:** derived from the WAD artwork, plus rounded sprite lighting with rim light on backlit enemies; affects dynamic lights only. Optional **varied highlights** make them tight on smooth artwork and broad on busy artwork.
-- **Emissive textures:** glowing lamp strips, computer displays, lava and nukage, with soft bloom and colored light on nearby surfaces. The room's own light takes their color where they light it, monsters and the weapon included, and wall panels light only what they face. A lamp lights as strongly as its sector's light level says, so a strip the mapper set only a notch above its room stays a dim fixture. In blinking and strobing sectors the lamps switch off and on, light and all; in glowing and fire-flickering ones they fade up and down with the sector.
-- **Glowing eyes:** monsters' eyes glow in the dark, with a little bloom when emissive textures are on. The stock monsters' glowing pixels are picked by hand per frame; other artwork is searched for eyes painted in a color the body never uses.
-- **Glossy monitor screens:** screens in computer textures get curved CRT glass that bends the picture and catches highlights.
-- **Window glass:** windows found in the map's geometry get a pane of glass with grime, painted shine streaks and highlights from lamps, shots and the flashlight. The first shot, projectile or blast through a window, yours or a monster's, shatters it into large shards that tumble, catch reflections and bounce; shots and sight still pass exactly as in vanilla. **Glass reflections** mirror the room in the window you look at, monsters and yourself included, at the liquid reflections' resolution, and show a snapshot of the surroundings in every other window; it costs a few milliseconds only while you look at a window.
+The highlighted option's description is shown at the bottom. Options that only
+refine another are greyed out while it is off, a small diamond marks each
+option changed from its default, and bars beside an option show what it costs
+in frame time. **Graphics → Display → Preset** sets every costly option at
+once (Lowest, Handheld, Balanced, High, Everything) and leaves matters of
+taste alone. The [README](README.md) explains what the options do.
 
-**Lighting**
+| Key | Does |
+| --- | --- |
+| Up, Down, mouse wheel | Choose an option |
+| Left, Right, Return | Change it |
+| Tab, Shift+Tab | Next or previous page, on through every group |
+| PgUp, PgDn | Previous or next group |
+| 1, 2, ... | Jump to a tab in the group |
+| Backspace | Reset one option |
+| R | Restore all defaults |
+| Esc or F4 | Close and apply |
 
-- **Baked at level load:** static lights from torches, lamps and glowing textures; sun shadows; bounce light; sky light, a fill from the visible sky tinted by its upper rows; ambient occlusion in corners, ledges and alcoves; decoration shadows from columns, trees and hanging bodies (changing it re-bakes the level); and texel-aligned baked light, which steps once per texture pixel instead of in coarse 4–5 unit cells.
-- **Soft light seams and contact shading:** sector light blends over a short band across openings, and floors, ceilings and wall bases darken near walls.
-- **Sector light flow:** brighter sectors light the floors and walls beyond their openings, so flickering rooms flicker faintly next door. Doors count as closed, as they start.
-- **Door light spill:** when a door opens, light from the brighter room spills through it, scaled by how far the door is open.
-- **Moving doors re-light:** baked lamp light and sunlight follow doors, lifts and lowering walls. As a door rises, the light beyond it steps in under its edge in 8-unit steps, re-baked around the door on a background thread. Bounce, sky light, light flow and sunbeams still use the level's starting state.
-- **Eye adaptation:** moving between bright and dark areas briefly over- or underexposes the view, stepped in sixteenths like Doom's light levels.
-- **Room color from bounce:** light from colored lamps, bounced around the room, also tints its corners the lamps never reach directly.
-- **Classic flashlight:** on by default; a shorter, warmer beam that brightens what it hits in hard steps like Doom's light levels, up to a little past full brightness. Off, the beam is longer and whiter and bounces light off what it hits.
-- **Flashlight tint:** the middle is the default, and fully left disables it.
-- **Flashlight silhouettes:** things in the beam throw a hard-edged sprite silhouette onto the wall behind them.
-- **Player shadow:** your own sprite's shadow, cast from the sun or the strongest light above you.
+The mouse works too: click an option to change it (right-click goes
+backwards), click a slider to set it, and click a tab to open it.
 
-**Atmosphere**
+Settings are saved in `graphics.cfg`, one `key value` per line. Each option's
+key is listed beside it in
+[`platform/settings_panel.cpp`](platform/settings_panel.cpp); switches are
+`0` or `1`. F4 and F7 replace the original sound-menu and end-game shortcuts,
+which are still in the game menu.
 
-- **Atmospheric fog:** height fog with soft cloud layers over pits, liquids and damaging floors. Toggle it off for a clearer view or a lighter GPU workload.
-- **Sunbeams** (with sun shadows, optionally **scattering** brighter toward the sun), **sun in the sky** and **dust motes** that glint in sunbeams and the flashlight beam.
-- **Heat haze:** rows of Doom pixels shimmer sideways at the tic rate above lava, red-hot damaging floors and flames.
-- **Embers:** a few sparks rise from torches and fires and cool as they climb; Heretic's wind carries them off.
-- **Blood splats and pools:** hitscan hits leave splats on the floor and on walls close behind the target, and corpses grow a pool in steps. **Wet blood shine** makes fresh blood and wound edges glint under dynamic lights; floor blood dries matte.
-- **Wound holes:** bullets and pellets shoot see-through holes in monsters, with ragged bloody edges and dark rims. The holes follow the animation, widen with close hits, close when seen from the side and stay on the corpse. Drawing only.
-- **Varied deaths:** each death is retimed for that kill, falls away from the blow and settles as it lands; now and then a hit off the middle turns the monster or a hard push steps it back. **Dying turn to face you** (off by default) turns a monster killed facing away toward you first.
-- **Procedural falls:** monsters on two legs, rigged by hand or by joints found in their art, fall the way the hit says: a low or weak hit sweeps the legs, a hard one is a chest blast, a killing head shot cuts the strings. The fixed choices play one fall every time, for judging it.
-- **Death reactions** and **Hit flinches:** dying monsters jolt with the killing blow and living ones lean with every hit and spring back; **Reaction strength** sets how far.
-- **Soft effect sprites:** explosions, puffs and teleport fog no longer slice into walls, and dissolve on an ordered dither where they meet floors and ceilings.
-- **Shootable lights:** a shot, fireball or blast into a lamp, light strip or screen breaks it. It sputters out, and a moment later the room loses the light it gave, down to near black in rooms lit only by their lamps. Lamps count near misses; screens need a hit on the glass. Render-only: monsters see as before, and a reload brings the lights back. Needs emissive textures.
-- **Kill shots carry on:** a bullet that kills what it hits glances on past the body, so a fight can shoot out the lights behind the monsters. Sparks and lights only; the game still sees the shot stop.
-- **Liquids:** reflections of the scene in nearby water (rendered a second time at half resolution), optionally in **retro PS1 style** at one-eighth resolution with palette colors; nukage, slime, blood and lava do not mirror the room; caustics on the surrounding walls and optionally the ceilings; damp shores, where the walls and banks just above the liquid turn darker; **glowing liquid edges**, the strip the game paints on its edge textures carried onto every wall meeting nukage, slime or lava; **shore ripples** running out from the walls; and splashes with ripple rings where things land or wade.
+## Where files go
 
-**Sound**
+Saves, settings, screenshots (in `Screenshots`) and the log (`game.log`) live
+in a `Local Games/DOOM` folder in your user's application data:
 
-- **Music:** SoundFont (default), OPL FM, or on the Mac the system synthesizer; see below.
-- **Sample playback:** Original holds each 11 kHz sample, raw and gritty, as vanilla does; Smooth and Clean read between the samples and take out the metallic sizzle. With either, **Made-up treble** puts back treble the samples never had.
-- **Sparks, dying lights and glass:** sounds DOOM never had, synthesized at startup as 8-bit samples: tech walls crackle where they are shot, lamps sputter out, screens die in static and windows break. **Breaking glass** picks Shatter (a hard crack and the clatter of larger pieces) or Fracture (a crack front branching through the pane); both go on into the pieces falling and bouncing.
-- **Footsteps and splashes:** heavy boots that sound by the floor (stone, metal, wood, grass and carpet), harder when running or landing, with your kit settling after each step by the weapon you carry and your armour. Liquids splash or gloop, and monsters wading through them splash too. Monsters on dry floors stay silent, as in vanilla.
-- **Near misses:** an enemy's bullet from far off that passes close by whizzes past your head.
-- **Ambience:** lamps and computers hum, nukage and blood bubble, lava rumbles, fire crackles, water drips and wind blows under the sky, wherever the map's textures show them. Window glass dulls the wind until it is shot, shot-out fixtures go quiet, and loud effects push it all down for a moment. **Ambience volume** sets how loud it is next to the effects.
-- **Random pitch:** effects start a little higher or lower each time, as in the earliest versions of DOOM. Off by default. DOOM only; Heretic keeps its own slight variation.
-- **Room acoustics:** echoes and a reverb tail measured from the room around you; **Echo and reverb** sets how loud.
-- **Muffled behind walls** and **Duller with distance:** sounds you can't see find their way through the map's openings and come through duller the longer the way round, and more so through closed doors and glass. Far sounds lose their treble. Both change only the tone, not the loudness.
-- **Natural distance falloff:** far sounds fade as in air, half as strong per doubling of distance, instead of DOOM's straight fade; gunfire and blasts carry farther, faint and dull. DOOM only.
+| System | Folder |
+| --- | --- |
+| Windows | `%APPDATA%\Local Games\DOOM\` |
+| macOS | `~/Library/Application Support/Local Games/DOOM/` |
+| Linux | `~/.local/share/Local Games/DOOM/` |
 
-**Performance** (off by default; the first two need baked static lights)
+Heretic keeps its own `Local Games/Heretic` folder. Saves belong to this build;
+old DOS and Linux DOOM saves don't load.
 
-- **Bake-only static lights:** torches, lamps and glowing textures stop costing per-frame light work; shots, explosions and the flashlight stay dynamic.
-- **Grid lighting for monsters:** monsters and items take static light from a grid baked at level load instead of tracing rays every frame.
-- **Unblocked glowing-texture light:** light from lamp strips and glowing flats skips the per-pixel wall tests; cheaper near light panels, but their highlights can show on shiny surfaces through walls.
-- **Fewer glowing-texture lights:** only the 8 nearest lamp strips and glowing flats light their surroundings per pixel, not 24; farther ones keep their baked glow but lose their moving highlights.
-- **Skip hidden walls and floors:** walls, floors and ceilings hidden behind solid walls and closed doors, or outside the view, are left out each frame, found front to back through the map as DOOM did; fewer triangles for older graphics chips, but a wall can pop in at the screen's edge where the test misses it.
+## Music and sound packs
 
-All settings are saved in `graphics.cfg`, one `key value` per line. Each F4 option lists its key beside it in `platform/settings_panel.cpp` (switches are `0` or `1`).
+Music plays from the bundled GeneralUser GS SoundFont. Put another `.sf2` in
+the `soundfonts` folder beside `doom.cfg` and it is used instead (the first
+one alphabetically), or launch with `-soundfont bank.sf2`. **F4 → Sound →
+Music** switches to OPL, an emulated FM chip with the WAD's own instruments,
+as on a DOS Sound Blaster, and on the Mac to the system synthesizer.
 
-Animated flats and walls (NUKAGE, FWATER, falls) crossfade between frames,
-door and lift movement is interpolated between game tics, and bullets leave
-fading marks and a burst of wall-colored debris. Pickups pulse softly and glow
-without lighting their surroundings; exploding barrels light the room, throw
-sparks and leave a scorch mark on the floor. Torches, candles, lamps and
-other glowing decorations cast colored light sized to their artwork; flames
-flicker in DOOM's own stepped fire-flicker rhythm. With atmospheric fog on, the
-sky hazes toward the horizon.
+**Soundtrack** plays recordings instead, from packs placed beside your game
+WAD, in the `wads` folder or dropped on the launcher: `HQPSXMUS.WAD` for the
+PlayStation soundtrack, the `*_3DO.wad` files for 3DO, and the 2024
+re-release's `extras.wad` for the IDKFA remix and the recorded originals.
 
-Emissive textures keep selected pixels bright in dark rooms, using the original
-WAD artwork and palette. They add soft bloom around visible glowing pixels and
-cast colored light onto nearby walls, floors and sprites. Solid walls and closed
-doors block the light. Custom masks can be placed in `Emissive/walls/NAME.png` or
-`Emissive/flats/NAME.png` beside `graphics.cfg`. Use uppercase WAD texture names
-and the exact original texture dimensions. White pixels emit, black pixels
-receive normal lighting, and gray pixels give partial emission; transparent
-mask pixels do not emit. Masks override automatic detection. Restart after
-changing masks. A black mask disables emission for one texture.
+DERP mode's soldiers speak from `derp-voices.wad`, a separate download placed
+beside the game WAD. Without it they only cry out. The voice packs were
+generated with ElevenLabs and have their own licence,
+[`barks/VOICES-LICENSE.txt`](barks/VOICES-LICENSE.txt): use them with DERP and
+pass them on unmodified, but don't pull their sounds out to use on their own.
 
-Atmospheric fog uses an analytic exponential height falloff, plus three or four
-scrolling cloud layers derived from the map's sector data. Floors at least 24
-units below all neighboring floors are tagged as pits. NUKAGE, FWATER, SLIME,
-BLOOD and LAVA flats get haze tinted by the flat's average palette color;
-damaging sectors get toxic haze. Layers reuse the floor's BSP polygons, follow
-moving floors, and fade against walls and sprites using the scene depth.
-They are a subtle floor effect and become less visible at grazing angles.
-Outdoor sectors get thinner mist; the global fog density drops while the
-player is in a sector with a sky ceiling. This global density is a stylistic
-approximation, rather than integration through each sector along the ray.
-Flashlight and colored-light glows retain their existing inexpensive shadow
-approximation. The weapon and HUD stay clear of fog. Launch with `-fog 0` to
-disable it.
+The ambience is quiet on purpose. To hear it under the music, turn the music
+down in **Options → Sound Volume**.
 
-**Doom palette colors** is a separate F4 toggle. A 32×32×32 RGB lookup quantizes
-the final image after fog and bloom to colors in the current WAD palette,
-including damage and bonus palette shifts. Launch with `-palette 1` to enable
-it or `-palette 0` to disable it. This art pass intentionally changes colored
-lights and can produce visible color bands.
+## Custom glow masks
 
-Mouse look tilts the camera, and bullets go where you look: from your eye along
-the view, hitting floors and ceilings too, so you can miss. **Classic aim** in F4
-brings back DOOM's automatic vertical aiming for bullets, following the view
-only when there is no target. Rockets, plasma and the BFG aim as in DOOM either
-way, and demos and netgames keep vanilla aiming.
-Graphics choices are saved in `graphics.cfg`. F4 and F7 replace the original
-sound-menu and end-game shortcuts; those actions are still in the game menu.
-Screenshots capture the full display resolution and go into `Screenshots`
-inside the save folder below.
+The renderer finds glowing pixels in the artwork by itself. To override it
+for one texture, put a greyscale PNG in `Emissive/walls/NAME.png` or
+`Emissive/flats/NAME.png` beside `graphics.cfg`, named with the uppercase WAD
+texture name and at the texture's exact size. White pixels glow, black ones
+are lit normally, grey ones glow partly, and transparent ones don't glow. An
+all-black mask turns glow off for that texture. Restart after changing masks.
+`-emissive /absolute/folder` reads masks from another folder.
 
-A Mac app built with Freedoom bundled (see [BUILDING.md](BUILDING.md)) includes
-**Freedoom: Phase 1**, which supplies free levels, graphics, sounds and music
-for the DOOM engine. Its credits and license are included inside the app. The
-app never contains the commercial DOOM game data.
+## Command-line options
 
-Saves, settings and the launch log live in:
+| Option | Does |
+| --- | --- |
+| `-iwad /path/to/doom.wad` | Plays that game WAD. Use an absolute path. |
+| `-file a.wad b.wad` | Loads custom WADs. |
+| `-deh file.deh` | Applies extra DEHACKED patches. `-nodeh` ignores patches inside WADs. |
+| `-blockmap` | Rebuilds each map's collision blockmap. |
+| `-warp 1 1`, `-skill 4` | Starts a map directly. |
+| `-width 1920 -height 1080` | Window size in window coordinates (Retina displays may give more pixels). 320×240 to 8192×8192. |
+| `-fullscreen`, `-window` | Starts fullscreen or windowed. |
+| `-fov 100` | Field of view. |
+| `-classic` | Starts with the classic software renderer. |
+| `-flashlight` | Starts with the flashlight on. `-flashlighttint 0`, `1` or `2` sets its tint. |
+| `-fog 0`, `-palette 1` | Turns fog off, or the WAD-palette pass on. |
+| `-classicmovement` | DOOM's own movement. |
+| `-soundtrack pc` | `pc`, `psx`, `3do`, `idkfa` or `original` for this session. |
+| `-soundfont bank.sf2`, `-opl`, `-systemsynth` | Picks the music device for this session (`-systemsynth` on the Mac only). |
+| `-nosound`, `-nomusic` | Silences effects or music. |
+| `-derpai` | Turns DERP mode's monster AI on in any mode, for testing. |
 
-`~/Library/Application Support/Local Games/DOOM/`
-
-Saves belong to this native build; old DOS/Linux DOOM saves are incompatible.
-
-To use an original DOOM or DOOM II IWAD you own, launch the executable with an
-absolute path:
+On the Mac, the program inside the app takes the same options:
 
 ```sh
 "./Play DERP.app/Contents/MacOS/Play DERP" -iwad "/absolute/path/to/doom.wad"
 ```
 
-For an exact window size, pick one under **F4 → Graphics → Display → Window size**,
-or launch with `-width 1920 -height 1080` (in window
-coordinates; Retina displays may supply more physical pixels). You can also
-use `-fullscreen`, `-fov 100`, or `-classic`. Sizes between 320×240 and
-8192×8192 are accepted; resizing adjusts the render targets automatically.
-
-Music plays from a SoundFont: sampled General MIDI instruments, close to the
-Roland Sound Canvas the DOOM scores were written on. The bundled bank is
-GeneralUser GS. Put another `.sf2` in the `soundfonts` folder beside `doom.cfg`
-and it is used instead (the first one, alphabetically), or launch with
-`-soundfont bank.sf2`. **F4 → Sound → Music** switches to OPL: an emulated OPL3
-FM chip with the WAD's own instrument bank, as on a DOS Sound Blaster. On the
-Mac it also offers the system synthesizer. `-opl`, `-soundfont` and
-`-systemsynth` (Mac) pick one for a single session. Other options for custom WADs: `-deh file.deh` applies extra
-patches, `-nodeh` ignores patches inside WADs, and `-blockmap` rebuilds each
-map's collision blockmap.
-
-On macOS the app renders with Metal. The same 3D
-renderer runs on Linux and Windows through Vulkan, with the same music. Multiplayer is
-not implemented. Build instructions are in [BUILDING.md](BUILDING.md).
+The 3D renderer runs on Vulkan on Windows and Linux and on Metal on macOS.
+Without a working driver the game starts with the classic renderer.
+Multiplayer is not implemented.

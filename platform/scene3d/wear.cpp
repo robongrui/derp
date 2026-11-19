@@ -152,7 +152,7 @@ void findLeaks() {
 }
 
 bool wearOn() {
-    return worldPending&&levelSerial==r_levelserial&&built&&(settings.windowStreaks||settings.weather||Game_Phobos()||!splashes.empty());
+    return worldPending&&levelSerial==r_levelserial&&built&&(settings.windowStreaks||climateNow().weather||Game_Phobos()||!splashes.empty());
 }
 }
 
@@ -197,7 +197,7 @@ bool rainSoaked(int sector,float x,float y) {
 // The leaks while it rains.
 const std::vector<CeilingLeak> &ceilingLeaks() {
     static const std::vector<CeilingLeak> none;
-    return settings.weather&&weatherNow(WEATHER_RAIN)>0.01f&&levelSerial==r_levelserial?leaks:none;
+    return climateNow().weather&&weatherNow(WEATHER_RAIN)>0.01f&&levelSerial==r_levelserial?leaks:none;
 }
 
 // After the sector entries and the fog bank's (fog.cpp).
@@ -207,8 +207,14 @@ float wearBase() {return wearOn()?(float)(numsectors+fogBankCount()):0.0f;}
 // insides of broken windows as wet as they have soaked.
 void appendWear(std::vector<std::array<float,4>> &info) {
     if(!wearOn()||info.size()!=(size_t)(numsectors+fogBankCount()))return;
-    std::vector<const Record*> all;
-    std::vector<Record> dynamic;
+    // Buffers kept from frame to frame (this ran each frame with nine of its own).
+    static std::vector<const Record*> all;
+    static std::vector<Record> dynamic;
+    static std::vector<BreachFrost> frosted;
+    static std::vector<WearMark> drafts,doors,craters;
+    static std::vector<int> counts,trails;
+    static std::vector<size_t> next;
+    all.clear();dynamic.clear();frosted.clear();drafts.clear();doors.clear();craters.clear();
     // On Phobos it has never rained: no streaks, no soaked sills.
     bool rained=!Game_Phobos();
     if(settings.windowStreaks&&rained)for(const Record &r:streaks)all.push_back(&r);
@@ -233,25 +239,25 @@ void appendWear(std::vector<std::array<float,4>> &info) {
         dynamic.push_back({l.sector,{(float)WEAR_PUDDLE,l.x,l.y,7+4*hashUnit(2,0,l.seed)},{seed,0,0,1}});
     }
     // Phobos: frost round each breach (decompression.cpp), on both sides of the opening.
-    std::vector<BreachFrost> frosted;breachFrost(frosted);
+    breachFrost(frosted);
     for(const BreachFrost &f:frosted)for(int s:f.sectors)
         if(s>=0&&sectors[s].ceilingpic!=skyflatnum)dynamic.push_back({s,{(float)WEAR_FROST,40+40*f.frost,0,f.frost},{f.ax,f.ay,f.bx,f.by}});
     for(const IceCrack &k:iceCracksNow())
         dynamic.push_back({k.sector,{(float)WEAR_ICE_CRACK,k.x,k.y,k.reach},{(float)(k.seed&0xffff),0,0,0}});
     // The drafts' trails and the rime round cold openings (drafts.cpp).
-    std::vector<WearMark> drafts;draftMarks(drafts);
+    draftMarks(drafts);
     for(const WearMark &m:drafts)if(m.sector>=0&&m.sector<numsectors)dynamic.push_back({m.sector,m.a,m.b});
     // What snow and rain lay at doorways opened during play (blown_in.cpp).
-    std::vector<WearMark> doors;blownInMarks(doors);
+    blownInMarks(doors);
     for(const WearMark &m:doors)if(m.sector>=0&&m.sector<numsectors)dynamic.push_back({m.sector,m.a,m.b});
     // The craters blasts and the like dug in it indoors (disturbances.cpp).
-    std::vector<WearMark> craters;disturbanceMarks(craters);
+    disturbanceMarks(craters);
     for(const WearMark &m:craters)if(m.sector>=0&&m.sector<numsectors)dynamic.push_back({m.sector,m.a,m.b});
     for(const Record &r:dynamic)all.push_back(&r);
     // Per sector the others first, the drafts' trails (kind 9) last and
     // counted apart (count + 4096 trails): only the floor reads them.
     std::stable_partition(all.begin(),all.end(),[](const Record *r){return r->a[0]!=9;});
-    std::vector<int> counts(numsectors,0),trails(numsectors,0);
+    counts.assign(numsectors,0);trails.assign(numsectors,0);
     for(const Record *r:all)if(r->sector>=0&&r->sector<numsectors)++(r->a[0]==9?trails:counts)[r->sector];
     // How open to the wind the ground is: out under the sky the sector's own
     // (air_push.cpp's gustShare); under a roof in the open air (a porch, a
@@ -276,7 +282,7 @@ void appendWear(std::vector<std::array<float,4>> &info) {
     size_t base=info.size();
     info.resize(base+numsectors);
     size_t first=base+numsectors;
-    std::vector<size_t> next(numsectors);
+    next.resize(numsectors);
     for(int s=0;s<numsectors;++s) {
         // w: seed (bits 0-15), how open to the wind in fifteenths (16-19), the open air (20, rooms.c).
         info[base+s]={(float)first,(float)(std::min(counts[s],4095)+4096*trails[s]),poolIceCode(s),

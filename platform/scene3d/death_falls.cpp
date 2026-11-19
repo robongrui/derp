@@ -449,7 +449,7 @@ bool rigJoints(int lump,RigJoints &out) {
     if(!rig)return false;
     const doom_stock_rig &d=*rig->data;
     memcpy(out.hip,d.hip,sizeof out.hip);memcpy(out.knee,d.knee,sizeof out.knee);memcpy(out.ankle,d.ankle,sizeof out.ankle);
-    out.split=d.split;out.hasHead=rig->hasHead;out.guided=d.guided;
+    out.split=d.split;out.hasHead=rig->hasHead;out.guided=d.guided;out.depth=d.depth;
     out.neck=rig->head.neck;out.headMiddle=rig->head.middle;out.headWidth=rig->head.width;
     out.carried=&rig->carried;out.width=rig->width;out.height=rig->height;out.left=rig->left;out.top=rig->top;
     return true;

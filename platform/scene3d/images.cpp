@@ -1,6 +1,7 @@
 /* Textures from the WAD: upload with palette mips (sprites with their normals), bump
    relief, emissive masks and monitor glass; average and brightest colors. */
 #include "internal.h"
+#include "../sprite_flash.h"
 
 namespace doom3d {
 std::vector<unsigned> paletteLUTColors(const unsigned *palette) {
@@ -152,6 +153,10 @@ static Image &withGlassFrame(Image &image,const std::vector<byte> &frame) {
 // averaged 11 texels along each axis before taking its slope across, so long
 // straight bands stand out while blotches a few texels wide wash out instead
 // of turning into craters. A weak per-texel Sobel adds only fine pitting.
+// Where the tile finder (tiles) splits the artwork into panels, bricks or
+// plates, only their seams keep that depth: inside a tile the long bands are
+// painted streaks and grime, not grooves, and stay shallow (seamWeight), so
+// baked light from the side no longer corrugates a panel (E1M1's walls).
 // Repeats like the texture. tiles: finds the painted tiles of a wall or flat
 // (painted_tiles.h) so each gets a crooked lie; the relief is then stored at
 // 16 bits with the anchor offset in alpha (noPaintedTile: none), the other
@@ -159,7 +164,42 @@ static Image &withGlassFrame(Image &image,const std::vector<byte> &frame) {
 using Tiler=std::vector<uint16_t>(*)(const std::vector<float> &,int,int);
 // depth scales the broad bands (seams, streaks); smooth leaves no grain
 // (glassy highlights) and halves the per-texel tilt.
-static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smooth=false) {
+// How much of the broad bands' depth each texel keeps: 1 on and beside a seam
+// between two tiles (or a tile and untiled artwork), fading over a texel,
+// interior inside a tile; all 1 where nothing is tiled.
+static std::vector<float> seamWeight(const std::vector<uint16_t> &anchors,int w,int h) {
+    size_t count=(size_t)w*h;
+    std::vector<float> weight(count,1.0f);
+    if(anchors.size()!=count||std::none_of(anchors.begin(),anchors.end(),[](uint16_t a){return a!=noPaintedTile;}))return weight;
+    constexpr float interior=0.15f;
+    // Which tile a texel belongs to, the same for each of its texels in one repeat.
+    auto tile=[&](int x,int y)->int64_t {
+        x=(x%w+w)%w;y=(y%h+h)%h;uint16_t a=anchors[(size_t)y*w+x];
+        if(a==noPaintedTile)return -1;
+        int dx=(a>>8)-128,dy=(a&255)-128;
+        int64_t ax=dx==noTileAxis?w:((x+dx)%w+w)%w,ay=dy==noTileAxis?h:((y+dy)%h+h)%h;
+        return ax*65536+ay;
+    };
+    std::vector<int> distance(count,99);
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
+        int64_t own=tile(x,y);
+        if(own!=tile(x+1,y)||own!=tile(x-1,y)||own!=tile(x,y+1)||own!=tile(x,y-1))distance[(size_t)y*w+x]=0;
+    }
+    for(int pass=1;pass<=2;++pass)
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x) {
+            int &d=distance[(size_t)y*w+x];
+            if(d<pass)continue;
+            for(int k=0;k<4&&d>pass;++k) {
+                int nx=x+(k==0)-(k==1),ny=y+(k==2)-(k==3);
+                if(distance[(size_t)((ny%h+h)%h)*w+(nx%w+w)%w]==pass-1)d=pass;
+            }
+        }
+    for(size_t i=0;i<count;++i)weight[i]=distance[i]<=1?1.0f:distance[i]==2?0.5f*(1+interior):interior;
+    return weight;
+}
+// The relief texels (RGBA8 as described above) and the tiles' anchors (empty
+// without a tile finder); also sets the image's brush direction and blankness.
+static std::vector<byte> reliefCells(Image &image,Tiler tiles,float depth,bool smooth,std::vector<uint16_t> &anchors,bool seamsOnly=true) {
     int w=image.width,h=image.height;size_t count=(size_t)w*h;
     const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
     std::vector<float> height(count),across(count),down(count),broad(count),grain(count),rough(count),scratch(count);
@@ -167,7 +207,15 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smo
         const byte *rgb=palette+image.pixels[2*i]*3;
         height[i]=std::log((0.299f*rgb[0]+0.587f*rgb[1]+0.114f*rgb[2])/255.0f+0.03f);
     }
-    auto at=[&](const std::vector<float> &v,int x,int y) {return v[(size_t)((y%h+h)%h)*w+(x%w+w)%w];};
+    anchors=tiles?tiles(height,w,h):std::vector<uint16_t>();
+    std::vector<float> seams=seamsOnly?seamWeight(anchors,w,h):std::vector<float>(count,1.0f);
+    // Wrapped texel places from tables (the taps reach five texels out at most): the four
+    // divisions a tap were a fifth of a texture's load.
+    constexpr int wrapPad=8;
+    std::vector<size_t> wrapX(w+2*wrapPad),wrapY(h+2*wrapPad);
+    for(int i=0;i<w+2*wrapPad;++i)wrapX[i]=(size_t)(((i-wrapPad)%w+w)%w);
+    for(int i=0;i<h+2*wrapPad;++i)wrapY[i]=(size_t)(((i-wrapPad)%h+h)%h)*w;
+    auto at=[&](const std::vector<float> &v,int x,int y) {return v[wrapY[y+wrapPad]+wrapX[x+wrapPad]];};
     // Separable filter: taps along x into scratch, then along y into to.
     auto filter=[&](const std::vector<float> &from,std::vector<float> &to,const std::vector<float> &alongX,const std::vector<float> &alongY) {
         int rx=(int)alongX.size()/2,ry=(int)alongY.size()/2;
@@ -206,7 +254,7 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smo
         float fx=(at(height,x+1,y-1)+2*at(height,x+1,y)+at(height,x+1,y+1)-at(height,x-1,y-1)-2*at(height,x-1,y)-at(height,x-1,y+1))*0.25f;
         float fy=(at(height,x-1,y+1)+2*at(height,x,y+1)+at(height,x+1,y+1)-at(height,x-1,y-1)-2*at(height,x,y-1)-at(height,x+1,y-1))*0.25f;
         float t=std::clamp((bands[(size_t)y*w+x]-2*typical)/(2*typical+1e-6f),0.0f,1.0f);
-        float deepen=1+(gain-1)*t*t*(3-2*t);
+        float deepen=(1+(gain-1)*t*t*(3-2*t))*seams[(size_t)y*w+x];
         float fine=smooth?0.125f:0.25f;
         float sx=fine*fx+1.5f*deepen*depth*(at(across,x+1,y)-at(across,x-1,y));
         float sy=fine*fy+1.5f*deepen*depth*(at(down,x,y+1)-at(down,x,y-1));
@@ -229,7 +277,18 @@ static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smo
     size_t blankTexels=0;
     for(size_t i=0;i<count;++i)blankTexels+=rough[i]/0.25f<0.2f;
     image.blank=(float)blankTexels/count;
-    std::vector<uint16_t> anchors=tiles?tiles(height,w,h):std::vector<uint16_t>();
+    return cells;
+}
+// The relief a wall (or flat) texture gets, RGBA8, for dev tools' previews;
+// seamsOnly false: bands as deep inside tiles as at their seams.
+std::vector<byte> reliefPreview(Image &image,bool flat,bool seamsOnly) {
+    std::vector<uint16_t> anchors;
+    return reliefCells(image,image.opaque?(flat?flatTiles:wallTiles):nullptr,1,false,anchors,seamsOnly);
+}
+static Image &withRelief(Image &image,Tiler tiles=nullptr,float depth=1,bool smooth=false) {
+    int w=image.width,h=image.height;size_t count=(size_t)w*h;
+    std::vector<uint16_t> anchors;
+    std::vector<byte> cells=reliefCells(image,tiles,depth,smooth,anchors);
     if(std::any_of(anchors.begin(),anchors.end(),[](uint16_t a){return a!=noPaintedTile;})) {
         std::vector<uint16_t> wide(count*4);
         for(size_t i=0;i<count;++i) {
@@ -291,8 +350,17 @@ static std::vector<byte> emissionMask(const char *name,bool flat,int w,int h,con
     if(W_LumpLength(paletteLump)<768) I_Error((char*)"Invalid emissive palette");
     const byte *palette=(const byte*)W_CacheLumpNum(paletteLump,PU_CACHE);
     int kind=Game_GlowKind(name,flat);
+    if(kind==DOOM_EMISSIVE_LAMP&&!flat&&doom_key_door(name))kind=DOOM_EMISSIVE_KEY;
     for(size_t i=0;i<mask.size();++i)
         mask[i]=doom_emissive_pixel(kind,palette+pixels[2*i]*3,pixels[2*i+1]);
+    // A switch's lamp is a block of lit pixels; a single row of them is the bright top edge
+    // painted on its red button (SW1COMP, SW1EXIT, SW1GRAY, SW1STON6: 9 by 1 under an unlit
+    // lamp), which glowed alone in the dark as if the button were the light.
+    if(kind==DOOM_EMISSIVE_SWITCH) {
+        std::vector<byte> lit=mask;
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x)
+            if(lit[(size_t)y*w+x]&&!(y>0&&lit[(size_t)(y-1)*w+x])&&!(y+1<h&&lit[(size_t)(y+1)*w+x]))mask[(size_t)y*w+x]=0;
+    }
     std::string root=graphicsConfig;
     size_t slash=root.find_last_of("/\\");
     root=slash==std::string::npos?"Emissive":root.substr(0,slash+1)+"Emissive";
@@ -313,25 +381,29 @@ static std::vector<byte> emissionMask(const char *name,bool flat,int w,int h,con
     }
     return mask;
 }
-// Sprite lumps a living monster shows in its ordinary (not fullbright)
-// frames: those its spawn, chase, pain and attack states lead through, read
-// from the state table so DEHACKED monsters count. Death frames never get eyes.
-static bool livingMonsterLump(int lump) {
+// Sprite lumps a living monster shows: those its spawn, chase, pain and attack
+// states lead through, read from the state table so DEHACKED monsters count.
+// MONSTER_ORDINARY frames get eyes (death frames never do); MONSTER_FIRING are
+// its fullbright ones, unless it is always bright (the lost soul: geometry.cpp).
+enum {MONSTER_ORDINARY=1,MONSTER_FIRING=2};
+static bool livingMonsterLump(int lump,int kind) {
     static std::vector<char> living;
     if(living.empty()) {
         living.assign(numlumps,0);
         for(const mobjinfo_t &info:mobjinfo) {
             if(!(info.flags&MF_COUNTKILL))continue;
+            bool alwaysBright=states[info.spawnstate].frame&FF_FULLBRIGHT;
             for(int start:{info.spawnstate,info.seestate,info.painstate,info.meleestate,info.missilestate})
                 for(int s=start,steps=0;s>0&&s<NUMSTATES&&steps<64;s=states[s].nextstate,++steps) {
                     const state_t &state=states[s];int frame=state.frame&FF_FRAMEMASK;
-                    if((state.frame&FF_FULLBRIGHT)||state.sprite<0||state.sprite>=numsprites||frame>=sprites[state.sprite].numframes)continue;
+                    bool bright=state.frame&FF_FULLBRIGHT;
+                    if((bright&&alwaysBright)||state.sprite<0||state.sprite>=numsprites||frame>=sprites[state.sprite].numframes)continue;
                     for(short rotation:sprites[state.sprite].spriteframes[frame].lump)
-                        if(rotation>=0&&firstspritelump+rotation<numlumps)living[firstspritelump+rotation]=1;
+                        if(rotation>=0&&firstspritelump+rotation<numlumps)living[firstspritelump+rotation]|=bright?MONSTER_FIRING:MONSTER_ORDINARY;
                 }
         }
     }
-    return lump>=0&&lump<(int)living.size()&&living[lump];
+    return lump>=0&&lump<(int)living.size()&&(living[lump]&kind);
 }
 // The 0.25 weight floor lets small fixtures (key-door strips, console
 // screens) light their rooms. Computer and tech walls merely dotted with
@@ -347,6 +419,8 @@ static Image &speckledPanel(Image &image,const char *name,bool flat) {
         image.emissionWeight=image.emissionCoverage*8.0f;
     if(kind==DOOM_EMISSIVE_GLASS) {image.emissionWeight*=0.2f;image.leaded=!image.emission.empty();}
     if(kind==DOOM_EMISSIVE_DIFFUSE)image.emissionWeight*=0.5f;   // diffuser panels: a dim, broad light
+    if(kind==DOOM_EMISSIVE_STEP)image.emissionWeight*=0.08f;     // step lights: a glow on the riser, barely any light in the room
+    if(kind==DOOM_EMISSIVE_SWITCH) {image.emissionWeight*=0.12f;image.indicator=image.emissionWeight>0;}   // a switch's lamp: seen, and a faint spill beside it
     return image;
 }
 // Wall textures with oversized bricks (rebrickedWall), loaded again when
@@ -356,6 +430,31 @@ static int rebrickLoaded=-1;
 void rebrickSwitched() {
     if(rebrickLoaded>=0&&rebrickLoaded!=settings.rebrick)for(int index:rebrickable)images.erase(index);
     rebrickLoaded=settings.rebrick;
+}
+/* At level load: every wall texture a side names, shown or not, and the
+   other face of each switch. The level's first frame is built whole, but a
+   shut door's track and a pressed switch have no face then: each cost a
+   frame of some 30 ms when it first showed. */
+extern "C" { extern int switchlist[]; extern int numswitches; }
+void precacheWalls() {
+    std::vector<char> want(numtextures,0);
+    auto add=[&](int texture) {
+        if(texture<=0||texture>=numtextures)return;
+        want[texture]=1;
+        int shown=texturetranslation[texture];
+        if(shown>0&&shown<numtextures)want[shown]=1;
+    };
+    for(int i=0;i<numsides;++i) {add(sides[i].toptexture);add(sides[i].midtexture);add(sides[i].bottomtexture);}
+    // Only the switches the map has: both faces of each.
+    for(int i=0;i+1<numswitches*2;i+=2)
+        if((switchlist[i]>0&&switchlist[i]<numtextures&&want[switchlist[i]])||(switchlist[i+1]>0&&switchlist[i+1]<numtextures&&want[switchlist[i+1]])) {
+            add(switchlist[i]);add(switchlist[i+1]);
+        }
+    if(getenv("DERP_DIMSCREENS"))for(int texture=1;texture<numtextures;++texture) {
+        char name[9];R_TextureName(texture,name);
+        if(Game_ScreenTexture(name,0))want[texture]=1;
+    }
+    for(int texture=1;texture<numtextures;++texture)if(want[texture])wallImage(texture);
 }
 /* Texture keys: wall index >=0, WAD lump = -1-lump. */
 Image &wallImage(int index) {
@@ -368,6 +467,62 @@ Image &wallImage(int index) {
     auto mask=emissionMask(name,false,w,h,pixels.data());
     bool glowing=std::any_of(mask.begin(),mask.end(),[](byte p){return p!=0;});
     std::vector<byte> frame;auto glass=screenGlass(name,false,w,h,pixels.data(),frame);
+    // Lamps painted dim (doom_dim_fixture): each glowing texel is drawn at twice its level, in
+    // its own hue from the palette, so the lamp keeps its shading, and glows in full.
+    bool dimFixture=glowing&&doom_dim_fixture(name);
+    if(dimFixture) {
+        const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+        for(size_t i=0;i<mask.size();++i) {
+            if(!mask[i])continue;
+            const byte *c=palette+pixels[2*i]*3;
+            int hue=doom_readout_hue(c),to=pixels[2*i];long best=LONG_MAX;
+            if(hue!=1) {mask[i]=0;continue;}   // its lamps are green: a stray red texel on the pipes is paint
+            for(int p=0;p<256;++p) {
+                const byte *q=palette+p*3;
+                if(doom_readout_hue(q)!=hue)continue;
+                long d=0;
+                for(int k=0;k<3;++k) {long e=q[k]-std::min(255,c[k]*2);d+=e*e;}
+                if(d<best) {best=d;to=p;}
+            }
+            pixels[2*i]=(byte)to;mask[i]=255;
+        }
+    }
+    // Screens that are on, only dimly (SPACEW3's four monitors: dark green text, far under any
+    // lamp rule): on a texture nothing else lights, what is painted in a readout's hue on its
+    // screens' glass glows, as a tube does, and is drawn in a brighter step of its own hue from
+    // the palette (its strongest channel brought to dimScreenLevel): at the paint's own level
+    // the text showed, and no more. The PlayStation port repainted these screens lit. They
+    // light their room as a small fixture does.
+    // DERP_DIMSCREENS: names each texture this finds (precacheWalls then loads every screen texture).
+    bool dimScreens=false;
+    if(!glowing&&!glass.empty()) {
+        const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+        constexpr int dimScreenLevel=150;
+        int brighter[256];std::fill(brighter,brighter+256,-1);
+        size_t count=0;
+        for(size_t i=0;i<mask.size();++i) {
+            const byte *c=palette+pixels[2*i]*3;
+            int hue=doom_readout_hue(c);
+            if(glass[i]==DOOM_GLASS_NONE||!pixels[2*i+1]||!hue)continue;
+            int &to=brighter[pixels[2*i]],hi=std::max({c[0],c[1],c[2]});
+            if(to<0) {
+                to=pixels[2*i];
+                if(hi<dimScreenLevel) {
+                    long best=LONG_MAX;
+                    for(int p=0;p<256;++p) {
+                        const byte *q=palette+p*3;
+                        if(doom_readout_hue(q)!=hue)continue;
+                        long d=0;
+                        for(int k=0;k<3;++k) {long e=q[k]-c[k]*dimScreenLevel/hi;d+=e*e;}
+                        if(d<best) {best=d;to=p;}
+                    }
+                }
+            }
+            pixels[2*i]=(byte)to;mask[i]=255;++count;
+        }
+        glowing=dimScreens=count>0;
+        if(dimScreens&&getenv("DERP_DIMSCREENS"))fprintf(stderr,"dim screens: %s, %zu texels\n",name,count);
+    }
     // Masked walls (bars, fences) show what lies behind instead of tiles;
     // animated ones would change tiles every frame.
     int next;bool animated=P_PicAnimationNext(true,index,&next)>0;
@@ -378,6 +533,12 @@ Image &wallImage(int index) {
     }
     Image &image=speckledPanel(images.emplace(index,upload(w,h,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
         glass.empty()?nullptr:glass.data(),true)).first->second,name,false);
+    if(dimFixture)image.emissionWeight=0.05f;   // a faint glow round the gauge: at 0.25 Underhalls' 26 of them lit the sewer
+    if(dimScreens) {
+        image.emissionWeight=0.25f;
+        if(!frame.empty())screenTextRegister(index,w,h,pixels.data(),mask.data(),glass.data(),frame.data(),
+                                             (const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE));
+    }
     if(image.leaded)return withLeadedRelief(withGlassFrame(image,frame));
     return withRelief(withGlassFrame(image,frame),image.opaque&&!animated?wallTiles:nullptr);
 }
@@ -440,6 +601,23 @@ Image &stillFlat(int lump) {
     const Image &source=lumpImage(lump,true);
     return images.emplace(key,upload(source.width,source.height,source.pixels.data(),0,0,
                                      source.emission.size()*2==source.pixels.size()?source.emission.data():nullptr,nullptr,nullptr,true)).first->second;
+}
+// Paint lit as a lamp (lit_paint.cpp): every texel glows in its own colour, so the flat
+// shows lit and lights as a pool (poolSurface: it glows all over).
+Image &litPaintFlat(int lump) {
+    int key=litPaintKey(lump);
+    auto found=images.find(key);
+    if(found!=images.end())return found->second;
+    const Image &source=lumpImage(lump,true);
+    std::vector<byte> mask(source.pixels.size()/2,255);
+    Image &image=images.emplace(key,upload(source.width,source.height,source.pixels.data(),0,0,mask.data(),nullptr,nullptr,true)).first->second;
+    // It lights as bright as it is painted, not as a white lamp: FLOOR1_6's reds are
+    // under half of full, and at full weight its room went red from wall to wall.
+    const byte *palette=(const byte*)W_CacheLumpName((char*)"PLAYPAL",PU_CACHE);
+    float paint=0;
+    for(size_t i=0;i<mask.size();++i) {const byte *c=palette+3*source.pixels[2*i];paint+=std::max({c[0],c[1],c[2]})/255.0f;}
+    image.emissionWeight*=paint/std::max<size_t>(mask.size(),1);
+    return withRelief(image,flatTiles);
 }
 // The library: one asleep in a bed (Game_ThingAsleep) lies as a body does,
 // without its blood. What is strongly red (the blood's ramp, found by colour)
@@ -508,16 +686,26 @@ Image &lumpImage(int lump,bool flat) {
         return withRelief(withGlassFrame(speckledPanel(images.emplace(key,upload(64,64,pixels.data(),0,0,glowing?mask.data():nullptr,nullptr,
             glass.empty()?nullptr:glass.data(),true)).first->second,name,true),frame),animated?nullptr:flatTiles);
     }
-    if(size<8) I_Error((char*)"Invalid sprite texture");
+    SpriteArt art;
+    if(const char *why=decodeSprite(data,size,art)) I_Error((char*)"%s",why);
+    int paletteLump=W_GetNumForName((char*)"PLAYPAL");
+    if(W_LumpLength(paletteLump)<768) I_Error((char*)"Invalid lighting palette");
+    const byte *palette=(const byte*)W_CacheLumpNum(paletteLump,PU_CACHE);
+    char name[9];memcpy(name,lumpinfo[lump].name,8);name[8]=0;
+    finishSpriteArt(art,name,palette,spriteEyes(lump),spriteFlash(lump),spriteSlime(lump));
+    return keepSprite(lump,art);
+}
+const char *decodeSprite(const byte *data,int size,SpriteArt &art) {
+    if(size<8) return "Invalid sprite texture";
     const patch_t *patch=(const patch_t*)data;
     int w=SHORT(patch->width),h=SHORT(patch->height);
     if(w<1||h<1||w>8192||h>8192||8+(size_t)w*4>(size_t)size)
-        I_Error((char*)"Invalid sprite dimensions");
+        return "Invalid sprite dimensions";
     std::vector<byte> pixels((size_t)w*h*2);
     for(int x=0;x<w;++x) {
         size_t pos=(uint32_t)LONG(patch->columnofs[x]); int previous=-1;
         while(pos<(size_t)size && data[pos]!=255) {
-            if(pos+4>(size_t)size||pos+4+data[pos+1]>(size_t)size) I_Error((char*)"Invalid sprite column");
+            if(pos+4>(size_t)size||pos+4+data[pos+1]>(size_t)size) return "Invalid sprite column";
             int top=data[pos]; if(top<=previous) top+=previous; previous=top;
             for(int y=0;y<data[pos+1];++y) if(top+y>=0&&top+y<h) {
                 size_t pixel=((size_t)(top+y)*w+x)*2;
@@ -526,24 +714,82 @@ Image &lumpImage(int lump,bool flat) {
             pos+=data[pos+1]+4;
         }
     }
-    int paletteLump=W_GetNumForName((char*)"PLAYPAL");
-    if(W_LumpLength(paletteLump)<768) I_Error((char*)"Invalid lighting palette");
-    const byte *palette=(const byte*)W_CacheLumpNum(paletteLump,PU_CACHE);
-    auto normals=spriteNormals(w,h,pixels.data());
+    art.w=w;art.h=h;art.left=SHORT(patch->leftoffset);art.top=SHORT(patch->topoffset);
+    art.pixels.swap(pixels);
+    return nullptr;
+}
+bool spriteEyes(int lump) {return livingMonsterLump(lump,MONSTER_ORDINARY);}
+bool spriteFlash(int lump) {return livingMonsterLump(lump,MONSTER_FIRING);}
+// Sprite lumps a barrel shows standing: its spawn loop, read from the state
+// table so DEHACKED barrels count; not its blast. Doom's only (Heretic's pod is
+// green all over).
+bool spriteSlime(int lump) {
+    static std::vector<char> standing;
+    if(standing.empty()) {
+        standing.assign(numlumps,0);
+        if(Game_HasEffect(GAME_EFFECT_SLIME_BARRELS))for(int type=0;type<NUMMOBJTYPES;++type) {
+            if(Game_ThingRole(type)!=GAME_THING_BARREL)continue;
+            for(int s=mobjinfo[type].spawnstate,steps=0;s>0&&s<NUMSTATES&&steps<64;s=states[s].nextstate,++steps) {
+                const state_t &state=states[s];int frame=state.frame&FF_FRAMEMASK;
+                if(state.sprite<0||state.sprite>=numsprites||frame>=sprites[state.sprite].numframes)continue;
+                for(short rotation:sprites[state.sprite].spriteframes[frame].lump)
+                    if(rotation>=0&&firstspritelump+rotation<numlumps)standing[firstspritelump+rotation]=1;
+            }
+        }
+    }
+    return lump>=0&&lump<(int)standing.size()&&standing[lump];
+}
+void finishSpriteArt(SpriteArt &art,const char *name,const byte *palette,bool eyes,bool flash,bool slime) {
+    int w=art.w,h=art.h;const byte *pixels=art.pixels.data();
+    std::vector<byte> &normals=art.normals;
+    normals=spriteNormals(w,h,pixels);
     // Glowing eyes take normals no silhouette has: x all the way right
     // and y over halfway down, the glow in y's top quarter (eyeGlow).
     // Stock monsters' eyes are authored (sprite_eyes_stock.h); other
     // artwork is searched for them (sprite_eyes.h).
-    if(livingMonsterLump(lump)) {
-        char name[9];memcpy(name,lumpinfo[lump].name,8);name[8]=0;
-        std::vector<byte> eyes;
-        if(!doom_stock_eyes(name,w,h,pixels.data(),eyes))eyes=doom_sprite_eyes(w,h,pixels.data(),palette);
-        for(size_t i=0;i<eyes.size();++i)if(eyes[i]) {normals[2*i]=255;normals[2*i+1]=(byte)(192+eyes[i]*63/255);}
+    if(eyes) {
+        std::vector<byte> found;
+        if(!doom_stock_eyes(name,w,h,pixels,found))found=doom_sprite_eyes(w,h,pixels,palette);
+        for(size_t i=0;i<found.size();++i)if(found[i]) {normals[2*i]=255;normals[2*i+1]=(byte)(192+found[i]*63/255);}
     }
-    Image image=upload(w,h,pixels.data(),SHORT(patch->leftoffset),SHORT(patch->topoffset),nullptr,normals.data());
-    image.glowWeight=doom_sprite_glow(pixels.data(),(size_t)w*h,palette,image.glow.data());
-    image.glowHeight=doom_sprite_glow_height(pixels.data(),w,h,palette,image.glow.data());
-    return images.emplace(key,std::move(image)).first->second;
+    // A barrel's slime top glows as eyes do (eyeGlow): the nukage rule
+    // (emissive.h) over its top quarter, where the slime is painted; the
+    // olive body bands under it fail the rule.
+    if(slime)for(int y=0;y<(h+3)/4;++y)for(int x=0;x<w;++x) {
+        size_t i=(size_t)y*w+x;
+        byte glow=doom_emissive_pixel(DOOM_EMISSIVE_SLIME,palette+pixels[2*i]*3,pixels[2*i+1]);
+        if(glow) {normals[2*i]=255;normals[2*i+1]=(byte)(192+glow*63/255);}
+    }
+    // The flash painted on a firing frame: x all the way right, y all the way up (firingFlash).
+    if(flash) {
+        auto painted=doom_sprite_flash(w,h,pixels,palette);
+        for(size_t i=0;i<painted.size();++i)if(painted[i]) {normals[2*i]=255;normals[2*i+1]=0;}
+    }
+    art.glowWeight=doom_sprite_glow(pixels,(size_t)w*h,palette,art.glow.data());
+    art.glowHeight=doom_sprite_glow_height(pixels,w,h,palette,art.glow.data());
+}
+Image &keepSprite(int lump,SpriteArt &art) {
+    Image image=upload(art.w,art.h,art.pixels.data(),art.left,art.top,nullptr,art.normals.data());
+    image.glow=art.glow;image.glowWeight=art.glowWeight;image.glowHeight=art.glowHeight;
+    return images.emplace(-1-lump,std::move(image)).first->second;
+}
+// What I_SetPalette (i_sdl_video.c) makes of each palette in PLAYPAL at the
+// present gamma, so the lookups built ahead match the ones the frames ask for.
+std::vector<std::array<unsigned,256>> gamePalettes() {
+    std::vector<std::array<unsigned,256>> out;
+    int lump=W_CheckNumForName((char*)"PLAYPAL");
+    if(lump<0)return out;
+    int count=W_LumpLength(lump)/768,gamma=std::clamp(usegamma,0,4);
+    const byte *data=(const byte*)W_CacheLumpNum(lump,PU_CACHE);
+    for(int p=0;p<count;++p) {
+        std::array<unsigned,256> palette;
+        for(int i=0;i<256;++i) {
+            const byte *c=data+p*768+i*3;
+            palette[i]=0xff000000u|(unsigned)gammatable[gamma][c[0]]<<16|(unsigned)gammatable[gamma][c[1]]<<8|gammatable[gamma][c[2]];
+        }
+        out.push_back(palette);
+    }
+    return out;
 }
 const std::array<float,3> &averageColor(Image &image) {
     if(image.averaged)return image.average;
@@ -601,5 +847,5 @@ std::array<float,3> texelColor(Image &image) {
     }
     return averageColor(image);
 }
-void imagesShutdown() {images.clear();rebrickable.clear();cloudTexture=nullptr;}
+void imagesShutdown() {screenTextShutdown();images.clear();rebrickable.clear();cloudTexture=nullptr;}
 } // namespace doom3d

@@ -177,6 +177,11 @@ void watchCraters(const Uniforms &camera) {
     }
 }
 
+bool cratered(const mobj_t &thing) {
+    fresh();
+    auto found=craters.find(&thing);
+    return found!=craters.end()&&!found->second.empty();
+}
 // The bites in a drawing of thing, as holes (1) in the wound mask: each the
 // highest texel of its column still there, growing as it ages; sized: the
 // mask is already the drawing's size (shot holes in it). Whether any show.

@@ -17,6 +17,9 @@ namespace doom3d {
 std::vector<Vertex> glassVertices;
 bool glassMirrorActive=false,glassMirrorSilvered=false;
 float glassMirrorPlane[4]={},glassMirrorFade=1;
+// How far the glass in the mirror's plane runs along it (from, to, by x*-ny+y*nx):
+// what the mirror can show lies behind that stretch as the mirrored eye sees it.
+float glassMirrorSpan[2]={};
 std::vector<GlassProbe> glassProbes;
 std::vector<int> glassCaptures;
 unsigned glassProbeSerial=0,settingsSerial=0;
@@ -375,45 +378,95 @@ static void stepShards() {
     }
     shards.erase(std::remove_if(shards.begin(),shards.end(),[](const Shard &s){return leveltime>=s.die;}),shards.end());
 }
-// Before each tic: projectiles that went through a pane since the last one
-// break it, rockets that burst near one too, and the shards move.
-void watchGlass() {
-    if(!settings.windowGlass||gamestate!=GS_LEVEL) return;
+// The level's panes and probes, found once a level. The tic that loads a
+// level runs its watchGlass before the load, so the level's first frame
+// (planGlassCaptures) asks for them too, to capture its probes under the
+// loading screen; the next tic finds them made, as it would have made them.
+static bool glassLevelReady() {
+    if(!settings.windowGlass||gamestate!=GS_LEVEL) return false;
     if(glassLevelSerial!=r_levelserial) {
         glassLevelSerial=r_levelserial;shards.clear();missileWatch.clear();
         findWindows();
         // Through the glass ambience comes muffled until it breaks.
         for(const GlassPane &p:panes) {I_AmbienceGlaze(p.line,p.broken?0:1);Game_Glass(p.line,p.broken?0:1);}
     }
+    return true;
+}
+// Before each tic: projectiles that went through a pane since the last one
+// break it, rockets that burst near one too, and the shards move.
+void watchGlass() {
+    if(!glassLevelReady()) return;
     stepShards();
     if(panes.empty())return;
     for(auto &entry:missileWatch)entry.second.seen=false;
-    for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext) {
+    auto watch=[&](mobj_t *thing) {
         bool missile=thing->flags&MF_MISSILE;
+        // Only what flies, or flew last tic, is looked up: the rest of the map's things are passed by.
+        if(!missile&&missileWatch.empty())return;
         auto found=missileWatch.find(thing);
-        if(!missile&&found==missileWatch.end())continue;
+        if(!missile&&found==missileWatch.end())return;
         float x=units(thing->x),y=units(thing->y),z=units(thing->z)+units(thing->height)/2;
         if(found==missileWatch.end()||found->second.type!=thing->type||
            std::hypot(x-found->second.x,y-found->second.y)>units(thing->info->speed)*2+16) {
             if(missile)missileWatch[thing]={x,y,z,true,true,thing->type};
             else missileWatch.erase(found);
-            continue;
+            return;
         }
-        MissileWatch &watch=found->second;watch.seen=true;
-        if(watch.missile)for(const GlassPane &p:panes) {
+        MissileWatch &watched=found->second;watched.seen=true;
+        if(watched.missile)for(const GlassPane &p:panes) {
             if(p.broken)continue;
             float t;
-            if(!crosses(watch.x,watch.y,x,y,lines[p.line],t))continue;
+            if(!crosses(watched.x,watched.y,x,y,lines[p.line],t))continue;
             float bottom,top;paneHeights(p,bottom,top);
-            float at=watch.z+(z-watch.z)*t;
+            float at=watched.z+(z-watched.z)*t;
             if(at<bottom-2||at>top+2)continue;
-            shatter(p.frame,watch.x+(x-watch.x)*t,watch.y+(y-watch.y)*t,at,x-watch.x,y-watch.y);
+            shatter(p.frame,watched.x+(x-watched.x)*t,watched.y+(y-watched.y)*t,at,x-watched.x,y-watched.y);
         }
-        if(watch.missile&&!missile&&Game_ThingRole(thing->type)==GAME_THING_ROCKET)glassBlast(x,y,z,96);
-        watch.x=x;watch.y=y;watch.z=z;watch.missile=missile;
-        if(!missile)watch.seen=false; // Burst: no longer watched.
-    }
+        if(watched.missile&&!missile&&Game_ThingRole(thing->type)==GAME_THING_ROCKET&&!explosionFront(x,y,z,96,true,false))glassBlast(x,y,z,96);
+        watched.x=x;watched.y=y;watched.z=z;watched.missile=missile;
+        if(!missile)watched.seen=false; // Burst: no longer watched.
+    };
+    // The tic's things as beforeTic listed them, else the sectors' lists in the same order.
+    if(ticThings)for(mobj_t *thing:*ticThings)watch(thing);
+    else for(int i=0;i<numsectors;++i)for(mobj_t *thing=sectors[i].thinglist;thing;thing=thing->snext)watch(thing);
     for(auto it=missileWatch.begin();it!=missileWatch.end();) it=it->second.seen?std::next(it):missileWatch.erase(it);
+}
+// Drawing-only bodies and pieces (ragdolls, flying pieces) going through a window: from (x0,y0,z0) to (x1,y1,z1)
+// this tic, at least least units, through an unbroken pane between its sill and lintel: the window shatters where
+// it crossed, outward along its way. True when one broke.
+bool glassBodyThrough(float x0,float y0,float z0,float x1,float y1,float z1,float least) {
+    if(!glassReady()||panes.empty()||std::hypot(std::hypot(x1-x0,y1-y0),z1-z0)<least)return false;
+    for(const GlassPane &p:panes) {
+        if(p.broken)continue;
+        float t;
+        if(!crosses(x0,y0,x1,y1,lines[p.line],t))continue;
+        float bottom,top;paneHeights(p,bottom,top);
+        float at=z0+(z1-z0)*t;
+        if(at<bottom||at>top)continue;
+        shatter(p.frame,x0+(x1-x0)*t,y0+(y1-y0)*t,at,x1-x0,y1-y0);
+        if(M_CheckParm((char*)"-ragdolllog"))fprintf(stderr,"glassbody pane %d at %.0f,%.0f,%.0f\n",int(&p-panes.data()),x0+(x1-x0)*t,y0+(y1-y0)*t,at);
+        return true;
+    }
+    return false;
+}
+// The unbroken pane a way over the floor from (x0,y0) to (x1,y1) meets first (-1: none), s how far along it.
+int glassPaneCrossed(float x0,float y0,float x1,float y1,float &s) {
+    int found=-1;s=2;
+    if(!glassReady())return -1;
+    for(size_t i=0;i<panes.size();++i) {
+        float t;
+        if(panes[i].broken||!crosses(x0,y0,x1,y1,lines[panes[i].line],t)||t>=s)continue;
+        s=t;found=(int)i;
+    }
+    return found;
+}
+// A pane's glass as drawn (halfway through the sill), its sill and lintel, its map line; false once broken.
+bool glassPaneAt(int pane,GlassFace &face) {
+    if(!glassReady()||pane<0||pane>=(int)panes.size()||panes[pane].broken)return false;
+    const GlassPane &p=panes[pane];
+    face.ax=p.ax;face.ay=p.ay;face.bx=p.bx;face.by=p.by;face.line=p.line;face.frame=p.frame;
+    paneHeights(p,face.bottom,face.top);
+    return true;
 }
 // The panes as the camera sees them, and the shards. Each pane draws only
 // its face toward the eye, carrying that side's light: the outer face shows
@@ -481,15 +534,30 @@ static void chooseMirror(const Uniforms &camera) {
         std::copy(bestPlane,bestPlane+4,glassMirrorPlane);glassMirrorSilvered=bestSilvered;
         std::copy(bestPlane,bestPlane+4,lastPlane);mirrorSince=SDL_GetTicksNS();
     }
+    // The stretch of the plane that is glass: every pane and wall mirror lying in it.
+    {
+        const float *n=glassMirrorPlane;
+        float from=1e9f,to=-1e9f;
+        auto lies=[&](float ax,float ay,float bx,float by) {
+            if(std::abs(n[0]*ax+n[1]*ay-n[3])>1||std::abs(n[0]*bx+n[1]*by-n[3])>1)return;
+            for(float s:{-ax*n[1]+ay*n[0],-bx*n[1]+by*n[0]}) {from=std::min(from,s);to=std::max(to,s);}
+        };
+        for(const GlassPane &p:panes)if(!(p.broken&&leveltime>p.fractureEnd))lies(p.ax,p.ay,p.bx,p.by);
+        for(const WallMirror &m:wallMirrors())lies(m.ax,m.ay,m.bx,m.by);
+        if(from>to) {from=-1e9f;to=1e9f;}   // (none found: no limit, as it was)
+        glassMirrorSpan[0]=from;glassMirrorSpan[1]=to;
+    }
     if(!lastActive)mirrorSince=SDL_GetTicksNS();
     lastActive=true;
     glassMirrorFade=std::clamp((SDL_GetTicksNS()-mirrorSince)/0.25e9f,0.0f,1.0f);
 }
 // Which probes to capture this frame: those not yet captured since the
-// level's bakes or the settings last changed, four at a time so a level's
-// worth spreads over a few frames, and only once the bakes switched on have
-// all finished, so a level is captured once rather than per bake. The
-// capture key covers what changes how the world looks lit.
+// level's bakes or the settings last changed, and only once the bakes
+// switched on have all finished, so a level is captured once rather than per
+// bake. The capture key covers what changes how the world looks lit. A new
+// level takes them all in its first frame, which the loading screen still
+// covers; after that (a settings change mid-level) one a frame, as each
+// costs six views of the whole map.
 // A pane's weather for glass.frag, in its statics' bits 23..30: how hard
 // the wind presses the falling kind onto it (paneInward, 0-15) and how cold
 // the room behind it is (0 heated .. 15 as cold as outside: snow freezes on
@@ -517,15 +585,42 @@ static int captureKey=-1;
 static std::vector<char> captured;
 bool planGlassCaptures(const Uniforms &camera) {
     glassCaptures.clear();
+    bool all=firstFrameAfterLoad();
+    if(all)glassLevelReady();
     if(!settings.windowGlass||glassLevelSerial!=r_levelserial||glassProbes.empty()||camera.effects[2]!=0)return false;
     // The loading pass's frame is not drawn, so it captures nothing.
     if(bakesPending()||loadingOnThisThread())return false;
     int key=(int)hash32(lightBakeSerial*31u+(unsigned)bounceKey*7u+(unsigned)ambientKey*13u+(unsigned)flowKey*17u+(sunBaked?1u:0u)+
                         (unsigned)skytexture*19u+settingsSerial*23u+glassProbeSerial*29u);
-    if(key!=captureKey||captured.size()!=glassProbes.size()) {captureKey=key;captured.assign(glassProbes.size(),0);}
-    for(size_t i=0;i<glassProbes.size()&&glassCaptures.size()<4;++i)
-        if(!captured[i]) {captured[i]=1;glassCaptures.push_back((int)i);}
-    return !glassCaptures.empty();
+    if(key!=captureKey||captured.size()!=glassProbes.size()) {
+        // STATSDEBUG: what made the probes stale (each capture builds the whole map).
+        static const bool debug=getenv("STATSDEBUG")!=nullptr;
+        if(debug)fprintf(stderr,"GLASS tic %d: probes stale (light %u bounce %d ambient %d flow %d sun %d sky %d settings %u probes %u)\n",
+            leveltime,lightBakeSerial,bounceKey,ambientKey,flowKey,(int)sunBaked,skytexture,settingsSerial,glassProbeSerial);
+        captureKey=key;captured.assign(glassProbes.size(),0);
+    }
+    // A level's first capture takes them all at once, whichever frame it is:
+    // the load's own frame usually still has bakes pending, and one probe a
+    // frame from there made the level's first dozen tics run at half speed.
+    static unsigned capturedLevel=0;
+    if(all||capturedLevel!=r_levelserial) {
+        capturedLevel=r_levelserial;
+        for(size_t i=0;i<glassProbes.size();++i) {captured[i]=1;glassCaptures.push_back((int)i);}
+        return !glassCaptures.empty();
+    }
+    // In play the key moves with every door's re-baked light, and a capture
+    // builds the whole map: so only the nearest stale probe, one a frame, and
+    // none further off than its pane's reflection can be told apart. The
+    // rest keep their old capture until the eye comes near them.
+    constexpr float reach=2048;
+    int nearest=-1;float best=reach*reach;
+    for(size_t i=0;i<glassProbes.size();++i) if(!captured[i]) {
+        float dx=glassProbes[i].at[0]-camera.eye[0],dy=glassProbes[i].at[1]-camera.eye[1],d=dx*dx+dy*dy;
+        if(d<best) {best=d;nearest=(int)i;}
+    }
+    if(nearest<0)return false;
+    captured[nearest]=1;glassCaptures.push_back(nearest);
+    return true;
 }
 void buildGlass(const Uniforms &camera) {
     glassVertices.clear();glassMirrorActive=false;

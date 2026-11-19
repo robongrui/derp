@@ -133,13 +133,16 @@ static std::map<int,size_t> batchSizes() {
     for(const auto &batch:batches)sizes[batch.first]=batch.second.size();
     return sizes;
 }
+// This frame's glowing tiles are last frame's (keepSurfaceLights): the walls
+// add none of their own.
+static bool lightsKept=false;
 static void addWall(const line_t &line,int side,Point a,Point b,float bottom,float top,int tex,float anchor,float light,bool facing,int span) {
     const sector_t *front=sides[line.sidenum[side]].sector;
     if(stacked(front)||(othersBanded&&acrossTall((a.x+b.x)/2,(a.y+b.y)/2))) {
         float low=stacked(front)?storeyBottoms[front-sectors]:bandLow;
         bottom=std::max(bottom,low);top=std::min(top,low+storeyHeight+(stacked(front)?0:bandSlab));
     }
-    wallLights(line,side,a,b,bottom,top,tex,anchor,span);
+    if(!lightsKept)wallLights(line,side,a,b,bottom,top,tex,anchor,span);
     if(!facing)return;
     if(tex<=0||top<=bottom) return;
     tex=texturetranslation[tex]; wallImage(tex);
@@ -190,12 +193,13 @@ struct ViewCover {
     }
     void cover(float lo,float width) {
         parts(lo,width,[&](float a,float b){
+            // Merged in place: a vector a cover allocated per solid seg each frame.
             spans.push_back({a,b});std::sort(spans.begin(),spans.end());
-            std::vector<std::pair<float,float>> merged;
-            for(const auto &s:spans)
-                if(!merged.empty()&&s.first<=merged.back().second) merged.back().second=std::max(merged.back().second,s.second);
-                else merged.push_back(s);
-            spans=std::move(merged);return true;
+            size_t kept=0;
+            for(size_t n=0;n<spans.size();++n)
+                if(kept&&spans[n].first<=spans[kept-1].second) spans[kept-1].second=std::max(spans[kept-1].second,spans[n].second);
+                else spans[kept++]=spans[n];
+            spans.resize(kept);return true;
         });
     }
     bool full() const {return spans.size()==1&&spans[0].first<=-doomPi&&spans[0].second>=doomPi;}
@@ -293,22 +297,52 @@ static void visibleLeaves(const Uniforms &camera,const std::vector<char> &candid
 // The liquid mirror shares the eye's plan, so its view needs nothing more.
 // The glass mirror keeps every leaf on the eye's side of last frame's pane:
 // a new mirror fades in, so the frame it lags behind never shows. Probe
-// captures (allSides) look all round and keep everything. Lamps along
+// captures (allSides) look all round and keep the whole map, as does the
+// first frame after a level's load, so the vertex upload is sized for the
+// whole map before play (gpu3d/draw.cpp). Things are culled by what the eye
+// sees either way (thingLeaves): the probes draw no sprites. Lamps along
 // hidden walls still register (wallLights runs before the facing test).
-static std::vector<char> shownLeaves,shownSides;
+static std::vector<char> shownLeaves,shownSides,thingLeaves;
+// Whether a leaf is among those the eye can see this frame (all of them while nothing is
+// culled: the switch off, a probe looking all round). For what is drawn after the world
+// without its depth: mist and sunbeams behind a wall still ran their shader over it.
+bool leafInView(int leaf) {
+    return thingLeaves.size()!=(size_t)numsubsectors||leaf<0||leaf>=numsubsectors||thingLeaves[leaf];
+}
+// The leaves the eye sees this frame, from one walk of the map (eyeWalk in geometry()): what
+// cullHidden starts from and where findReflection looks for its floors. Empty without culling.
+static std::vector<char> eyeLeaves;
 static void cullHidden(const Uniforms &camera,bool allSides) {
-    shownLeaves.clear();shownSides.clear();
-    if(!settings.skipHiddenGeometry||allSides)return;
-    std::vector<char> candidate(numsubsectors,1);
-    shownLeaves.assign(numsubsectors,0);
-    visibleLeaves(camera,candidate,shownLeaves);
+    shownLeaves.clear();shownSides.clear();thingLeaves.clear();
+    if(!settings.skipHiddenGeometry)return;
+    shownLeaves=eyeLeaves;
     for(int leaf=0;leaf<numsubsectors;++leaf) {
         if(floors[leaf].size()<3)shownLeaves[leaf]=1;   // no polygon to test: its walls stay
         else if(glassMirrorActive&&!shownLeaves[leaf]) {
+            // What the mirror can show: in front of its plane, and behind its glass as the
+            // mirrored eye sees it. Each point is taken to where the line from the mirrored
+            // eye to it crosses the plane; the leaf stays if those crossings reach the stretch
+            // that is glass (windows.cpp's glassMirrorSpan), a sprite's width to spare. Without
+            // the second test everything on the eye's side of the plane was kept, half the map:
+            // by an E1M2 window 3,838 triangles and 177 things for 1,065 and 20 without it.
             const float *n=glassMirrorPlane;
-            for(Point p:floors[leaf]) if(n[0]*p.x+n[1]*p.y-n[3]>-1) {shownLeaves[leaf]=1;break;}
+            float side=n[0]*camera.eye[0]+n[1]*camera.eye[1]-n[3];
+            float mx=camera.eye[0]-2*side*n[0],my=camera.eye[1]-2*side*n[1];
+            float from=1e9f,to=-1e9f;bool any=false;
+            for(Point p:floors[leaf]) {
+                float front=n[0]*p.x+n[1]*p.y-n[3];
+                if(front<=-1)continue;
+                any=true;
+                float t=side>0?side/(side+std::max(front,0.0f)):1;
+                float cx=mx+(p.x-mx)*t,cy=my+(p.y-my)*t,s=-cx*n[1]+cy*n[0];
+                from=std::min(from,s);to=std::max(to,s);
+            }
+            constexpr float spare=64;
+            if(any&&to>=glassMirrorSpan[0]-spare&&from<=glassMirrorSpan[1]+spare)shownLeaves[leaf]=1;
         }
     }
+    thingLeaves=shownLeaves;
+    if(allSides) {shownLeaves.clear();return;}
     shownSides.assign(2*(size_t)numlines,0);
     for(int leaf=0;leaf<numsubsectors;++leaf) {
         if(!shownLeaves[leaf])continue;
@@ -318,6 +352,34 @@ static void cullHidden(const Uniforms &camera,bool allSides) {
             const line_t &line=*seg.linedef;size_t index=2*size_t(&line-lines);
             for(int side=0;side<2;++side)
                 if(line.sidenum[side]>=0&&seg.sidedef==&sides[line.sidenum[side]])shownSides[index+side]=1;
+        }
+    }
+}
+// The automap draws the lines the eye has seen (ML_MAPPED), which vanilla
+// marks as it draws a wall (R_StoreWallRange); this view never runs that.
+// The lines along the leaves seen, on the side facing the eye: a pillar's
+// far wall is in a leaf seen round it, but faces away. Takes cullHidden's
+// leaves when it culled, else walks them itself, once a tic.
+static void markSeenLines(const Uniforms &camera) {
+    static std::vector<char> own,candidate;
+    const std::vector<char> *seen=&thingLeaves;
+    if(thingLeaves.size()!=(size_t)numsubsectors) {
+        static int walked=-1;static unsigned level=0;
+        if(walked==leveltime&&level==r_levelserial)return;
+        walked=leveltime;level=r_levelserial;
+        candidate.assign(numsubsectors,1);own.assign(numsubsectors,0);
+        visibleLeaves(camera,candidate,own);
+        seen=&own;
+    }
+    float ex=camera.eye[0],ey=camera.eye[1];
+    for(int leaf=0;leaf<numsubsectors;++leaf) {
+        if(!(*seen)[leaf])continue;
+        const subsector_t &sub=subsectors[leaf];
+        for(int i=0;i<sub.numlines;++i) {
+            const seg_t &seg=segs[sub.firstline+i];
+            float x1=units(seg.v1->x),y1=units(seg.v1->y);
+            // A seg's front is on its right (P_PointOnLineSide).
+            if((units(seg.v2->x)-x1)*(ey-y1)-(units(seg.v2->y)-y1)*(ex-x1)<0)seg.linedef->flags|=ML_MAPPED;
         }
     }
 }
@@ -339,9 +401,14 @@ static void findReflection(const Uniforms &camera) {
         }
     }
     if(!near.empty()) {
-        candidate.assign(numsubsectors,0);visible.assign(numsubsectors,0);
-        for(const auto &n:near)candidate[n.second]=1;
-        visibleLeaves(camera,candidate,visible);
+        // The eye's walk when culling made one: the walk does not depend on which leaves it
+        // records, so the floors it found are the ones a walk for them alone would find.
+        if(eyeLeaves.size()==(size_t)numsubsectors)visible=eyeLeaves;
+        else {
+            candidate.assign(numsubsectors,0);visible.assign(numsubsectors,0);
+            for(const auto &n:near)candidate[n.second]=1;
+            visibleLeaves(camera,candidate,visible);
+        }
         float nearest=1024;
         for(const auto &[d,leaf]:near) if(visible[leaf]&&d<nearest) {
             nearest=d;reflectionPlane=floorZ(subsectors[leaf].sector);reflectionActive=true;
@@ -361,9 +428,12 @@ static void findReflection(const Uniforms &camera) {
 // a sky either; an open sky lower than the eye would lie over its floor and
 // whatever stands there like a floor of sky, so it rises over the eye.
 // Closed ones (ceiling at the floor) are a strip of sky beyond a wall and
-// keep their height. skyTops gives each sector's sky height.
-static std::vector<float> skyTops(float fraction,float eye) {
-    std::vector<float> skyTop(numsectors);
+// keep their height. skyTops gives each sector's sky height, in a buffer
+// kept from frame to frame.
+static const std::vector<float> &skyTops(float fraction,float eye) {
+    static std::vector<float> skyTop;
+    static std::vector<int> group;
+    skyTop.resize(numsectors);
     auto open=[](const sector_t *s){return s->ceilingpic==skyflatnum&&ceilZ(s)>floorZ(s);};
     for(int i=0;i<numsectors;++i) {
         skyTop[i]=ceilZ(&sectors[i]);
@@ -378,7 +448,7 @@ static std::vector<float> skyTops(float fraction,float eye) {
             for(int r=0;r<(sf.rotate?8:1);++r)skyTop[i]=std::max(skyTop[i],z+units(spritetopoffset[sf.lump[r]])+1);
         }
     }
-    std::vector<int> group(numsectors);
+    group.resize(numsectors);
     for(int i=0;i<numsectors;++i)group[i]=i;
     auto root=[&](int i){while(group[i]!=i)i=group[i]=group[group[i]];return i;};
     for(int i=0;i<numlines;++i) {
@@ -425,9 +495,11 @@ static void flatGeometry(const std::vector<float> &skyTop,bool storeys,bool copi
             // Phobos: a pool frozen over shows only its ice sheet, on its first frame (frozenFlat).
             PoolIce ice=ceiling?PoolIce{}:poolIce(int(sector-sectors));
             bool sheet=ice.ice>=1,still=!sheet&&ice.ice>0;   // under forming ice the liquid stops moving
-            Image &image=sheet?frozenFlat(firstflat+flat,0,8):still?stillFlat(firstflat+flat):lumpImage(lump,true);
-            int key=sheet?frozenFlatKey(firstflat+flat,0,8):still?stillFlatKey(firstflat+flat):-1-lump;
-            float z=sectorHeight(sector,ceiling),light=lighting(sector);
+            // Paint lit as a lamp (lit_paint.cpp) shows its glowing copy.
+            int index=int(sector-sectors);
+            Image &image=sheet?frozenFlat(firstflat+flat,0,8):still?stillFlat(firstflat+flat):sectorFlatImage(index,ceiling);
+            int key=sheet?frozenFlatKey(firstflat+flat,0,8):still?stillFlatKey(firstflat+flat):sectorFlatKey(index,ceiling);
+            float z=sectorHeight(sector,ceiling),light=roomPulse(sector,lighting(sector));
             // MODE_MIRROR_FLOOR: this floor samples the mirrored pass.
             unsigned mirror=reflectionActive&&!ceiling&&sectorMist[sector-sectors].reflective&&std::abs(z-reflectionPlane)<0.5f?MODE_MIRROR_FLOOR:0;
 
@@ -495,6 +567,7 @@ static int missingFill(const line_t &line,int side,bool lower) {
     }
     return fillTextures[(size_t)(&line-lines)*4+side*2+(lower?1:0)];
 }
+int wallFillTexture(const line_t &line,int side,bool lower) {return missingFill(line,side,lower);}
 // The upper, lower, middle and one-sided wall sections of every line side,
 // and sky walls along the edges of sky ceilings.
 // allSides: also wall sides facing away from the eye, for frames that
@@ -518,9 +591,15 @@ static void wallGeometry(const Uniforms &camera,const std::vector<float> &skyTop
             if(storeys&&(acrossTall((a.x+b.x)/2,(a.y+b.y)/2)||acrossTall(a.x,a.y)||acrossTall(b.x,b.y))!=copied) continue;
             bool shown=shownSides.empty()||shownSides[2*(size_t)i+side];
             bool facing=shown&&(allSides||(b.x-a.x)*(camera.eye[1]-a.y)-(b.y-a.y)*(camera.eye[0]-a.x)<=0);
-            float floor=floorZ(front),ceil=ceilZ(front),row=units(s.rowoffset),light=lighting(front);
-            if(std::abs(b.y-a.y)<0.01) light=std::max(0.1f,light-0.04f);
-            if(std::abs(b.x-a.x)<0.01) light=std::min(1.0f,light+0.04f);
+            float floor=floorZ(front),ceil=ceilZ(front),row=units(s.rowoffset),light=roomPulse(front,lighting(front));
+            // Doom's fake contrast: walls along x a step darker, walls along y a step lighter. Not with
+            // whole-level lighting: there the lamps shade a wall by the way it faces, and a step with
+            // a floor of 0.1 under it left the walls of a room without any light standing lit over a
+            // black floor.
+            if(!(settings.lightModel==1&&bakedLightsActive)) {
+                if(std::abs(b.y-a.y)<0.01) light=std::max(0.1f,light-0.04f);
+                if(std::abs(b.x-a.x)<0.01) light=std::min(1.0f,light+0.04f);
+            }
             if(!back) {
                 float anchor=ceil;
                 if(s.midtexture && (line.flags&ML_DONTPEGBOTTOM)) anchor=floor+units(textureheight[s.midtexture]);
@@ -556,6 +635,23 @@ struct Caster { const mobj_t *thing;const Image *image;int lump;bool flip;float 
 static unsigned spriteRotation(float dx,float dy,angle_t facing) {
     angle_t angle=(angle_t)(int64_t)(atan2(dy,dx)*(4294967296.0/(2*doomPi)));
     return (angle-facing+(unsigned)(ANG45/2)*9)>>29;
+}
+// F4 "Monsters block light" at work: shadows are shadow volumes (shadows.cpp's shadowVolume).
+static bool volumeShadows() {
+#ifdef DOOM_DEVTOOLS
+    static const bool off=getenv("DERP_NOVOLUMES")!=nullptr;   // the silhouettes instead, to compare
+    if(off)return false;
+#endif
+    return settings.shadowVolumes&&settings.lightModel==1&&bakedLightsActive;
+}
+// Whole-level lighting: the sun as a shadow's light, where the thing stands in it.
+static bool sunShadow(float x,float y,float z,ShadowLight &light) {
+    if(!(settings.lightModel==1&&bakedLightsActive&&settings.sun&&sunLevel>0)||contactCells.empty())return false;
+    int cx=std::clamp((int)std::floor((x-mapOrigin[0])/mapCell),0,mapWidth-1),cy=std::clamp((int)std::floor((y-mapOrigin[1])/mapCell),0,mapHeight-1);
+    float visible=contactCells[4*((size_t)cy*mapWidth+cx)+2]/255.0f;
+    if(visible<=0.5f)return false;
+    light={x+sunAzimuth[0]*766,y+sunAzimuth[1]*766,z+643,0.6f*visible*daylightScale()};
+    return true;
 }
 // The dynamic light on a thing (pulse, rgb) and the strongest light above it
 // that can cast its shadow; returns that light's strength. The classic
@@ -635,22 +731,86 @@ static void tumbleQuads(std::vector<Vertex> &v,size_t from,float x,float y,float
         v[n].x=x+rx*a2;v[n].y=y+ry*a2;v[n].z=middle+b2;
     }
 }
+// Whether anything of a thing can be seen (thing_view.cpp): the thing, a body thrown from it and what
+// came off that. Bodies that came to rest unseen still become sprites, one a frame: left for
+// the eye to find, a room of them would all be drawn the moment it looks in.
+static int unseenPictures=0,thingsDrawn=0;
+// STATSDEBUG: where a frame's things spent their time (before the cull, light,
+// shadows, the rest), printed when they took over a millisecond.
+static uint64_t thingParts[4],thingMark;
+static bool thingDebug=false;
+static void thingPart(int part) {
+    if(!thingDebug)return;
+    uint64_t now=SDL_GetTicksNS();
+    thingParts[part]+=now-thingMark;thingMark=now;
+}
+static bool thingWanted(const mobj_t &thing,const DeathView &death,float x,float y) {
+    if(thingInView(x,y))return true;
+    if(death.burst)return bodyBurstInView(*death.burst);
+    if(!death.ragdoll)return false;
+    if(thingInView(units(thing.x),units(thing.y))||ragdollPiecesInView(*death.ragdoll))return true;
+    if(unseenPictures<=0||!ragdollWantsPicture(*death.ragdoll))return false;
+    --unseenPictures;
+    return true;
+}
+// How far from the eye a thing still shows in the glass's mirror (a monster 2,000
+// units off is three pixels tall in it).
+static bool mirrorNear(const Uniforms &camera,float x,float y) {
+    constexpr float reach=2048;
+    float dx=x-camera.eye[0],dy=y-camera.eye[1];
+    return dx*dx+dy*dy<reach*reach;
+}
 // figureLift: someone drawn on another storey (addFigures), lifted that
 // far, in no thinker: no shadows, wounds or mirror image of it.
 static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,const Flash *beam,std::vector<Caster> &casters,
                      const MirrorView *mirror=nullptr,float figureLift=0) {
+    if(thingDebug)thingMark=SDL_GetTicksNS();
+    struct PartEnd { ~PartEnd() {thingPart(3);} } partEnd;
     bool figure=figureLift!=0;
     bool self=thing==players[displayplayer].mo;
     if((self&&!mirror)||thing->sprite<0||thing->sprite>=numsprites) return;
+    // Furniture and pickups have no body to step, no death and no stride: out of
+    // sight (and out of the mirror) they need none of what follows. A map holds
+    // hundreds, and the steps below ran for each of them every frame.
+    if(!figure&&!self&&thing->health>0&&!(thing->flags&(MF_COUNTKILL|MF_SHOOTABLE|MF_MISSILE|MF_CORPSE))) {
+        float tx=units(thing->x),ty=units(thing->y);
+        if(!thingInView(tx,ty)&&!(mirror&&mirrorNear(camera,tx,ty)))return;
+    }
     // A corpse nukage rain has melted away (craters.cpp): nothing left to draw.
     if(thing->health<=0&&dissolvedAway(*thing)) return;
     // The game's airborne blood in the tint it was spilled in; none from what doesn't bleed.
     int spilled=Game_ThingRole(thing->type)==GAME_THING_BLOOD?bloodSpriteTint(thing):BLOOD_RED;
     if(spilled==BLOOD_NONE) return;
+    // Gore draws a hit's mist and bits instead of the game's cartoon puff (spray.cpp, sprayViscera); the
+    // game still spawns it, nothing changes in play.
+    if(goreOn()&&settings.bloodSpray&&Game_ThingRole(thing->type)==GAME_THING_BLOOD) return;
+    // The rocket that went off inside the balloon (caco_pop.cpp).
+    if(goreOn()&&Game_ThingRole(thing->type)==GAME_THING_ROCKET&&!(thing->flags&MF_MISSILE)&&balloonHides(*thing)) {explosionCancel(*thing);return;}
+    // A rocket gone off, a barrel bursting: the blast is drawn in its place (explosions.cpp).
+    if(explosionHides(*thing)) return;
+    // And a wall hit its own plume (wall_hits.cpp) instead of the puff, spawned as ever.
+    if(settings.wallHits&&Game_ThingRole(thing->type)==GAME_THING_PUFF&&wallHitPuff(*thing)) return;
     // Varied deaths (death_director.cpp) pick a dying monster's frame, facing and mirroring.
     DeathView death={thing->sprite,thing->frame,thing->angle,false,1,0,{}};
     bool directed=!self&&settings.deathDirector&&deathView(*thing,fraction,death);
     if(!directed&&!self&&settings.deathRagdoll&&thing->health>0)directed=tumbleView(*thing,death);
+    // A running monster's legs keep pace with the ground it covers (strides.cpp).
+    if(!directed&&!self)strideView(*thing,death);
+    // Turning shows the frames between (P_DerpDrawAngle).
+    if(!directed&&!self) {unsigned drawn;if(Game_DrawAngle(thing,&drawn))death.facing=drawn;}
+    // Firing as it walks: legs of their own (waist.cpp).
+    // The way it walks from the way it faces, in eighths of a turn. Away from its aim by more than a quarter
+    // turn it walks backwards (the user: no legs under a chest facing the other way, "the demon thing"): the
+    // legs turned the other way round, at most a quarter turn off, their steps in the other order.
+    unsigned legsHeading=0,legsTurn=0;int legsFrame=-1;
+    if(!directed&&!self&&Game_WalkingShot(thing,&legsHeading)) {
+        legsTurn=(unsigned)(death.facing-(angle_t)legsHeading+(unsigned)(ANG45/2))>>29;
+        bool backwards=legsTurn>=3&&legsTurn<=5;
+        if(backwards)legsTurn=(legsTurn+4)&7;
+        legsFrame=strideLegs(*thing,backwards);
+    }
+    // Struck by a flying body (ragdoll_bumps.cpp): its pain frame for a moment, drawn only.
+    if(!directed&&!self&&thing->health>0)bodyStagger(*thing,death.sprite,death.frame);
     if(death.sprite<0||death.sprite>=numsprites) return;
     const auto &sprite=sprites[death.sprite]; int frame=death.frame&FF_FRAMEMASK;
     if(frame>=sprite.numframes) return;
@@ -678,11 +838,40 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         posed=posed||death.settle>0;
     }
     if(posed)z+=pose.lift;
+    // Its body has taken its step above; nothing more of it is needed where nobody looks.
+    // In front of the glass that mirrors (every thing on the eye's side of its plane,
+    // half the map) only what is near enough to be told apart in it: the mirror is an
+    // eighth of the screen, and each thing kept is lit and shadowed in full.
+    if(!figure&&!thingWanted(*thing,death,x,y)&&!(mirror&&mirrorNear(camera,x,y)))return;
+    thingPart(0);
+    ++thingsDrawn;
+    // A monster's fullbright firing frame is lit like its others, or it stands out of the room as flat
+    // paint for those frames; only the flash on it stays bright (MODE_FIRING). Always-bright monsters keep
+    // Doom's look, as do dying frames and plain sprites.
+    bool firing=settings.detail&&(death.frame&FF_FULLBRIGHT)&&(thing->flags&MF_COUNTKILL)&&thing->health>0&&!(states[thing->info->spawnstate].frame&FF_FULLBRIGHT);
+    bool bright=(death.frame&FF_FULLBRIGHT)&&!firing;
+    // Whole-level lighting: a decoration Doom draws fullbright (a lamp on its post, a torch, a
+    // candle) is lit by the room like anything else, and only what glows on it stays bright
+    // (MODE_LAMP_GLOW: its bright paint). Fullbright whole, the black post of a lamp stood grey
+    // in a red room, apart from everything round it.
+    bool lampPost=bright&&settings.detail&&settings.lightModel==1&&bakedLightsActive&&
+        !(thing->flags&(MF_MISSILE|MF_SPECIAL|MF_COUNTKILL|MF_NOBLOCKMAP|MF_SHOOTABLE|MF_CORPSE));
+    if(lampPost)bright=false;
     // Ragdolls cast from their current card below, after its image has been drawn.
-    bool ragdoll=death.ragdoll!=nullptr;
-    if(!self&&!ragdoll&&!figure)addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera);
-    if(!self&&!ragdoll&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(death.frame&FF_FULLBRIGHT))
-        casters.push_back({thing,&image,lump,flipped(rotation),x,y,z,std::hypot(x-camera.eye[0],y-camera.eye[1])});
+    bool ragdoll=death.ragdoll!=nullptr||death.burst!=nullptr;   // (a burst body casts nothing either)
+    // The contact shadow, the soft patch under the feet. With shadow volumes only where the thing
+    // casts no volume (below): beside a volume's hard shadow it read as the old sprite shadow
+    // left on (the user).
+    bool volumeCast=false;
+    if(!self&&!ragdoll&&!figure&&!volumeShadows())addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera);
+    // What the flashlight catches throws its outline on what lies behind: a shadow volume in
+    // the beam's light like any other light's, or (F4 "Monsters block light" off) the outline
+    // laid on the wall behind.
+    if(!self&&!ragdoll&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!bright) {
+        if(!volumeShadows())casters.push_back({thing,&image,lump,flipped(rotation),x,y,z,std::hypot(x-camera.eye[0],y-camera.eye[1])});
+        else if(!figure&&flashAt(x,y,z+units(thing->height)*0.5f,*beam)>0.02f)
+            volumeCast|=shadowVolume(*thing,image,flipped(rotation),x,y,z,{beam->position[0],beam->position[1],beam->position[2],1},5);
+    }
     std::array<float,3> pulse={},beamLight={};ShadowLight shadowLight={};
     float strongest=dynamicThingLight(thing,x,y,z,pulse,beamLight,shadowLight);
     // Static light at the thing's center; with bake-only lights or the
@@ -690,23 +879,138 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     StaticSample statics;
     auto baked=bakedLightAt(x,y,z+units(thing->height)*0.5f,&sectors[i],&statics);
     ShadowLight fixedLight;
-    if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;shadowLight=fixedLight;}
-    if(!self&&!ragdoll&&!figure&&strongest>0.025f) addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera,&shadowLight);
-    float light=lighting(&sectors[i],death.frame&FF_FULLBRIGHT); unsigned mode=MODE_SPRITE|(thing->flags&MF_SHADOW?MODE_FUZZ:0);
+    // The light whose shadow volume the thing casts, if any (kind as ShadowVolumeSet's): a ragdoll casts
+    // by it below, once its card is drawn.
+    ShadowLight volumeLight={};int volumeKind=0;
+    if(!(settings.lightModel==1&&bakedLightsActive)) {
+        if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;shadowLight=fixedLight;}
+        if(!self&&!ragdoll&&!figure&&strongest>0.025f) addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera,&shadowLight);
+    } else {
+        // Whole-level lighting: a shadow from the strongest light on the thing. All the baked
+        // light counts as one light, from the way it comes on balance where the thing stands:
+        // each lamp's way by its light, a glowing pool's as from over the pool (the sample's
+        // cast), the sky the place sees (through a window, a door) and what the lit surfaces
+        // round it send (sky, glow). So it is the one lamp under one lamp, the row's own way
+        // under a row, the window by a window, away from the pool beside a pool; gliding as the
+        // thing walks, not leaping from lamp to lamp.
+        // It casts where that light is one-sided enough (a third of what has a way at all; lit
+        // alike from all round, nothing casts), and then as all the light there: what has
+        // bounced came from the same lamps, the same window. The surfaces lose their share of
+        // the lamp light and of the bounce by the bake's own balance (surface_light.glsl).
+        // Beside it a shot's flash and the sun.
+        // With F4 "Monsters block light" the shadow is a shadow volume (shadows.cpp's shadowVolume):
+        // the light itself kept off what lies behind. Then only what has a place casts: a flash, a
+        // lamp, the sun; the rest of the light, which has none, leaves the contact shadow alone.
+        // Off: the outline laid over the floor and the wall.
+        thingPart(1);
+        struct Cast { ShadowLight light; int kind; };   // kind as ShadowVolumeSet's
+        Cast cast[5];int count=0;
+        bool volumes=volumeShadows();
+        // (The flashlight's own volume is cast above, beside this one: the strongest light and the flashlight.)
+        bool torch=volumes&&beam&&shadowLight.x==beam->position[0]&&shadowLight.y==beam->position[1]&&shadowLight.z==beam->position[2];
+        if(strongest>0.025f&&!torch)cast[count++]={shadowLight,1};
+        float middle=z+units(thing->height)*0.5f;
+        std::array<float,3> way=statics.cast;
+        float parts=statics.amount;
+        float view=std::sqrt(statics.sky[0]*statics.sky[0]+statics.sky[1]*statics.sky[1]+statics.sky[2]*statics.sky[2]);
+        if(view>0.01f&&skyLevel>0) {
+            float sky=std::min(daylightScale(),view*8)*skyLevel;
+            for(int c=0;c<3;++c)way[c]+=statics.sky[c]/view*sky;
+            parts+=sky;
+        }
+        for(int c=0;c<3;++c)way[c]+=statics.glow[c];
+        parts+=std::sqrt(statics.glow[0]*statics.glow[0]+statics.glow[1]*statics.glow[1]+statics.glow[2]*statics.glow[2]);
+        float balance=std::sqrt(way[0]*way[0]+way[1]*way[1]+way[2]*way[2]);
+        // Lamps first (the user: a soldier by a window cast away from the window in a room whose
+        // lamp is the light one sees): where lamps give the thing real light, and one-sidedly,
+        // the shadow is theirs alone. The windows, pools and lit surfaces count only where no
+        // lamp does.
+        float lamps=statics.amount-statics.pool;
+        float lampBalance=std::sqrt(statics.lampWay[0]*statics.lampWay[0]+statics.lampWay[1]*statics.lampWay[1]+statics.lampWay[2]*statics.lampWay[2]);
+        bool lampsFirst=lamps>0.04f&&lampBalance>=lamps*0.33f;
+        if(lampsFirst) {way=statics.lampWay;balance=lampBalance;parts=lamps;}
+        if(parts>0.01f&&balance>=parts*0.33f) {
+            float shown=statics.group?1-statics.groupShare*(1-groupFlicker(statics.group)):1.0f;   // a blinking lamp's shadow goes with its light
+            float there=luminance(baked.data())*shown*std::min(balance/parts,1.0f);
+            // Where it stands. The light's way on balance has no place, so it falls as from far off
+            // (drawn out from a made-up point 320 units off, a shadow grew to twice the thing's
+            // size on a wall behind) and no flatter than from 35 degrees up (it ran long over the
+            // floor where the light came in low; the user: too long and too big). Where one lamp
+            // gives most of the lamps' light there, the shadow is that lamp's, from where the lamp
+            // is (the user: we know where the lights are): over half its share the place glides
+            // from the far point to the lamp's own, all of it at four fifths, so nothing leaps
+            // as a thing walks from one lamp's light into the next.
+            float u[3]={way[0]/balance,way[1]/balance,way[2]/balance},flat=std::hypot(u[0],u[1]);
+            bool below=middle+u[2]*320<=z+8;   // (light from under the feet casts nothing: the test below)
+            if(u[2]<flat*0.7f) {u[2]=flat*0.7f;float n=std::sqrt(flat*flat+u[2]*u[2]);for(float &c:u)c/=n;}
+            float at[3]={x+u[0]*4000,y+u[1]*4000,below?z:middle+u[2]*4000};
+            if(lampsFirst&&!below&&statics.shadow>=0&&statics.shadow<(int)bakeSources.size()) {
+                const BakeLight &lamp=bakeSources[statics.shadow];
+                float share=statics.shadowAmount*luminance(lamp.color)/lamps,t=std::clamp((share-0.5f)/0.3f,0.0f,1.0f);
+                t=t*t*(3-2*t);
+                if(lamp.z>z+8) {at[0]+=(lamp.x-at[0])*t;at[1]+=(lamp.y-at[1])*t;at[2]+=(lamp.z-at[2])*t;}
+            }
+            cast[count++]={{at[0],at[1],at[2],there},lampsFirst||statics.amount-statics.pool>parts*0.5f?2:4};   // (not mostly lamps' light but a pool's, a window's, a lit room's next door: a wide light, its shallower shadow)
+        }
+        if(sunShadow(x,y,z,fixedLight))cast[count++]={fixedLight,3};
+        // One shadow, the strongest light's that stands above the feet (the user: several read as
+        // shadows from nowhere, and one must start at the feet). The flashlight's silhouette is its own.
+        count=(int)(std::remove_if(cast,cast+count,[&](const Cast &c){return c.light.z<=z+8;})-cast);
+        std::sort(cast,cast+count,[](const Cast &a,const Cast &b){return a.light.strength>b.light.strength;});
+        strongest=count?cast[0].light.strength:0;if(count)shadowLight=cast[0].light;
+        if(volumes&&count&&cast[0].light.strength>0.025f) {volumeLight=cast[0].light;volumeKind=cast[0].kind;}
+        if(!self&&!ragdoll&&!figure&&count&&cast[0].light.strength>0.025f) {
+            const float from[2]={cast[0].light.x,cast[0].light.y};
+            unsigned seen=rotationFrom(from);
+            int seenLump=firstspritelump+sf.lump[seen];Image &outline=lumpImage(seenLump,false);
+            if(volumes) {
+                // (A corpse lies flat: its picture stood up as a volume is no shadow of it, so a low slab.)
+                bool made=shadowVolume(*thing,outline,flipped(seen),x,y,z,cast[0].light,cast[0].kind,(thing->flags&MF_CORPSE)?0.5f:1.0f);
+                volumeCast|=made;
+#ifdef DOOM_DEVTOOLS
+                if(getenv("DERP_SHADOWS")&&leveltime%8==0)fprintf(stderr,"volume thing %d kind %d strength %.3f made %d\n",(int)thing->type,cast[0].kind,cast[0].light.strength,(int)made);
+#endif
+            }
+            else {
+                addEnemyShadow(*thing,outline,seenLump,flipped(seen),x,y,z,camera,&cast[0].light);
+                wallShadow(*thing,outline,seenLump,flipped(seen),x,y,z,camera,cast[0].light,castOpacity(cast[0].light,shadowLevel(x,y,&sectors[i])));
+            }
+        }
+    }
+    if(!self&&!ragdoll&&!figure&&volumeShadows()&&!volumeCast)addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera);
+#ifdef DOOM_DEVTOOLS
+    // DERP_SHADOWS: once a second, what each monster's shadow is cast by.
+    if(getenv("DERP_SHADOWS")&&(thing->flags&MF_COUNTKILL)&&leveltime%35==0)
+        fprintf(stderr,"shadow thing %d at %.0f,%.0f,%.0f sector %d: cast %.3f,%.3f,%.3f; strongest %.3f from %.0f,%.0f,%.0f; sky %.2f,%.2f,%.2f glow %.3f,%.3f,%.3f; light there %.3f\n",
+            (int)thing->type,x,y,z,i,statics.cast[0],statics.cast[1],statics.cast[2],strongest,shadowLight.x-x,shadowLight.y-y,shadowLight.z-z,
+            statics.sky[0],statics.sky[1],statics.sky[2],statics.glow[0],statics.glow[1],statics.glow[2],shadowLevel(x,y,&sectors[i]));
+#endif
+    thingPart(2);
+    float light=bright?1.0f:roomPulse(&sectors[i],lighting(&sectors[i])); unsigned mode=MODE_SPRITE|(thing->flags&MF_SHADOW?MODE_FUZZ:0);
     // Per-pixel lighting from silhouette normals (flipped with a mirrored frame, below).
-    if(settings.detail&&!(death.frame&FF_FULLBRIGHT))mode|=MODE_RELIT;
+    if(settings.detail&&!bright)mode|=MODE_RELIT;
+    // By a Flashbulb blast still burning: its edges toward the light picked out (MODE_RIM), the living, the dying
+    // and every piece thrown off them (the pieces are drawn with the body's mode).
+    if((mode&MODE_RELIT)&&!self&&((thing->flags&(MF_COUNTKILL|MF_CORPSE))||Game_ThingRole(thing->type)==GAME_THING_UNCOUNTED_MONSTER)&&explosionRim(x,y,z))mode|=MODE_RIM;
+    if(firing)mode|=MODE_FIRING;
+    if(lampPost)mode|=MODE_LAMP_GLOW;
     // Airborne blood shines like the floor blood (needs the normals of MODE_RELIT).
     if(settings.bloodShine&&Game_ThingRole(thing->type)==GAME_THING_BLOOD&&(mode&MODE_RELIT))mode|=MODE_WET_SPRITE;
     if(settings.glowingEyes&&(thing->flags&MF_COUNTKILL)&&thing->health>0)mode|=MODE_GLOWING_EYES;
-    if(!(death.frame&FF_FULLBRIGHT))light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
+    // A barrel's slime top glows as the nukage on the floor does (its mask: spriteSlime, images.cpp).
+    if(settings.emissive&&Game_ThingRole(thing->type)==GAME_THING_BARREL)mode|=MODE_GLOWING_EYES;
+    if(!bright)light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
     // MODE_SOFT: effect sprites (shots, puffs, fogs) dither out at floors
     // and ceilings and draw in front of walls within half their width.
     bool soft=settings.softSprites&&((thing->flags&MF_MISSILE)||((thing->flags&MF_NOBLOCKMAP)&&(thing->flags&MF_NOGRAVITY)));
     if(soft)mode|=MODE_SOFT|sectorMode(&sectors[i]);
-    if(thing->flags&MF_SPECIAL) {
-        // Pickups stay readable in the dark with a soft pulse and bloom (MODE_PICKUP).
-        float phase=(float)((uintptr_t)thing%997)*0.37f;
-        light=std::max(light,0.5f+0.08f*std::sin(gameSeconds()*3.0f+phase));mode|=MODE_PICKUP;
+    if((thing->flags&MF_SPECIAL)&&!soft) {
+        // Pickups: a steady floor so they read in the dark as lit things, and a glint now
+        // and then (MODE_PICKUP, world/pickup_glint.glsl) seeded per item. Only frames Doom
+        // drew fullbright (soulsphere, megasphere) keep a halo; a medkit doesn't glow.
+        light=std::max(light,0.48f);
+        unsigned seed=(unsigned)(((uintptr_t)thing>>4)*2654435761u>>24)&255u;
+        mode|=MODE_PICKUP|(seed<<MODE_PICKUP_SEED_SHIFT)|(bright?MODE_PICKUP_GLOW:0u);
     }
     // Emissive WAD frames keep their original white cores and artwork;
     // their light still illuminates surrounding surfaces and other sprites.
@@ -722,22 +1026,33 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         for(int c=0;c<3;++c)packedStatics|=(unsigned)std::lround((statics.towards[c]/towards*0.5f+0.5f)*255)<<(8*c);
         packedStatics|=(unsigned)std::lround(std::clamp(towards/statics.amount,0.0f,1.0f)*255)<<24;
     }
-    if(death.frame&FF_FULLBRIGHT) pulse={};
-    unsigned tint=death.frame&FF_FULLBRIGHT?0xFFFFFFFFu:packedLampTint(statics,light);
+    if(bright) pulse={};
+    unsigned tint=bright?0xFFFFFFFFu:packedLampTint(statics,light);
     // MODE_GROUNDED: grounding darkens the feet of things that rest on the floor.
     // Sprites have no sun map, so vSun carries strength and height above floor.
     float lift=units(thing->z-thing->floorz)+(posed?pose.lift:0),grounding=1-lift/32;
-    bool grounded=settings.detail&&grounding>0&&!(death.frame&FF_FULLBRIGHT)&&!soft&&Game_ThingRole(thing->type)!=GAME_THING_BLOOD&&
+    bool grounded=settings.detail&&grounding>0&&!bright&&!soft&&Game_ThingRole(thing->type)!=GAME_THING_BLOOD&&
         !(thing->flags&(MF_SHADOW|MF_MISSILE|MF_SPAWNCEILING));
     float tumbleUp[3]={0,0,1};
     bool tumbling=!self&&!ragdoll&&!death.fall.active&&thing->health>0&&Game_Tumble(thing,fraction,tumbleUp);
     // Asleep in one of the library's beds: its frame without the blood (sleepingImage).
     bool asleep=Game_ThingAsleep(thing)!=0;
     int bleed=bloodTint(thing);   // wound rims in the monster's own blood
+    // Down on one knee: drawn in its kneeling frames (kneel_view.cpp), which, every side drawn, are never flipped.
+    int kneelSoldier=-1,kneelAs=0;
+    bool kneeling=!self&&!ragdoll&&!death.fall.active&&kneelFrame(*thing,kneelSoldier,kneelAs);
     // The quad for one view: that view's frame, facing along its right.
     auto emit=[&](std::map<int,std::vector<Vertex>> &out,unsigned seen,float rx,float ry,bool collar) {
         int lump=firstspritelump+sf.lump[seen];
-        Image &image=asleep?sleepingImage(lump):spilled!=BLOOD_RED?bloodSpriteImage(lump,spilled):lumpImage(lump,false);
+        int waist=0;
+        if(legsFrame>=0&&legsFrame<sprite.numframes) {
+            const auto &legs=sprite.spriteframes[legsFrame];
+            unsigned turned=legs.rotate?(seen+legsTurn)&7:0;
+            waist=waistKey(lump,flipped(seen),firstspritelump+legs.lump[turned],(bool)legs.flip[turned]);
+        }
+        Image *kneel=kneeling&&!waist?&kneelImage(kneelSoldier,kneelAs,seen,lump):nullptr;
+        const bool flip=kneel?false:flipped(seen);
+        Image &image=waist?waistImage(waist):kneel?*kneel:asleep?sleepingImage(lump):spilled!=BLOOD_RED?bloodSpriteImage(lump,spilled):lumpImage(lump,false);
         float left=-(float)image.left,right=left+image.width,top=z+image.top,bottom=top-image.height;
         // Phobos: a body swollen in vacuum (bodySwell), wider more than taller, standing on its feet.
         float swell=self?0:bodySwell(*thing),swellWide=1+0.18f*swell,swellTall=1+0.08f*swell;
@@ -750,12 +1065,23 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         float sink=!ragdoll?sinkInLiquid(thing,i,image,x,y,camera,collar):dollDown?sinkInLiquid(thing,i,image,x,y,camera,collar,true):0;
         if(!ragdoll&&!death.fall.active&&sink==0)sink=-floorOverhang(thing,i,image);   // negative: lifted onto the floor
         top-=sink;bottom-=sink;
-        float u0=flipped(seen)?image.width:0,u1=flipped(seen)?0:image.width;
-        unsigned m=mode|((mode&MODE_RELIT)&&flipped(seen)?MODE_FLIPPED:0);
-        auto &vertices=out[asleep?sleepingKey(lump):spilled!=BLOOD_RED?bloodSpriteKey(lump,spilled):-1-lump];size_t first=vertices.size();
-        if(collar&&!self)woundView(thing,players[displayplayer].mo,image,flipped(seen),x,y,z-sink,top,bottom,rx,ry,posed?&pose:nullptr);
+        float u0=flip?image.width:0,u1=flip?0:image.width;
+        unsigned m=mode|((mode&MODE_RELIT)&&flip?MODE_FLIPPED:0);
+        // (Kneeling, not jolted: the jolt's picture is the standing frame's.)
+        int jolted=self||ragdoll||waist||kneel?0:bodyJoltKey(*thing,lump,image);   // the struck part out of place (body_jolt.cpp)
+        if(!jolted&&!self&&!ragdoll&&!waist&&!kneel)jolted=fatWobbleKey(*thing,lump,image);   // the fat ringing (fat_wobble.cpp)
+        auto &vertices=out[waist?waist:kneel?kneelKey(kneelSoldier,kneelAs,seen):jolted?jolted:asleep?sleepingKey(lump):spilled!=BLOOD_RED?bloodSpriteKey(lump,spilled):-1-lump];size_t first=vertices.size();
+        if(collar&&!self)woundView(thing,players[displayplayer].mo,image,flip,x,y,z-sink,top,bottom,rx,ry,posed?&pose:nullptr);
         // Wound holes (wounds.cpp): texels shot through, and their rims.
-        std::vector<byte> holes;bool wounded=!self&&woundMask(*thing,image,flipped(seen),rx,ry,holes);
+        // (A ragdoll's on the drawing its body was raised from: the card maps the mask by that drawing's texels.)
+        int dollLump=ragdoll?ragdollLump(*thing):-1;
+        const Image &woundImage=dollLump>=0?lumpImage(dollLump,false):image;
+        // A ragdoll at rest is a sprite with its holes painted in (ragdollCardKept): its wounds aren't
+        // worked out again each frame, unless the rain is eating it.
+        const Ragdoll *lowerDoll=death.ragdoll?ragdollLower(*death.ragdoll):nullptr;   // (gore: its legs' doll takes the same mask)
+        bool kept=death.ragdoll&&ragdollCardKept(*death.ragdoll)&&(!lowerDoll||ragdollCardKept(*lowerDoll))&&!cratered(*thing);
+        std::vector<byte> holes;bool wounded=!self&&!kept&&woundMask(*thing,woundImage,dollLump>=0?false:flip,rx,ry,holes);
+        if(wounded&&!ragdoll)fatWobbleMask(*thing,woundImage,holes);
         const std::vector<byte> *cut=wounded?&holes:nullptr;
         // Rime on Phobos, or nukage rain's soak (craters.cpp): never both, Phobos has no weather.
         unsigned frost=soft?0u:std::max(bodyFrost(*thing),bodySoak(*thing))<<MODE_FROST_SHIFT;
@@ -768,7 +1094,61 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
                 if(soft)batch[n].sunU=std::clamp(image.width*0.5f,8.0f,64.0f);
             }
         };
+        // Gore's pieces lit where they are, not where their corpse lies: a head rolled out of the dark into a
+        // lit room stayed dark. The sector's light, the bake and the lamps' tint there; the thing's own
+        // flashes kept on top where it isn't relit.
+        auto litAt=[&](std::vector<Vertex> &batch,size_t from,float px,float py,float pz) {
+            if(bright)return;
+            sector_t *at=R_PointInSubsector((fixed_t)(px*FRACUNIT),(fixed_t)(py*FRACUNIT))->sector;
+            StaticSample here;auto lit=bakedLightAt(px,py,pz,at,&here);
+            float level=roomPulse(at,lighting(at,false));
+            level=sunLightAt(px,py,at,flowLightAt(px,py,at,seamLightAt(px,py,at,level)));
+            unsigned hereTint=packedLampTint(here,level);
+            for(size_t n=from;n<batch.size();++n) {
+                batch[n].light=level;batch[n].lampTint=hereTint;
+                float *rgb[3]={&batch[n].red,&batch[n].green,&batch[n].blue};
+                for(int c=0;c<3;++c)*rgb[c]=(mode&MODE_RELIT)?lit[c]:pulse[c]-baked[c]+lit[c];
+            }
+        };
+        // Gore's loose pieces (heads, arms, chunks) cast their own shadows as the ragdoll's card does, from where
+        // they are (the user: without, the chunks floated).
+        auto pieceShadow=[&](const RagdollCard &piece) {
+            auto found=images.find(piece.key);
+            if(found==images.end())return;
+            addEnemyShadow(*thing,found->second,-1-piece.key,false,piece.x,piece.y,0,camera,nullptr,true,&piece);
+            // (With shadow volumes the pieces cast none: only what lies under them. Outlines laid on the
+            // floor stood soft and long beside the living's volumes, the old shadow and the new at once.)
+            if(strongest>0.025f&&!volumeShadows())addEnemyShadow(*thing,found->second,-1-piece.key,false,piece.x,piece.y,0,camera,&shadowLight,true,&piece);
+        };
+        // A ragdoll's shadow volume, from its card (the user: a monster lost its shadow the moment it
+        // ragdolled): in the light the living thing cast by, and in the flashlight's. Standing as it
+        // dies, a slab at half height once it lies, as a corpse sprite's is.
+        auto dollVolume=[&](const RagdollCard &doll) {
+            auto found=images.find(doll.key);
+            if(!volumeShadows()||bright||found==images.end())return false;
+            float ax,ay;cardAcross(camera,ax,ay);
+            float centre=(doll.u0+doll.u1)*0.5f-doll.half,cx=doll.x+ax*centre,cy=doll.y+ay*centre;
+            float squash=1-0.5f*doll.lying,feet=doll.top-doll.v1;
+            bool made=false;
+            if(volumeKind)made|=shadowVolume(*thing,found->second,false,cx,cy,feet,volumeLight,volumeKind,squash,&doll);
+            if(beam&&flashAt(cx,cy,feet+(doll.v1-doll.v0)*squash*0.5f,*beam)>0.02f)
+                made|=shadowVolume(*thing,found->second,false,cx,cy,feet,{beam->position[0],beam->position[1],beam->position[2],1},5,squash,&doll);
+            return made;
+        };
         RagdollCard card;
+        if(death.burst) {
+            // Gore: blown apart (body_burst.cpp), its pieces drawn instead of the thing, each facing the eye.
+            std::vector<RagdollCard> pieces;bodyBurstCards(*death.burst,fraction,pieces);
+            for(const RagdollCard &piece:pieces) {
+                auto &batch=out[piece.key];size_t from=batch.size();unsigned cm=m&~MODE_FLIPPED;
+                float l=-piece.half,r=piece.half,b=piece.top-piece.size,t=piece.top,s=(float)piece.size;
+                quad(batch,{piece.x+rx*l,piece.y+ry*l,t,0,0,light,cm},{piece.x+rx*r,piece.y+ry*r,t,s,0,light,cm},
+                     {piece.x+rx*r,piece.y+ry*r,b,s,s,light,cm},{piece.x+rx*l,piece.y+ry*l,b,0,s,light,cm});
+                finish(batch,from);litAt(batch,from,piece.x,piece.y,piece.top-piece.size/2.0f);
+                if(collar&&piece.shadow)pieceShadow(piece);
+            }
+            return;
+        }
         if(ragdoll) {
             // A ragdoll: its virtual camera's picture on an upright card (ragdoll.cpp), already mirrored.
             if(ragdollCard(*death.ragdoll,fraction,sink,camera.eye,cut,card,bleed)) {
@@ -777,22 +1157,81 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
                 quad(batch,{card.x+rx*l,card.y+ry*l,t,0,0,light,cm},{card.x+rx*r,card.y+ry*r,t,s,0,light,cm},
                      {card.x+rx*r,card.y+ry*r,b,s,s,light,cm},{card.x+rx*l,card.y+ry*l,b,0,s,light,cm});
                 finish(batch,from);
+                // Shot out of the air: its first tics lit blood red, over the change from picture to doll.
+                if(float flash=ragdollFlash(*death.ragdoll,fraction))
+                    for(size_t i=from;i<batch.size();++i) {batch[i].red+=1.6f*flash;batch[i].green+=0.25f*flash;batch[i].blue+=0.2f*flash;}
                 if(collar) {
                     const Image &shadow=images.at(card.key);
                     int shadowLump=-1-card.key; // the shadow renderer resolves images by -1-lump
-                    addEnemyShadow(*thing,shadow,shadowLump,false,card.x,card.y,z,camera,nullptr,false,&card);
-                    if(strongest>0.025f)addEnemyShadow(*thing,shadow,shadowLump,false,card.x,card.y,z,camera,&shadowLight,false,&card);
-                    if(beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!(death.frame&FF_FULLBRIGHT))
+                    // (The soft patch only where it casts no volume, as with the living.)
+                    if(!dollVolume(card))addEnemyShadow(*thing,shadow,shadowLump,false,card.x,card.y,z,camera,nullptr,false,&card);
+                    if(strongest>0.025f&&!volumeShadows())addEnemyShadow(*thing,shadow,shadowLump,false,card.x,card.y,z,camera,&shadowLight,false,&card);
+                    if(!volumeShadows()&&beam&&!(thing->flags&(MF_MISSILE|MF_NOBLOCKMAP|MF_SPECIAL))&&(thing->flags&(MF_SOLID|MF_SHOOTABLE))&&!bright)
                         casters.push_back({thing,&shadow,shadowLump,false,card.x,card.y,z,std::hypot(card.x-camera.eye[0],card.y-camera.eye[1]),card});
+                }
+            }
+            // Gore: its legs thrown off as a doll of their own, drawn as the body is.
+            if(const Ragdoll *legsDoll=ragdollLower(*death.ragdoll)) {
+                RagdollCard legsCard;
+                if(ragdollCard(*legsDoll,fraction,sink,camera.eye,cut,legsCard,bleed)) {
+                    auto &batch=out[legsCard.key];size_t from=batch.size();unsigned cm=m&~MODE_FLIPPED;
+                    float l=-legsCard.half,r=legsCard.half,b=legsCard.top-legsCard.size,t=b+legsCard.size,s=(float)legsCard.size;
+                    quad(batch,{legsCard.x+rx*l,legsCard.y+ry*l,t,0,0,light,cm},{legsCard.x+rx*r,legsCard.y+ry*r,t,s,0,light,cm},
+                         {legsCard.x+rx*r,legsCard.y+ry*r,b,s,s,light,cm},{legsCard.x+rx*l,legsCard.y+ry*l,b,0,s,light,cm});
+                    finish(batch,from);litAt(batch,from,legsCard.x,legsCard.y,legsCard.top-legsCard.size/2.0f);
+                    if(collar)dollVolume(legsCard);
+                }
+            }
+            // Gore: a head bursting over it (head_burst.cpp), a picture of its own riding the neck.
+            RagdollCard burst;
+            // And a severed head flying off it (flying_piece.cpp): drawn the same way, where it is now.
+            // And the legs left standing when it was cut in half (standing_legs.cpp).
+            // And the arms shot off it and the chunks shot out of it (flying_piece.cpp).
+            for(int piece=0,pieces=3+ragdollLooseCount(*death.ragdoll);piece<pieces;++piece) {
+                bool drawn=piece==0?ragdollBurstCard(*death.ragdoll,fraction,burst):piece==1?ragdollHeadCard(*death.ragdoll,fraction,burst):
+                           piece>=3?ragdollLooseCard(*death.ragdoll,piece-3,fraction,burst):
+                           ragdollLegsCard(*death.ragdoll,fraction,burst);
+                if(!drawn)continue;
+                auto &batch=out[burst.key];size_t from=batch.size();unsigned cm=m&~MODE_FLIPPED;
+                float l=-burst.half,r=burst.half,b=burst.top-burst.size,t=burst.top,s=(float)burst.size;
+                quad(batch,{burst.x+rx*l,burst.y+ry*l,t,0,0,light,cm},{burst.x+rx*r,burst.y+ry*r,t,s,0,light,cm},
+                     {burst.x+rx*r,burst.y+ry*r,b,s,s,light,cm},{burst.x+rx*l,burst.y+ry*l,b,0,s,light,cm});
+                finish(batch,from);litAt(batch,from,burst.x,burst.y,burst.top-burst.size/2.0f);
+                if(collar&&burst.shadow)pieceShadow(burst);
+            }
+            // Gore, cut in half: the legs are the monster's own death frames, which the game plays on the
+            // thing, with all above the cut cut away (cutMask), where the game's corpse is: the blast's
+            // push carries them over backward as Doom drew it.
+            float legsCut;uint32_t legsSeed;
+            if(ragdollLegsCut(*death.ragdoll,legsCut,legsSeed)&&thing->sprite>=0&&thing->sprite<numsprites) {
+                const auto &own=sprites[thing->sprite];int ownFrame=thing->frame&FF_FRAMEMASK;
+                if(ownFrame<own.numframes) {
+                    const auto &osf=own.spriteframes[ownFrame];
+                    unsigned ownSeen=osf.rotate?seen:0;bool ownFlip=osf.flip[ownSeen];
+                    int legsLump=firstspritelump+osf.lump[ownSeen];
+                    Image &legs=lumpImage(legsLump,false);
+                    std::vector<byte> cutHoles;
+                    bool cut=false;
+                    timed(Stat::Gore,[&]{cut=cutMask(*thing,legs,ownFlip,rx,ry,legsCut,legsSeed,cutHoles);});
+                    if(cut) {
+                        float lx,ly,lz;interpolatedPosition(*thing,fraction,lx,ly,lz);
+                        auto &batch=out[-1-legsLump];size_t from=batch.size();
+                        unsigned lm=mode|((mode&MODE_RELIT)&&ownFlip?MODE_FLIPPED:0);
+                        // Standing on the floor as any frame does (floorOverhang), in the corpse's own sector.
+                        int legsSector=(int)(R_PointInSubsector((fixed_t)(lx*FRACUNIT),(fixed_t)(ly*FRACUNIT))->sector-sectors);
+                        float lifted=lz+legs.top+floorOverhang(thing,legsSector,legs);
+                        woundedQuads(batch,{0,0,0,0,0,light,lm},legs,cutHoles,lx,ly,lifted,rx,ry,ownFlip,1,bleed);
+                        finish(batch,from);
+                    }
                 }
             }
             return;
         }
         // (Swollen: the procedural fall and the wounded drawing are widened through rx, ry; the
         // posed body takes the widened left and right.)
-        if(death.fall.rig)fallQuads(vertices,{0,0,0,0,0,light,m},death.fall,x,y,z-sink,rx*swellWide,ry*swellWide,flipped(seen),cut,bleed);
+        if(death.fall.rig)fallQuads(vertices,{0,0,0,0,0,light,m},death.fall,x,y,z-sink,rx*swellWide,ry*swellWide,flip,cut,bleed);
         else if(posed)bodyQuads(vertices,pose,{0,0,0,0,0,light,m},x,y,z-sink,rx,ry,left,right,image.top,image.height,u0,u1,cut,bleed);
-        else if(wounded)woundedQuads(vertices,{0,0,0,0,0,light,m},image,holes,x,y,top,rx*swellWide,ry*swellWide,flipped(seen),(top-bottom)/image.height,bleed);
+        else if(wounded)woundedQuads(vertices,{0,0,0,0,0,light,m},image,holes,x,y,top,rx*swellWide,ry*swellWide,flip,(top-bottom)/image.height,bleed);
         else quad(vertices,{x+rx*left,y+ry*left,top,u0,0,light,m},{x+rx*right,y+ry*right,top,u1,0,light,m},
             {x+rx*right,y+ry*right,bottom,u1,(float)image.height,light,m},{x+rx*left,y+ry*left,bottom,u0,(float)image.height,light,m});
         if(tumbling)tumbleQuads(vertices,first,x,y,z-sink+units(thing->height)/2,rx,ry,tumbleUp);
@@ -836,6 +1275,7 @@ static void playerShadow(const Uniforms &camera,float fraction) {
     if(!(settings.playerShadow&&camera.effects[2]==0&&self&&self->sprite>=0&&self->sprite<numsprites))return;
     float x,y,z;interpolatedPosition(*self,fraction,x,y,z);
     ShadowLight light={};float strongest=0.025f;bool found=false;
+    int kind=1;   // the light's kind for a shadow volume (ShadowVolumeSet): 1 dynamic, 2 baked, 3 the sun
     for(unsigned n=0;n<flashes.count;++n) {
         const Flash &f=flashes.lights[n];
         if(fogOnly[n]||lightSources[n]==self||lightKinds[n]==I_RENDER3D_LIGHT_FLASHLIGHT||f.position[2]<=z+8)continue;
@@ -845,37 +1285,61 @@ static void playerShadow(const Uniforms &camera,float fraction) {
     if(bakeOnlyActive||gridLightActive()) {
         StaticSample statics;ShadowLight fixedLight;
         bakedLightAt(x,y,z+28,self->subsector->sector,&statics);
-        if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;light=fixedLight;found=true;}
+        if(staticShadow(statics,z,fixedLight)&&fixedLight.strength>strongest) {strongest=fixedLight.strength;light=fixedLight;found=true;kind=2;}
     }
     if(!found&&settings.sun&&sunLevel>0&&!contactCells.empty()) {
         int cx=std::clamp((int)std::floor((x-mapOrigin[0])/mapCell),0,mapWidth-1),cy=std::clamp((int)std::floor((y-mapOrigin[1])/mapCell),0,mapHeight-1);
         float visible=contactCells[4*((size_t)cy*mapWidth+cx)+2]/255.0f;
-        if(visible>0.5f) {light={x+sunAzimuth[0]*766,y+sunAzimuth[1]*766,z+643,0.6f*visible};found=true;}
+        if(visible>0.5f) {light={x+sunAzimuth[0]*766,y+sunAzimuth[1]*766,z+643,0.6f*visible};found=true;kind=3;}
     }
     int frame=self->frame&FF_FRAMEMASK;
     if(found&&frame<sprites[self->sprite].numframes) {
         const auto &sf=sprites[self->sprite].spriteframes[frame];
         unsigned rotation=sf.rotate?spriteRotation(light.x-x,light.y-y,self->angle):0;
         int lump=firstspritelump+sf.lump[rotation];
+        // Laid on the floor, with shadow volumes too: as a volume it started under the eye, filled
+        // the lower view and swung with every step (the user: very distracting).
         addEnemyShadow(*self,lumpImage(lump,false),lump,sf.flip[rotation],x,y,z,camera,&light,true);
     }
 }
+unsigned batchGeneration=0;   // (gpu3d/draw.cpp's drawOpaque)
 void geometry(const Uniforms &camera,float fraction) {
+    ++batchGeneration;
     for(auto &batch:batches)batch.second.clear();
     for(auto &batch:shadowBatches)batch.second.clear();
+    for(ShadowVolumeSet &set:shadowVolumes) {set.kind=0;set.vertices.clear();}
+    shadowVolumeFrame();
     for(auto &batch:mirrorBatches)batch.second.clear();
-    surfaceLights.clear();
+    timed(Stat::Lights,[&]{lightsKept=keepSurfaceLights(storeyHeight>0);});
+    if(!lightsKept)surfaceLights.clear();
     std::copy(camera.eye,camera.eye+3,surfaceEye);
-    timed(Stat::Lights,[&]{collectFlashes(fraction,camera);collectFlatLights();});
+    timed(Stat::Lights,[&]{collectFlashes(fraction,camera);if(!lightsKept)collectFlatLights();});
     timed(Stat::World,[&]{
+        // STATSDEBUG: which part of a slow world build it was.
+        static const bool debug=getenv("STATSDEBUG")!=nullptr;
+        uint64_t t0=debug?SDL_GetTicksNS():0;
+        // One walk of the map for what the eye sees, for the reflection and the culling both.
+        eyeLeaves.clear();
+        if(settings.skipHiddenGeometry) {
+            static std::vector<char> every;
+            every.assign(numsubsectors,1);eyeLeaves.assign(numsubsectors,0);
+            visibleLeaves(camera,every,eyeLeaves);
+        }
         findReflection(camera);
-        bool allSides=planGlassCaptures(camera);
+        bool allSides=planGlassCaptures(camera)||firstFrameAfterLoad();
         cullHidden(camera,allSides);
+        markSeenLines(camera);
+        uint64_t t1=debug?SDL_GetTicksNS():0;
         skyVertices.clear();
-        std::vector<float> skyTop=skyTops(fraction,camera.eye[2]);
+        const std::vector<float> &skyTop=skyTops(fraction,camera.eye[2]);
         findStoreys(camera);
+        uint64_t t2=debug?SDL_GetTicksNS():0;
         flatGeometry(skyTop,false);
+        uint64_t t3=debug?SDL_GetTicksNS():0;
         wallGeometry(camera,skyTop,allSides,false);
+        if(debug&&SDL_GetTicksNS()-t0>4000000)
+            fprintf(stderr,"WORLD tic %d: cull %.1f sky and storeys %.1f flats %.1f walls %.1f ms%s\n",leveltime,(t1-t0)/1e6,(t2-t1)/1e6,
+                (t3-t2)/1e6,(SDL_GetTicksNS()-t3)/1e6,allSides?" (whole map)":"");
         if(storeyHeight>0) {
             flatGeometry(skyTop,true,false);
             wallGeometry(camera,skyTop,allSides,true,false);
@@ -903,6 +1367,11 @@ void geometry(const Uniforms &camera,float fraction) {
     // drawn last and copied up and down with them; whatever moves isn't.
     auto fixture=[](const mobj_t *thing,int i){return stacked(&sectors[i])&&!Game_Carried(thing)&&acrossTall(units(thing->x),units(thing->y));};
     timed(Stat::Sprites,[&]{
+        planThingView(storeyHeight>0?std::vector<char>{}:thingLeaves);   // (the storeys' copies are seen from everywhere)
+        unseenPictures=1;thingsDrawn=0;
+        static const bool debugThings=getenv("STATSDEBUG")!=nullptr;
+        thingDebug=debugThings;
+        for(uint64_t &part:thingParts)part=0;
         for(int pass=0;pass<(storeyHeight>0?2:1);++pass) {
             std::map<int,size_t> before;
             if(pass)before=batchSizes();
@@ -913,9 +1382,15 @@ void geometry(const Uniforms &camera,float fraction) {
             }
             if(pass)copyStoreys(before,camera);
         }
+        if(thingDebug&&thingParts[0]+thingParts[1]+thingParts[2]+thingParts[3]>1000000)
+            fprintf(stderr,"THINGS tic %d: %d drawn; before the cull %.2f, light %.2f, shadows %.2f, rest %.2f ms\n",leveltime,thingsDrawn,
+                thingParts[0]/1e6,thingParts[1]/1e6,thingParts[2]/1e6,thingParts[3]/1e6);
+        thingDebug=false;
         addFigures(camera,fraction,casters);
+        addExplosionCards(camera,fraction);
         buildSpeech(camera,fraction);
     });
+    if(statsTiming)statsCount(Stat::Sprites,thingsDrawn);
     profileAdd(profile.frame.spritesMs,spritesStart);
     std::sort(casters.begin(),casters.end(),[](const Caster &a,const Caster &b){return a.distance<b.distance;});
     for(size_t n=0;n<std::min(size_t(6),casters.size());++n) {

@@ -47,6 +47,8 @@ static const char rcsid[] = "$Id: am_map.c,v 1.4 1997/02/03 21:24:33 b1 Exp $";
 #include "dstrings.h"
 
 #include "am_map.h"
+#include "p_nav.h"
+#include "p_senses.h"
 #include "d_deh.h"
 
 
@@ -1331,6 +1333,19 @@ void AM_drawCrosshair(int color)
 
 }
 
+// DERP's navigation (-derpnav): links between rooms blue, the monsters'
+// ways to the player green, where each is going when it hunts or searches red.
+static void AM_drawNavLine (fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2, int kind)
+{
+    mline_t	l;
+
+    l.a.x = x1;
+    l.a.y = y1;
+    l.b.x = x2;
+    l.b.y = y2;
+    AM_drawMline (&l, kind == 2 ? REDS + 4 : kind ? GREENS : BLUES);
+}
+
 void AM_Drawer (void)
 {
     if (!automapactive) return;
@@ -1339,6 +1354,8 @@ void AM_Drawer (void)
     if (grid)
 	AM_drawGrid(GRIDCOLORS);
     AM_drawWalls();
+    P_NavDraw (AM_drawNavLine);
+    P_SensesDraw (AM_drawNavLine);
     AM_drawPlayers();
     if (cheating==2)
 	AM_drawThings(THINGCOLORS, THINGRANGE);

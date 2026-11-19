@@ -29,6 +29,9 @@
 /devtools/
 /PLAN-*.md
 /*-research.md
+/PLAN_DERP_AI.md
+/GUIDE_DERP_AI.md
+/HISTORY_DERP_AI.md
 # Episode 0.5's map generator, private; the map it makes is committed (below)
 /scp_7179_b/mapgen/
 !/scp_7179_b/library.wad
@@ -53,3 +56,6 @@
 
 # Python bytecode from the lab tools in tests/
 __pycache__/
+/barks/*.wad
+# The cries without words ship with the game (scripts/add_voices.py); the spoken lines don't.
+!/barks/derp-cries.wad

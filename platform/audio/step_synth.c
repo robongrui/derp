@@ -362,10 +362,29 @@ static void gloop(float *out, int frames, int rate, rng_t *r)
     hush(out, frames, (int)(rng_range(r, 0.12f, 0.2f) * rate), rate, r, 500, 0.04f, 0.25f);
 }
 
+/* An imp's foot: the pad a little weight, then its claws one after another,
+   uneven, and a short scrape as they drag. Bright and small: it should sound
+   quick and sharp beside a boot, and tell you it is near in the dark. */
+static void claw(int kind, float *out, int frames, int rate, rng_t *r)
+{
+    int hard = kind == IMPACT_CLAW_HARD, ticks = hard ? 3 + (int)rng_range(r, 0, 2) : 1;
+    float at = rng_range(r, 0.002f, 0.01f);
+
+    hush(out, frames, 0, rate, r, hard ? 420 : 300, 0.012f, hard ? 0.25f : 0.4f);
+    for (int i = 0; i < ticks; ++i)
+    {
+        contact(out, frames, (int)(at * rate), rate, r, 1600, rng_range(r, 2400, 4200), 6500,
+                0.0004f, rng_range(r, 0.003f, 0.007f), rng_range(r, 0.45f, 0.8f) * (hard ? 1 : 0.35f));
+        at += rng_range(r, 0.012f, 0.038f);
+    }
+    if (hard) contact(out, frames, (int)(at * rate), rate, r, 2200, 3600, 7500, 0.004f, 0.016f, 0.14f);
+}
+
 void Step_Render(int kind, unsigned seed, int rate, float *out, int frames)
 {
     rng_t r = rng_seed(seed);
-    if (kind == IMPACT_SPLASH_WATER) splash(out, frames, rate, &r);
+    if (kind >= IMPACT_CLAW_HARD) claw(kind, out, frames, rate, &r);
+    else if (kind == IMPACT_SPLASH_WATER) splash(out, frames, rate, &r);
     else if (kind == IMPACT_SPLASH_THICK) gloop(out, frames, rate, &r);
     else if (kind >= IMPACT_GEAR_LIGHT) gear(kind, out, frames, rate, &r);
     else if (kind >= IMPACT_RUN_STONE) footfall(kind - IMPACT_RUN_STONE + IMPACT_STEP_STONE, 1, out, frames, rate, &r);

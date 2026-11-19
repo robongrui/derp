@@ -25,6 +25,7 @@ struct doom_stock_rig {
     float split; doom_rig_box carried[3];
     float hip[2][2], knee[2][2], ankle[2][2];   // [left, right][u, h]
     bool guided;    // a ragdoll chest blast may play the shot death on strings (ragdoll.cpp's keys fit it)
+    float depth;    // the body's reach front and back at most, 0 for what the side drawing says
 };
 static const doom_stock_rig doom_stock_rig_table[] = {
     // Zombieman in pain, front: the rifle held above the hips, its muzzle end dipping below them;
@@ -47,6 +48,10 @@ static const doom_stock_rig doom_stock_rig_table[] = {
     // Chaingunner hit: the gun and its ammo belt hang over both thighs, all of it with the torso.
     {"CPOSH0", 43, 61, 0x62744442u, 4.0f, {{-22, 12.75f, 24, 30, RIG_ALL}},
      {{-3.0f, 17.5f}, {9.0f, 17.5f}}, {{-1.5f, 9.5f}, {9.5f, 9.5f}}, {{0.5f, 2}, {9.0f, 2}}},
+    // Mancubus in pain: short legs under the belly (the finder turned him down), the cannons held rigid with the torso.
+    // Slim from the side: as wide as his front and his cannons made him, he lay on his back as tall as a boulder.
+    {"FATTJ1", 74, 67, 0x9bc00468u, 5.0f, {{-28, -5, 12, 27, RIG_NEUTRAL}, {29, 4, 42, 35, RIG_NEUTRAL}},
+     {{-6.0f, 22}, {16.0f, 22}}, {{-7.0f, 12}, {18.0f, 12}}, {{-8.0f, 3}, {20.0f, 3}}, false, 22.0f},
 };
 
 // Whether a texel of this colour moves with the torso, for a box's colour rule.

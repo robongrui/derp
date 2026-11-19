@@ -59,7 +59,8 @@ const int slotRight[3]={50,64,78},slotColumns=13;
 // Colors as 0xAARRGGBB, the byte order of the B8G8R8A8 texture.
 const unsigned backdrop=0xc8080808,separator=0xff3a3a3a,text=0xffe6e6e6,heading=0xffe8b040,dim=0xff686868,
                description=0xffb4b4b4,selectionBar=0xff7a1414,bright=0xffffffff,onColor=0xff8cd48c,
-               tabBar=0xffa01818,track=0xff505050,trackFill=0xffd03030;
+               tabBar=0xffa01818,track=0xff505050,trackFill=0xffd03030,
+               costLow=0xff5cc85c,costSome=0xffe8c040,costHigh=0xffe85050,outline=0xff000000;
 
 unsigned *image;
 
@@ -114,8 +115,10 @@ std::vector<std::string> wrap(const std::string &string,int lineWidth,size_t max
 std::string valueText(const Option &option) {
     if(option.kind==OptionKind::Check)return *option.flag?"On":"Off";
     if(option.kind==OptionKind::Choice) {
-        for(size_t i=0;i<option.values.size();++i)if(option.values[i]==*option.flag)return option.items[i];
-        return option.items.front();
+        int shown=*option.flag;
+        bool rolled=option.shows&&option.shows(panel.draft,shown);
+        for(size_t i=0;i<option.values.size();++i)if(option.values[i]==shown)return option.items[i];
+        return rolled?(shown==-1?"None":"Random"):option.items.front();
     }
     size_t step=(size_t)std::lround((*option.number-option.low)/option.step);
     if(step<option.items.size())return option.items[step];
@@ -207,11 +210,19 @@ bool isDefault(const Option &option) {
     return *option.flag==*defaultOf(option.flag);
 }
 
+// After an option changed: the preset picked sets the options it covers; any
+// other change leaves the preset showing what the options now come to (Custom, if none).
+void presetFollows(const Option &option) {
+    if(!strcmp(option.key,"preset"))applyPreset(panel.draft,panel.draft.preset);
+    else panel.draft.preset=matchPreset(panel.draft);
+}
+
 void resetOption() {
     Option &option=selectedOption();
     if(isDefault(option)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
     if(option.kind==OptionKind::Slider)*option.number=*defaultOf(option.number);
     else *option.flag=*defaultOf(option.flag);
+    presetFollows(option);
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
 }
 
@@ -228,6 +239,7 @@ void changeOption(int direction) {
             if(option.isAllowed(panel.draft,value)) {*option.flag=value;break;}
         }
     } else setSlider(option,*option.number+direction*option.step);
+    presetFollows(option);
     S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
 }
 
@@ -289,7 +301,7 @@ void resetBinding() {
 
 void closePanel() {
     panel.capturing=false;
-    // A new Gameplay (Normal, Authored, Phobos) takes a map built for it: the game restarts the map if it plays differently.
+    // A new Gameplay (Normal, DERP, Phobos) takes a map built for it: the game restarts the map if it plays differently.
     bool modeChanged=panel.draft.mode!=settings.mode;
     settings=panel.draft;
     paused=panel.wasPaused;
@@ -321,13 +333,40 @@ void drawChangedMark(int row,bool enabled) {
     int x=(leftColumn+1)*cellWidth+cellWidth/2,y=rowY(row)+cellHeight/2-2;
     for(int i=0;i<5;++i) {int half=2-std::abs(i-2);fill(x-half,y+i,2*half+1,1,enabled?heading:dim);}
 }
+
+// What an option costs (settings_costs.cpp), as a small meter of three rising
+// bars: one lit green, two yellow, three red, so the count says it without the colour.
+unsigned costColor(Cost cost) { return cost==Cost::High?costHigh:cost==Cost::Some?costSome:costLow; }
+const int meterWidth=8;
+void drawMeter(int x,int row,Cost cost) {
+    int bottom=rowY(row)+cellHeight-3;
+    for(int bar=0;bar<3;++bar) {
+        int barHeight=4+3*bar;
+        fill(x+3*bar,bottom-barHeight,2,barHeight,bar<(int)cost?costColor(cost):separator);
+    }
+}
+// The dearest option on a tab as it is set now.
+Cost tabCost(const OptionTab &tab) {
+    Cost worst=Cost::None;
+    for(const OptionSection &section:tab.sections)for(const Option &option:section.options)
+        worst=std::max(worst,optionCost(option,panel.draft).cost);
+    return worst;
+}
+// The tip of a choice with one per item (the presets) is the picked item's.
+const char *tipOf(const Option &option) {
+    if(option.kind==OptionKind::Choice&&option.itemTips.size()==option.values.size())
+        for(size_t i=0;i<option.values.size();++i)if(option.values[i]==*option.flag)return option.itemTips[i];
+    return option.tip?option.tip:"";
+}
 }
 
 void I_Render3DSettingsMenu(void) {
     if(panel.open)return;
     panel.draft=settings;
-    panel.defaults=Settings{};fitGame(panel.defaults);
+    panel.defaults=Settings{};panel.defaults.heroLight=Game_HeroLight();fitGame(panel.defaults);
+    panel.draft.preset=matchPreset(panel.draft);
     panel.groups=optionGroups(panel.draft);
+    dropHidden(panel.groups);
     panel.groupTab.resize(panel.groups.size(),0);
     for(size_t g=0;g<panel.groups.size();++g)panel.groupTab[g]=std::min(panel.groupTab[g],(int)panel.groups[g].tabs.size()-1);
     panel.group=std::min(panel.group,(int)panel.groups.size()-1);
@@ -426,6 +465,7 @@ void I_Render3DSettingsClick(int x,int y,int button) {
         if(!option.isEnabled(panel.draft)) {S_StartSound(NULL,Game_MenuSound(GAME_MENU_DENY));return;}
         double fraction=(double)(x-sliderLeft())/(sliderWidth()-1);
         setSlider(option,option.low+std::clamp(fraction,0.0,1.0)*(option.high-option.low));
+        presetFollows(option);
         S_StartSound(NULL,Game_MenuSound(GAME_MENU_CHANGE));
     } else changeOption(button==1?1:-1);
 }
@@ -436,7 +476,7 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
     smallFont::load();
     fill(0,0,width,height,backdrop);
 
-    // The groups across the top, the current one in gold and underlined, the panel's name at the right.
+    // The groups across the top, the current one in gold and underlined, the cost legend at the right.
     panel.groupSpans.clear();
     int x=leftColumn*cellWidth;
     for(size_t i=0;i<panel.groups.size();++i) {
@@ -448,7 +488,17 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
         panel.groupSpans.push_back({x-cellWidth,x+w+cellWidth});
         x+=w+4*cellWidth;
     }
-    drawTextRight("F4 Settings",rightColumn,groupRow,dim);
+    // What the bars beside the options mean, at the right.
+    {
+        static const char *const names[3]={"little","some","a lot"};
+        int legend=rightColumn*cellWidth;
+        for(int i=0;i<3;++i)legend-=meterWidth+4+textWidth(names[i])+(i?cellWidth:0);
+        legend=drawTextAt("Cost",legend-textWidth("Cost")-cellWidth,groupRow,dim)+cellWidth;
+        for(int i=0;i<3;++i) {
+            drawMeter(legend,groupRow,(Cost)(i+1));
+            legend=drawTextAt(names[i],legend+meterWidth+4,groupRow,dim)+cellWidth;
+        }
+    }
     // The group's tabs below them, the current one on a red bar.
     panel.tabSpans.clear();
     x=leftColumn*cellWidth;
@@ -458,6 +508,11 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
         int w=textWidth(title);
         if(current)fill(x-cellWidth,rowY(tabRow),w+2*cellWidth,cellHeight,tabBar);
         drawTextAt(title,x,tabRow,current?bright:description);
+        // A square in the colour of the tab's dearest option, so the cost can be found.
+        if(Cost cost=tabCost(groupTabs()[i]);cost!=Cost::None) {
+            fill(x+w+1,rowY(tabRow)+5,6,6,outline);
+            fill(x+w+2,rowY(tabRow)+6,4,4,costColor(cost));
+        }
         panel.tabSpans.push_back({x-cellWidth,x+w+cellWidth});
         x+=w+3*cellWidth;
     }
@@ -511,7 +566,11 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
         bool selected=panel.scroll+i==panel.selected,enabled=option.isEnabled(panel.draft);
         if(selected)fill((leftColumn+1)*cellWidth,rowY(row),(rightColumn-leftColumn)*cellWidth,cellHeight,selectionBar);
         unsigned color=!enabled?dim:selected?bright:text;
-        drawText(option.title,leftColumn+2,row,color);
+        int titleEnd=drawTextAt(option.title,(leftColumn+2)*cellWidth,row,color);
+        // Its cost in the margin, and where it costs after the title.
+        OptionCost cost=optionCost(option,panel.draft);
+        if(cost.cost!=Cost::None)drawMeter(leftColumn*cellWidth,row,cost.cost);
+        if(cost.where)drawTextAt(cost.where,titleEnd+cellWidth,row,selected?description:dim);
         if(!isDefault(option))drawChangedMark(row,enabled);
         unsigned valueColor=enabled&&option.kind==OptionKind::Check&&*option.flag?onColor:color;
         drawTextRight(valueText(option),rightColumn,row,valueColor);
@@ -537,7 +596,7 @@ void I_Render3DSettingsDraw(unsigned *pixels) {
         help="Arrows pick   Enter bind   Del clear   Backspace default   R all defaults   Tab page   Esc done";
     } else {
         const Option &option=selectedOption();
-        tip=option.tip?option.tip:"";
+        tip=tipOf(option);
         help="Arrows select, change   Tab page   PgDn group   Backspace reset   R reset all   Esc done";
     }
     std::vector<std::string> lines=wrap(tip,(rightColumn-leftColumn)*cellWidth,descriptionLines);

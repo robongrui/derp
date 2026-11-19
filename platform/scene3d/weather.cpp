@@ -1,6 +1,6 @@
 /* Weather: the sky over the level. At its start this places the sun
    (sun.cpp) and raises the wind (wind.cpp); each tic it steps the wind and
-   whatever falls under the sky (settings.weather), one kind at a time, each
+   whatever falls under the sky (climateNow().weather), one kind at a time, each
    in its own file (rain.cpp, snow.cpp, nukage_rain.cpp, sand.cpp, ash.cpp,
    and fog.cpp, which lies instead) described by a WeatherKind. Whether
    a map rains or snows is authored, not derived: the episode's mood says
@@ -20,7 +20,7 @@ namespace doom3d {
 float fallNow=0,wetNow=0,glassWetNow=0;
 namespace {
 // Every kind by its Weather number; none for WEATHER_NONE.
-const WeatherKind *const weatherKinds[WEATHER_KINDS]={nullptr,&rainWeather,&snowWeather,&nukageWeather,&sandWeather,&ashWeather,&fogWeather,&dryIceWeather};
+const WeatherKind *const weatherKinds[WEATHER_KINDS]={nullptr,&rainWeather,&snowWeather,&nukageWeather,&sandWeather,&ashWeather,&fogWeather,&dryIceWeather,&firestormWeather};
 // Dry: nothing falls, nothing lies, nothing sounds.
 float dryGround(const WeatherGround &) {return 0;}
 const WeatherKind dryWeather={"dry",4.5f,6,8,false,dryGround,nullptr,nullptr};
@@ -32,10 +32,13 @@ Weather falling() {
     if(Game_Phobos()) return WEATHER_NONE;   // no air on Phobos: nothing falls from its sky
     if(!levelSky) return WEATHER_NONE;       // no sky, no outside (the library): no weather
     Weather kind=WEATHER_NONE;
-    if(settings.weather>=2&&settings.weather-1<WEATHER_KINDS) kind=(Weather)(settings.weather-1);
-    else if(settings.weather==1&&DerpInfo_Map.weather>=0&&DerpInfo_Map.weather<WEATHER_KINDS) kind=(Weather)DerpInfo_Map.weather;
-    else if(settings.weather==1) kind=levelMood().snow?WEATHER_SNOW:levelMood().rain?WEATHER_RAIN:WEATHER_NONE;
-    if(settings.weather==1) kind=climateWeather(kind);
+    if(climateNow().weather>=2&&climateNow().weather-1<WEATHER_KINDS) kind=(Weather)(climateNow().weather-1);
+    else if(climateNow().weather==1&&mapInfo().weather>=0&&mapInfo().weather<WEATHER_KINDS) kind=(Weather)mapInfo().weather;
+    // A burning city's own weather is its firestorm (with sky depth, which
+    // builds the city: sky_city.cpp).
+    else if(climateNow().weather==1&&settings.skyLayers&&skyIsCity()) kind=WEATHER_FIRESTORM;
+    else if(climateNow().weather==1) kind=levelMood().snow?WEATHER_SNOW:levelMood().rain?WEATHER_RAIN:WEATHER_NONE;
+    if(climateNow().weather==1) kind=climateWeather(kind);
     // Nukage rain is a rule of the game too: where the game doesn't run it
     // (a demo, a netgame, a game without nukage) it falls as rain.
     if(kind==WEATHER_NUKAGE&&!Game_NukageRain()) kind=WEATHER_RAIN;
@@ -45,8 +48,14 @@ const WeatherKind &weatherKind(Weather kind) {
     return kind>WEATHER_NONE&&kind<WEATHER_KINDS?*weatherKinds[kind]:dryWeather;
 }
 float weatherNow(Weather kind) {return kind!=WEATHER_NONE&&falling()==kind?fallNow:0;}
+// Light rain with the sun out: a shower under broken cloud, no overcast. Not
+// nukage: that sky is sick, not showery.
+bool sunshower() {return climateNow().weather&&falling()==WEATHER_RAIN&&levelMood().rainAmount<=0.3f;}
 // Dry ice lies under a clear sky.
-float overcast() {return settings.weather&&falling()!=WEATHER_NONE&&falling()!=WEATHER_DRY_ICE?std::clamp(levelMood().rainAmount,0.0f,1.0f):0.0f;}
+float overcast() {
+    if(sunshower())return 0.08f;
+    return climateNow().weather&&falling()!=WEATHER_NONE&&falling()!=WEATHER_DRY_ICE?std::clamp(levelMood().rainAmount,0.0f,1.0f):0.0f;
+}
 namespace {
 unsigned weatherLevelSerial=~0u,soakPaneSerial=~0u;
 int weatherTic=-1;
@@ -82,7 +91,7 @@ void weatherNewLevel() {
     soak.clear();soakPaneSerial=~0u;
     const char *what=weatherKind(kind).name;
     if(!kind) fprintf(stderr,"3D weather: dry.\n");
-    else if(settings.weather==1) fprintf(stderr,"3D weather: authored %s.\n",what);
+    else if(climateNow().weather==1) fprintf(stderr,"3D weather: authored %s.\n",what);
     else fprintf(stderr,"3D weather: %s everywhere.\n",what);
 }
 // The player changed the hour or the heat (climate.cpp) during a level: the
@@ -182,6 +191,7 @@ Weather wetKind=WEATHER_NONE;
 std::vector<std::array<float,2>> wetHeights;
 // A re-trace under way (settleWetness): its cells' bounds and the next row.
 struct Retrace { bool active=false;int x0=0,y0=0,x1=-1,y1=-1,row=0; } retrace;
+std::vector<char> retraceRoofless;   // rooflessSectors() as the re-trace began, for all its slices
 bool skyCell(int own) {return own!=noSector&&underSky(own);}
 // Per sector, the open air under a roof (rooms.c: a porch, a hall or
 // garage open sideways onto a yard, a doorless recess): the ground bake
@@ -192,17 +202,12 @@ std::vector<char> rooflessSectors() {
     for(int s=0;s<numsectors;++s)roofless[s]=Rooms_Outside(s)&&!underSky(s);
     return roofless;
 }
-// Per sector, whether it is outside (under the sky or a porch), for the
-// re-traces round a door that came to rest: indoors what lay stays.
-std::vector<char> outsideSectors() {
-    std::vector<char> outside(numsectors);
-    for(int s=0;s<numsectors;++s)outside[s]=Rooms_Outside(s)!=0;
-    return outside;
-}
 // The paths for the cells x0..x1, y0..y1 into wetRaw, on the heading and
 // weather wetHeading and wetKind say; with only, just the cells of the
-// sectors it marks (the rest keep what they had).
-void traceWetness(int x0,int y0,int x1,int y1,const std::vector<char> *only=nullptr) {
+// sectors it marks (the rest keep what they had). In play (settleWetness)
+// with the re-trace's own roofless sectors, on the kept helper threads
+// (playFor): a thread started per slice cost about what the slice did.
+void traceWetness(int x0,int y0,int x1,int y1,const std::vector<char> *only=nullptr,const std::vector<char> *inPlay=nullptr) {
     const float hx=wetHeading[0],hy=wetHeading[1];
     const WeatherKind &weather=weatherKind(wetKind);
     uint32_t seed=weatherSeed()^0x27d4eb2fu;
@@ -221,9 +226,12 @@ void traceWetness(int x0,int y0,int x1,int y1,const std::vector<char> *only=null
         float c=std::cos(yaw),s=std::sin(yaw),length=std::sqrt(1+slant*slant);
         d[0]=-(hx*c-hy*s)/length;d[1]=-(hx*s+hy*c)/length;d[2]=slant/length;
     };
-    const std::vector<char> roofless=rooflessSectors();
+    std::vector<char> found;
+    if(!inPlay)found=rooflessSectors();
+    const std::vector<char> &roofless=inPlay?*inPlay:found;
     ensureWaterIce();   // frozen water lies as ground (water_ice.cpp); built before the workers read it
-    parallelFor(y1-y0+1,[&](int row) {
+    auto rows=[&](int count,const std::function<void(int)> &work) {if(inPlay)playFor(count,work);else parallelFor(count,work);};
+    rows(y1-y0+1,[&](int row) {
         int cy=y0+row;
         for(int cx=x0;cx<=x1;++cx) {
             size_t i=(size_t)cy*mapWidth+cx;
@@ -302,50 +310,66 @@ void traceWetness(int x0,int y0,int x1,int y1,const std::vector<char> *only=null
 // tall hall behind it that they could). wetRaw into wetCells over the cells
 // x0..x1, y0..y1 (nothing comes in from beyond them); with only, through just
 // the cells of the sectors it marks.
-void carryWetness(int x0,int y0,int x1,int y1,const std::vector<char> *only=nullptr) {
-    std::vector<char> whole(numlines,0);
-    for(int n=0;n<windowPaneCount();++n) {PaneView p;if(windowPane(n,p)&&!p.broken&&p.line>=0&&p.line<numlines)whole[p.line]=1;}
+void carryWetness(int x0,int y0,int x1,int y1,const std::vector<char> *only=nullptr,const std::vector<char> *rooflessKept=nullptr) {
+    // Only the cells x0..x1, y0..y1 are carried between, so only the sectors
+    // they lie in are asked whether they join: their lines, not the level's.
+    std::vector<char> present(numsectors,0);
+    std::vector<int> listed;
+    for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx) {
+        int own=seamCells[(size_t)cy*mapWidth+cx].own;
+        if(own!=noSector&&!present[own]) {present[own]=1;listed.push_back(own);}
+    }
+    std::unordered_set<int> whole;
+    for(int n=0;n<windowPaneCount();++n) {PaneView p;if(windowPane(n,p)&&!p.broken&&p.line>=0&&p.line<numlines)whole.insert(p.line);}
     std::unordered_set<uint64_t> joined;
-    for(int n=0;n<numlines;++n) {
-        const line_t &line=lines[n];
-        if(!line.frontsector||!line.backsector||whole[n])continue;
-        const BakeSector &f=bakeMap.sectors[line.frontsector-sectors],&b=bakeMap.sectors[line.backsector-sectors];
-        if(std::min(f.ceiling,b.ceiling)-std::max(f.floor,b.floor)<8)continue;
-        uint64_t p=(uint64_t)(line.frontsector-sectors),q=(uint64_t)(line.backsector-sectors);
+    for(int s:listed)for(int k=0;k<sectors[s].linecount;++k) {
+        const line_t &line=*sectors[s].lines[k];
+        if(!line.frontsector||!line.backsector)continue;
+        int f=int(line.frontsector-sectors),b=int(line.backsector-sectors);
+        if(!present[f]||!present[b]||whole.count(int(&line-lines)))continue;
+        const BakeSector &fs=bakeMap.sectors[f],&bs=bakeMap.sectors[b];
+        if(std::min(fs.ceiling,bs.ceiling)-std::max(fs.floor,bs.floor)<8)continue;
+        uint64_t p=(uint64_t)f,q=(uint64_t)b;
         joined.insert(p<q?p<<32|q:q<<32|p);
     }
-    std::vector<uint8_t> kept(wetRaw.size(),0);
-    const std::vector<char> roofless=rooflessSectors();
+    // kept: per cell of the box only.
+    const int w=x1-x0+1;
+    std::vector<uint8_t> kept((size_t)w*(y1-y0+1),0);
+    auto at=[&](int x,int y){return (size_t)(y-y0)*w+(x-x0);};
+    std::vector<char> found;
+    if(!rooflessKept)found=rooflessSectors();
+    const std::vector<char> &roofless=rooflessKept?*rooflessKept:found;
     auto open=[&](int own){return own!=noSector&&(skyCell(own)||roofless[own]);};
-    for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx) {size_t i=(size_t)cy*mapWidth+cx;if(open(seamCells[i].own))kept[i]=wetRaw[i];}
+    for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx) {size_t i=(size_t)cy*mapWidth+cx;if(open(seamCells[i].own))kept[at(cx,cy)]=wetRaw[i];}
     // What blows along the ground (sand: a finite lift) climbs no step taller
     // than a quarter of how high it blows: it piles at the foot instead.
     const float climb=weatherKind(wetKind).lift*windCarry()/4;
-    auto from=[&](size_t i,int x,int y) {
+    auto from=[&](size_t i,int cx,int cy,int x,int y) {
         if(x<x0||y<y0||x>x1||y>y1)return;
         size_t n=(size_t)y*mapWidth+x;
         int a=seamCells[i].own,b=seamCells[n].own;
-        if(b==noSector||!kept[n])return;
+        if(b==noSector||!kept[at(x,y)])return;
         if(a!=b) {uint64_t p=(uint64_t)a,q=(uint64_t)b;if(!joined.count(p<q?p<<32|q:q<<32|p))return;}
         if(a!=b&&bakeMap.sectors[a].floor-bakeMap.sectors[b].floor>climb)return;
-        kept[i]=std::max(kept[i],std::min(wetRaw[i],kept[n]));
+        uint8_t &here=kept[at(cx,cy)];
+        here=std::max(here,std::min(wetRaw[i],kept[at(x,y)]));
     };
     for(int pass=0;pass<3;++pass) {
         for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx) {
             size_t i=(size_t)cy*mapWidth+cx;int own=seamCells[i].own;
             if(own==noSector||open(own)||!wetRaw[i]||(only&&!(*only)[own]))continue;
-            from(i,cx-1,cy);from(i,cx,cy-1);from(i,cx-1,cy-1);from(i,cx+1,cy-1);
+            from(i,cx,cy,cx-1,cy);from(i,cx,cy,cx,cy-1);from(i,cx,cy,cx-1,cy-1);from(i,cx,cy,cx+1,cy-1);
         }
         for(int cy=y1;cy>=y0;--cy)for(int cx=x1;cx>=x0;--cx) {
             size_t i=(size_t)cy*mapWidth+cx;int own=seamCells[i].own;
             if(own==noSector||open(own)||!wetRaw[i]||(only&&!(*only)[own]))continue;
-            from(i,cx+1,cy);from(i,cx,cy+1);from(i,cx+1,cy+1);from(i,cx-1,cy+1);
+            from(i,cx,cy,cx+1,cy);from(i,cx,cy,cx,cy+1);from(i,cx,cy,cx+1,cy+1);from(i,cx,cy,cx-1,cy+1);
         }
     }
     for(int cy=y0;cy<=y1;++cy)for(int cx=x0;cx<=x1;++cx) {
         size_t i=(size_t)cy*mapWidth+cx;int own=seamCells[i].own;
         if(only&&(own==noSector||!(*only)[own]))continue;
-        wetCells[i]=own!=noSector?kept[i]:wetRaw[i];
+        wetCells[i]=own!=noSector?kept[at(cx,cy)]:wetRaw[i];
     }
 }
 }
@@ -377,6 +401,12 @@ void keepWetHeights() {
 // Round a door or lift that moved and came to rest it is traced again
 // (settleWetness).
 void bakeWetness() {
+    // The window panes the paths stop at are found on the level's first tic
+    // (watchGlass, windows.cpp), after the loading screen's bakes: the ground
+    // was baked again in play once they were known, the whole map in one
+    // frame. Once the level has begun they are found here first instead, so
+    // it is baked once, under the loading screen.
+    if(settings.windowGlass&&gamestate==GS_LEVEL&&windowPaneSerial()!=r_levelserial)watchGlass();
     Rooms_Build();
     if(flatLightCells.size()<(size_t)mapWidth*mapHeight*4||seamCells.size()<(size_t)mapWidth*mapHeight||bakeMap.sectors.size()!=(size_t)numsectors)return;
     float hx,hy;windHeading(hx,hy);
@@ -440,11 +470,22 @@ bool settleWetness(int changed[4]) {
     const float fall=windSlant(weatherKind(wetKind).slant);
     auto cellX=[&](float x){return std::clamp((int)std::floor((x-mapOrigin[0])/mapCell),0,mapWidth-1);};
     auto cellY=[&](float y){return std::clamp((int)std::floor((y-mapOrigin[1])/mapCell),0,mapHeight-1);};
-    std::vector<char> outside=outsideSectors();
+    // Per sector, whether it is outside (under the sky or a porch), for the
+    // re-traces round a door that came to rest: indoors what lay stays. Read
+    // only on a tic that needs it (most need none), into a buffer kept from
+    // tic to tic.
+    static std::vector<char> outside;
+    bool outsideRead=false;
+    auto readOutside=[&] {
+        if(outsideRead)return;
+        outsideRead=true;outside.resize(numsectors);
+        for(int s=0;s<numsectors;++s)outside[s]=Rooms_Outside(s)!=0;
+    };
     for(int s=0;s<numsectors;++s) {
         const BakeSector &b=bakeMap.sectors[s];
         if(b.floor==wetHeights[s][0]&&b.ceiling==wetHeights[s][1])continue;
         if(b.floor!=units(sectors[s].floorheight)||b.ceiling!=units(sectors[s].ceilingheight)||leveltime-movedTic[s]<4)continue;   // still moving
+        readOutside();
         float bx0=1e9f,by0=1e9f,bx1=-1e9f,by1=-1e9f,low=std::min(b.floor,wetHeights[s][0]),high=std::max(b.ceiling,wetHeights[s][1]);
         bool touches=outside[s];
         for(int index:b.lines) {
@@ -466,30 +507,38 @@ bool settleWetness(int changed[4]) {
     if(x1>=0) {
         if(retrace.active) {x0=std::min(x0,retrace.x0);y0=std::min(y0,retrace.y0);x1=std::max(x1,retrace.x1);y1=std::max(y1,retrace.y1);}
         retrace={true,x0,y0,x1,y1,y0};
+        retraceRoofless=rooflessSectors();
         // Under the roofs round it too (open_air.cpp), on a tic of its own.
         bakeOpenAir(wetKind,wetHeading[0],wetHeading[1],x0,y0,x1,y1);
         return false;
     }
     if(!retrace.active)return false;
+    readOutside();
     const Retrace &r=retrace;
+    if(retraceRoofless.size()!=(size_t)numsectors)retraceRoofless=rooflessSectors();
     static const bool debug=getenv("ROOMSDEBUG")!=nullptr;   // ROOMSDEBUG=1 times it
     uint64_t start=SDL_GetTicksNS();
     if(r.row<=r.y1) {
+        // Slices of 8 rows over the kept helpers (playFor), about as much
+        // as each of them did of the 32-row slices over all cores.
         while(retrace.row<=r.y1&&SDL_GetTicksNS()-start<2000000) {
-            int to=std::min(r.y1,r.row+31);
-            traceWetness(r.x0,r.row,r.x1,to,&outside);
+            int to=std::min(r.y1,r.row+7);
+            traceWetness(r.x0,r.row,r.x1,to,&outside,&retraceRoofless);
             retrace.row=to+1;
         }
         if(debug)fprintf(stderr,"SETTLE tic %d: traced to row %d of %d..%d in %.2f ms\n",leveltime,r.row,r.y0,r.y1,(SDL_GetTicksNS()-start)/1e6);
         return false;
     }
     retrace.active=false;
-    std::vector<uint8_t> before(wetCells);
-    carryWetness(r.x0,r.y0,r.x1,r.y1,&outside);
+    // The box's cells as they lay, to find what the carry changed.
+    const int w=r.x1-r.x0+1;
+    std::vector<uint8_t> before((size_t)w*(r.y1-r.y0+1));
+    for(int cy=r.y0;cy<=r.y1;++cy)std::memcpy(&before[(size_t)(cy-r.y0)*w],&wetCells[(size_t)cy*mapWidth+r.x0],w);
+    carryWetness(r.x0,r.y0,r.x1,r.y1,&outside,&retraceRoofless);
     changed[0]=changed[1]=INT_MAX;changed[2]=changed[3]=-1;
     for(int cy=r.y0;cy<=r.y1;++cy)for(int cx=r.x0;cx<=r.x1;++cx) {
         size_t i=(size_t)cy*mapWidth+cx;
-        if(wetCells[i]==before[i])continue;
+        if(wetCells[i]==before[(size_t)(cy-r.y0)*w+(cx-r.x0)])continue;
         flatCell(floorLight,i)[3]=dentedAlpha(i,wetCells[i]);   // dents outlive the re-bake (ground_dents.cpp)
         changed[0]=std::min(changed[0],cx);changed[1]=std::min(changed[1],cy);
         changed[2]=std::max(changed[2],cx);changed[3]=std::max(changed[3],cy);
@@ -555,11 +604,23 @@ void watchWeather() {
 
 namespace {
 // Per sector, the highest sky ceiling of the open sky it lies under (the
-// sky sectors joined to it by two-sided lines), taken each frame.
+// sky sectors joined to it by two-sided lines), taken each frame. Joined
+// again only when a sector's heights as drawn or its sky changed (a level's
+// lines stay put): the walk over every line ran each frame it fell.
 std::vector<float> openSkyTop;
+std::vector<std::array<float,3>> openSkyFrom;   // per sector: floor, ceiling, under the sky (1)
+unsigned openSkyLevel=~0u;
 void findOpenSkyTops() {
+    bool same=openSkyLevel==r_levelserial&&openSkyFrom.size()==(size_t)numsectors&&openSkyTop.size()==(size_t)numsectors;
+    openSkyFrom.resize(numsectors);
+    for(int i=0;i<numsectors;++i) {
+        std::array<float,3> now={floorZ(&sectors[i]),ceilZ(&sectors[i]),underSky(i)?1.0f:0.0f};
+        if(now!=openSkyFrom[i]) {openSkyFrom[i]=now;same=false;}
+    }
+    if(same)return;
+    openSkyLevel=r_levelserial;
     auto open=[](const sector_t *s){return underSky(int(s-sectors))&&ceilZ(s)>floorZ(s);};
-    std::vector<int> group(numsectors);
+    static std::vector<int> group;group.resize(numsectors);
     openSkyTop.assign(numsectors,0);
     for(int i=0;i<numsectors;++i) {group[i]=i;openSkyTop[i]=ceilZ(&sectors[i]);}
     auto root=[&](int i){while(group[i]!=i)i=group[i]=group[group[i]];return i;};
@@ -585,8 +646,11 @@ float skyFallTop(const sector_t &sector,float above) {
 }
 
 void buildWeather(const Uniforms &camera) {
-    if(fallNow<=0.01f||camera.effects[2]!=0||seamCells.empty()||levelSerial!=r_levelserial||!settings.weather) return;
+    lampSheetVertices.clear();
+    if(fallNow<=0.01f||camera.effects[2]!=0||seamCells.empty()||levelSerial!=r_levelserial||!climateNow().weather) return;
     findOpenSkyTops();
+    gatherWeatherLamps(camera);   // the lamps near the eye, once a tic (weather_lamps.cpp)
+    buildLampSheets(camera);      // and the rain's cards round the nearest (lamp_sheets.cpp)
     if(const auto build=weatherKind(falling()).build) build(camera);
     buildDrafts(camera);   // and what the drafts carry in through the buildings
     buildBlownIn(camera);  // and what the wind presses in at the doorways
@@ -600,7 +664,9 @@ void buildWeather(const Uniforms &camera) {
 // nearer the ground: a glowing pool or a lamp's pool of light below takes
 // the rain falling into it over to its own color, by its share of the
 // light there, and brightens it a little in that color. One lookup a drop.
-std::array<float,3> weatherColor(const sector_t &sector,float x,float y,float z,const std::array<float,3> &albedo) {
+// Then the lamps round it in the air (weather_lamps.cpp), by how it catches them.
+std::array<float,3> weatherColor(const sector_t &sector,float x,float y,float z,const std::array<float,3> &albedo,bool inBeam,
+                                 LampCatch lamps,bool daylit,std::array<float,3> *unlit,float *caught) {
     float light=lighting(&sector),glow[3]={0,0,0};
     if(bakedLightsActive&&!flatLightCells.empty()) {
         int cx=std::clamp((int)std::floor((x-mapOrigin[0])/mapCell),0,mapWidth-1);
@@ -611,12 +677,16 @@ std::array<float,3> weatherColor(const sector_t &sector,float x,float y,float z,
     }
     float peak=std::max({glow[0],glow[1],glow[2]}),share=peak>0.01f?std::min(1.0f,peak/(peak+light*0.5f)):0;
     // In the flashlight's beam it lights up in the lamp's colour (beam_air.cpp).
-    std::array<float,3> lamp;
-    float beam=beamAt(x,y,z,&lamp);
+    std::array<float,3> lamp{};
+    float beam=inBeam?beamAt(x,y,z,&lamp):0;
     std::array<float,3> color;
+    float nearby[3]={0,0,0};
+    weatherLampLight(sector,x,y,z,lamps,albedo,daylit,nearby,caught);
     for(int c=0;c<3;++c) {
         float tint=peak>0.01f?glow[c]/peak:1;
-        color[c]=std::min(1.0f,albedo[c]*(light*1.15f*(1+(tint-1)*share)+beam*lamp[c]*0.6f)+glow[c]*0.15f+0.04f);
+        color[c]=albedo[c]*(light*1.15f*(1+(tint-1)*share)+beam*lamp[c]*0.6f)+glow[c]*0.15f+0.04f;
+        if(unlit)(*unlit)[c]=std::min(1.0f,color[c]);
+        color[c]=std::min(1.0f,color[c]+nearby[c]);
     }
     return color;
 }
@@ -657,7 +727,7 @@ const sector_t *weatherSectorAt(float x,float y) {
 
 void weatherShutdown() {
     openAirShutdown();
-    fallNow=wetNow=glassWetNow=0;soak.clear();weatherLevelSerial=~0u;soakPaneSerial=~0u;
+    fallNow=wetNow=glassWetNow=0;soak.clear();weatherLevelSerial=~0u;soakPaneSerial=~0u;openSkyLevel=~0u;
     for(int k=WEATHER_NONE+1;k<WEATHER_KINDS;++k)weatherKinds[k]->ambience(0);
 }
 } // namespace doom3d

@@ -12,9 +12,9 @@
 // sheet shows on the screen follows from the camera (the ray's change per
 // Doom pixel across and down), so looking up, where the cylinder's cells
 // shrink and skew, they keep their shape and fewer cells hold one (share).
-// Each kind in its own file (sky/rain.glsl, snow, sand, ash). Part of
-// sky.frag.
-struct Sheet { float pixel,tic,slant,share; vec2 g; mat2 toSheet,toScreen; };
+// Each kind in its own file (sky/rain.glsl, snow, sand, ash); the cells
+// they are made of in sky/sheet_cells.glsl, which the lamps' cards share.
+// Part of sky.frag.
 Sheet weatherSheet(vec3 ray,float angle,float rise,float lean) {
     Sheet s;
     s.pixel=100.0*c.projection.y; // Doom pixels per radian, as pixelBlock counts them
@@ -70,33 +70,6 @@ Sheet sheetDrift(Sheet s,float angle,float speed,float far,float carried,int pha
     d.toScreen=inverse(d.toSheet);
     d.share=spread>1e-8?min(1.0,1.0/spread):0.0;
     return d;
-}
-// A cell's seed, 0-1. An integer hash: sin() of the big numbers the falling
-// rows reach loses its precision on the GPU, and neighboring cells then put
-// their drops side by side in dashes.
-float sheetSeed(vec2 cell,int layer) {
-    uvec2 q=uvec2(ivec2(cell)+ivec2(layer*7919,layer*131));
-    uint h=q.x*0x8da6b343u^q.y*0xd8163841u;
-    h^=h>>16;h*=0x7feb352du;h^=h>>15;h*=0x846ca68bu;h^=h>>16;
-    return float(h&0xffffffu)/16777216.0;
-}
-// Whether the ray's point p (sheet pixels) lies on a Doom pixel square at.
-bool sheetPixel(Sheet s,vec2 p,vec2 at) {
-    vec2 off=s.toScreen*(p-at);
-    return max(abs(off.x),abs(off.y))<0.5;
-}
-// Whether p lies on a streak whose head is at head, trailing back along its
-// way by trail (sheet pixels): one Doom pixel thick across its run on the
-// screen, at least one long, steep (rain) or flat (blown sand) alike.
-bool sheetStreak(Sheet s,vec2 p,vec2 head,vec2 trail) {
-    vec2 run=s.toScreen*trail,mid=s.toScreen*(p-head)-run*0.5;
-    if(abs(run.y)>=abs(run.x)) {
-        float tall=max(1.0,floor(abs(run.y)+0.5));
-        float side=mid.x-(abs(run.y)>1e-3?run.x*mid.y/run.y:0.0);
-        return abs(mid.y)<tall*0.5&&abs(side)<0.5;
-    }
-    float wide=max(1.0,floor(abs(run.x)+0.5));
-    return abs(mid.x)<wide*0.5&&abs(mid.y-run.y*mid.x/run.x)<0.5;
 }
 // Fading out toward the zenith, where the cylinder's cells crowd.
 float sheetFade(float rise) {return 1.0-smoothstep(0.9,1.8,rise);}

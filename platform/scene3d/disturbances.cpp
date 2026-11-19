@@ -37,6 +37,9 @@ int nextBig=0,nextSmall=0,alive=0;
 unsigned level=~0u;
 constexpr float lifetime=16;   // seconds: the longest any effect of one lasts (the bank filling back)
 std::vector<HotSpot> hot;      // the hot things near the eye, as last looked at
+// Changes whenever the records or the hot things may have (what reads the
+// shove keeps what it worked out while this holds: rain.cpp).
+unsigned changes=0;
 
 float now() {return gameSeconds();}
 template<class F> void each(F f) {
@@ -73,16 +76,18 @@ float refillSeconds() {return falling()==WEATHER_DRY_ICE?6.0f:10.0f;}
 void resetRecords() {
     for(Disturbance &d:bigOnes)d.alive=false;
     for(Disturbance &d:smallOnes)d.alive=false;
-    alive=0;nextBig=nextSmall=0;hot.clear();level=r_levelserial;
+    alive=0;nextBig=nextSmall=0;hot.clear();level=r_levelserial;++changes;
 }
 }
+unsigned disturbanceSerial() {return changes;}
 
 void disturb(float x,float y,float z,float radius,float strength,float heat,bool big,float ground) {
-    if(gamestate!=GS_LEVEL||!settings.weather||falling()==WEATHER_NONE)return;
+    if(gamestate!=GS_LEVEL||!climateNow().weather||falling()==WEATHER_NONE)return;
     if(level!=r_levelserial)resetRecords();
     Disturbance &d=big?bigOnes[nextBig]:smallOnes[nextSmall];
     if(big)nextBig=(nextBig+1)%(int)bigOnes.size();else nextSmall=(nextSmall+1)%(int)smallOnes.size();
     if(!d.alive)++alive;
+    ++changes;
     const sector_t *at=weatherSectorAt(x,y);
     int s=at?int(at-sectors):-1;
     d={x,y,z,radius,strength,heat,ground,now(),lyingAt(x,y,s),s,hash32((uint32_t)leveltime*2654435761u^(uint32_t)(x*7+y*13)),true};
@@ -100,10 +105,10 @@ void disturb(float x,float y,float z,float radius,float strength,float heat,bool
 
 // Each tic: old records die.
 void watchDisturbances() {
-    if(gamestate!=GS_LEVEL||!settings.weather||!levelSky)return;
+    if(gamestate!=GS_LEVEL||!climateNow().weather||!levelSky)return;
     if(level!=r_levelserial)resetRecords();
     float t=now();
-    each([&](Disturbance &d){if(t-d.born>lifetime||t<d.born) {d.alive=false;--alive;}});
+    each([&](Disturbance &d){if(t-d.born>lifetime||t<d.born) {d.alive=false;--alive;++changes;}});
 #ifdef DOOM_DEVTOOLS
     // Test runs: DISTURBAT=x,y,tic sets off a rocket's blast there on that tic.
     static float testAt[3]={NAN,NAN,-1};
@@ -119,7 +124,7 @@ void watchDisturbances() {
 // the push and the clearings; indoors what melts melts and dry ice warms
 // away from the film round each, as hot as it is.
 void disturbanceHeat(const std::vector<HotSpot> &spots,float dt) {
-    hot=spots;
+    hot=spots;++changes;
     Weather kind=falling();
     if(kind!=WEATHER_SNOW&&kind!=WEATHER_DRY_ICE)return;
     for(const HotSpot &h:hot) {

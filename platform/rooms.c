@@ -119,6 +119,7 @@ static void find_frames(void)
         const sector_t *frame = &sectors[s];
         if (excluded[s] || sky(frame) || ceiling_of(frame) - floor_of(frame) < 24) continue;
         int window = 1, count = 0;
+        float along[2] = {0, 0}, longest = 0;   /* the longest opening's direction */
         for (int n = 0; n < frame->linecount && window; ++n)
         {
             const line_t *line = frame->lines[n];
@@ -130,11 +131,28 @@ static void find_frames(void)
             int walkable = floor_of(frame) - floor_of(other) <= 24 && top - bottom >= 56 && !(line->flags & ML_BLOCKING);
             int lintel = ceiling_of(frame) < ceiling_of(other) || sky(other);
             if (walkable || !lintel || floor_of(frame) <= floor_of(other)) { window = 0; break; }
+            if (line_length(line) > longest) { longest = line_length(line); along[0] = units(line->dx) / longest; along[1] = units(line->dy) / longest; }
             int o = index_of(other), seen = 0;
             for (int k = 0; k < count; ++k) seen |= sides[k] == o;
             if (!seen) sides[count++] = o;
         }
         if (!window || count < 2) continue;
+        /* A window opens through its two faces, with solid jambs at its ends.
+           A frame also open across one of its ends (more than 60 degrees off
+           its longest opening) is a piece of something else: the arms of
+           E2M1's red cross beside the passage through it (sectors 18 and 19),
+           E2M7's cross and E3M5's red symbols. E1M2's stair windows (23, 74)
+           open onto several steps, but all along one face, and stay. */
+        for (int n = 0; n < frame->linecount && window; ++n)
+        {
+            const line_t *line = frame->lines[n];
+            if (!line->frontsector || !line->backsector) continue;
+            const sector_t *other = line->frontsector == frame ? line->backsector : line->frontsector;
+            if (other == frame || fminf(ceiling_of(frame), ceiling_of(other)) - fmaxf(floor_of(frame), floor_of(other)) < 16) continue;
+            float length = line_length(line);
+            if (length > 0 && fabsf(units(line->dx) * along[0] + units(line->dy) * along[1]) < 0.5f * length) window = 0;
+        }
+        if (!window) continue;
         float box[4]; sector_box(frame, box);
         float w = box[2] - box[0], h = box[3] - box[1], thin = fminf(w, h), wide = fmaxf(w, h);
         if (thin > 96 || wide < 32) continue;

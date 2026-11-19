@@ -34,6 +34,11 @@ rcsid[] = "$Id: p_user.c,v 1.3 1997/01/28 22:08:29 b1 Exp $";
 
 #include "p_local.h"
 #include "p_phobos.h"
+#include "p_moves.h"
+#include "p_focus.h"
+#include "p_kick.h"
+#include "p_senses.h"
+#include "p_derp.h"
 #include "p_library.h"
 
 #include "doomstat.h"
@@ -237,6 +242,10 @@ void P_CalcHeight (player_t* player)
 	+ FixedMul (player->mo->momy,player->mo->momy);
     
     player->bob >>= 2;
+    player->bob = P_DerpBob (player->bob);
+    // Sliding, nothing steps (p_moves.c).
+    if (P_Sliding (player))
+	player->bob = 0;
 
     if (player->bob>MAXBOB)
 	player->bob = MAXBOB;
@@ -350,6 +359,11 @@ void P_MovePlayer (player_t* player)
 	forward = (int)(forward*keep);
 	side = (int)(side*keep);
     }
+    // DERP's game: Quake's pace, not Doomguy's.
+    forward = P_DerpPace (forward);
+    side = P_DerpPace (side);
+    // Authored: crouched, sliding, or off the floor in a hop (p_moves.c).
+    P_MovesLegs (player, onground, &forward, &side);
 
     if (forward && onground)
 	P_Thrust (player, player->mo->angle, forward);
@@ -436,6 +450,9 @@ void P_PlayerThink (player_t* player)
 {
     ticcmd_t*		cmd;
     weapontype_t	newweapon;
+
+    // Running, he is heard close by (DERP's monsters).
+    P_DerpFootsteps (player);
 	
     if (P_DebugAllowed ())
     {
@@ -495,6 +512,18 @@ void P_PlayerThink (player_t* player)
 	P_MovePlayer (player);
     
     P_CalcHeight (player);
+    // Authored: crouched or sliding, his eye comes down with him; and his kicks.
+    {
+	fixed_t	duck = P_MovesDuck (player);
+
+	if (duck)
+	{
+	    player->viewz -= duck;
+	    if (player->viewz < player->mo->z + 8*FRACUNIT)
+		player->viewz = player->mo->z + 8*FRACUNIT;
+	}
+    }
+    P_KickThink (player);
     P_BootsEye (player);
 
     if (player->mo->subsector->sector->special
@@ -557,8 +586,9 @@ void P_PlayerThink (player_t* player)
     else
 	player->usedown = false;
     
-    // cycle psprites
-    P_MovePsprites (player);
+    // cycle psprites (DERP, Authored: in slow motion on the gun's own clock)
+    P_FocusPsprites (player);
+    P_FocusTic (player);
     
     // Counters, time dependend power ups.
 

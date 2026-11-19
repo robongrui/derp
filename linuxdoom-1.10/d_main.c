@@ -79,6 +79,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include "d_main.h"
 #include "d_deh.h"
+#include "../platform/audio/sound_options.h"
 
 //
 // D-DoomLoop()
@@ -100,6 +101,7 @@ boolean         nomonsters;	// checkparm of -nomonsters
 boolean         debugfly;
 boolean         debugnoclip;
 boolean         debuggod;
+boolean         debugnodeath;	// hurt as usual, never below 1 health
 boolean         debugnomonsters;
 boolean         debugnotarget;
 boolean         respawnparm;	// checkparm of -respawn
@@ -196,6 +198,9 @@ void D_ProcessEvents (void)
 
 // wipegamestate can be set to -1 to force a wipe on the next draw
 gamestate_t     wipegamestate = GS_DEMOSCREEN;
+// DERP: the screen melting from one picture to the next (the renderer keeps
+// the status bar in its classic place meanwhile: scene3d/status_bar.cpp).
+boolean         d_wiping;
 extern  boolean setsizeneeded;
 extern  int             showMessages;
 void R_ExecuteSetViewSize (void);
@@ -337,6 +342,7 @@ void D_Display (void)
     wipe_EndScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);
 
     wipestart = I_GetTime () - 1;
+    d_wiping = true;
 
     do
     {
@@ -352,6 +358,7 @@ void D_Display (void)
 	M_Drawer ();                            // menu is drawn even on top of wipes
 	I_FinishUpdate ();                      // page flip or blit buffer
     } while (!done);
+    d_wiping = false;
 }
 
 
@@ -399,7 +406,9 @@ void D_DoomLoop (void)
 	    TryRunTics (); // will run at least one tic
 	}
 		
+	uint64_t soundStart = I_BeginAudioTiming ();
 	S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
+	I_EndAudioTiming (soundStart);
 
 	// Update display, next frame, with current state.
 	D_Display ();
@@ -532,6 +541,37 @@ char            title[128];
 //
 // D_AddFile
 //
+// The spoken lines (derp-voices.wad, a separate download): beside the game, else beside the
+// game WAD (-iwad), as the soundtrack packs are found (music_pack.c). On the Mac "beside the
+// game" is inside the app, where a player can't easily put a download.
+static const char* VoicePack (void)
+{
+    static char	path[4096];
+    const char*	program = I_ProgramFile ("derp-voices.wad");
+    int		p = M_CheckParm ("-iwad");
+    char*	cut = NULL;
+    char*	c;
+    FILE*	file;
+
+    if (program)
+	return program;
+    if (!p || p + 1 >= myargc)
+	return NULL;
+    snprintf (path, sizeof path, "%s", myargv[p + 1]);
+    for (c = path; *c; c++)
+	if (*c == '/' || *c == '\\')
+	    cut = c;
+    if (cut)
+	snprintf (cut + 1, sizeof path - (size_t)(cut + 1 - path), "derp-voices.wad");
+    else
+	snprintf (path, sizeof path, "derp-voices.wad");
+    file = fopen (path, "rb");
+    if (!file)
+	return NULL;
+    fclose (file);
+    return path;
+}
+
 void D_AddFile (char *file)
 {
     int     numwadfiles;
@@ -997,6 +1037,13 @@ void D_DoomMain (void)
     // DOOM II and its like (the menu also leaves Freedoom out, m_menu.c).
     if (gamemode == commercial && I_ProgramFile ("library.wad"))
 	D_AddFile ((char *)I_ProgramFile ("library.wad"));
+    // The cries without words (p_barks.h: the imps, the soldiers' pain, idle, gibbed and
+    // death sounds), shipped with the game; and the spoken lines, a separate download.
+    // Both beside the game.
+    if (I_ProgramFile ("derp-cries.wad"))
+	D_AddFile ((char *)I_ProgramFile ("derp-cries.wad"));
+    if (VoicePack ())
+	D_AddFile ((char *)VoicePack ());
 
     p = M_CheckParm ("-file");
     if (p)

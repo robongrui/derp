@@ -1,7 +1,6 @@
 /* Footsteps and splashes: the listener's own on every floor, by what the
- * floor is made of, and monsters' where they wade through liquids. Only the
- * player is heard walking on dry floors, so hearing tells no more about
- * where monsters are than it did. */
+ * floor is made of, monsters' where they wade through liquids, and under
+ * DERP's rules its soldiers' boots on any floor. */
 #ifndef DOOM_AUDIO_STEPS_H
 #define DOOM_AUDIO_STEPS_H
 

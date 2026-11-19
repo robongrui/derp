@@ -13,59 +13,69 @@ static unsigned flashlightLevelSerial;
 struct Bounce {std::array<float,3> position,color;float normal[2],strength;};
 static Bounce bounce={},targetBounce={};
 
-// Eye adaptation: what the eye has settled to follows the light around and
-// ahead of the player, quickly toward brighter light and slowly toward
-// darker. Exposure is the square root of target over settled light, in
-// sixteenths like Doom's light levels, updated once per tic. Each sector's
-// light is held at its recent peak so flickering and strobing sectors don't
-// pump the exposure.
-static float adaptedLight=-1,exposure=1;static int adaptTic=-1;static unsigned adaptLevelSerial;
-static std::vector<std::pair<float,int>> steadyLights;
-static float steadyLight(const sector_t *sector) {
-    auto &held=steadyLights[sector-sectors];
-    float now=lighting(sector),value=held.second<0?now:std::max(now,held.first-(leveltime-held.second)*0.01f);
-    held={value,leveltime};
-    return value;
-}
-static float viewLight(const Uniforms &camera) {
-    auto lightAt=[&](float x,float y,const sector_t *sector) {return sunLightAt(x,y,sector,seamLightAt(x,y,sector,steadyLight(sector)));};
-    float own=lightAt(camera.eye[0],camera.eye[1],players[displayplayer].mo->subsector->sector);
-    float fx=camera.forward[0],fy=camera.forward[1],flat=std::hypot(fx,fy);
-    if(flat<0.2f)return own;
-    fx/=flat;fy/=flat;
-    WallHit hit;
-    float reach=firstSolidWall(camera.eye[0],camera.eye[1],camera.eye[2],fx,fy,camera.forward[2]/flat,512,hit)?hit.t:512;
-    float sum=0;int count=0;
-    for(float d:{64.0f,160.0f,320.0f}) {
-        float t=std::min(d,reach-8);if(t<8)break;
-        float px=camera.eye[0]+fx*t,py=camera.eye[1]+fy*t;
-        sum+=lightAt(px,py,R_PointInSubsector((fixed_t)(px*FRACUNIT),(fixed_t)(py*FRACUNIT))->sector);++count;
-    }
-    return count?own*0.4f+sum/count*0.6f:own;
-}
+// Eye adaptation (F4, off unless the player asks for it): the picture's
+// exposure follows the light around and ahead of the player, as an eye or a
+// camera does. In a dim room it opens up, so the daylight a window lets in
+// lights the room and the window itself burns out; out in the sun it closes
+// down, and a doorway seen from the yard is dark. Steady, not a passing
+// flash: it holds for as long as the light does, and it moves smoothly, by
+// the clock and not by the tic, quickly toward the brighter and slowly toward
+// the darker, as eyes do. The light is read off the picture itself, as a
+// camera meters (gpu3d/frame.cpp's thumbnail of the 3D view): by the light
+// in the level alone a lamp-lit room measured nearly as bright as a yard,
+// when Doom's dark textures make it look a quarter of that. The easing rides
+// out a muzzle flash; the status bar is not in the view.
+// With whole-level lighting daylight is then drawn at twice the level's
+// light (daylightScale: the sky's light in the bounce bake, the sun, the sky
+// itself), and plain, in proportion to the sky a place sees: out there the
+// picture closes down to about what it is with the switch off, and from a
+// room the yard through the door burns out, over the tone curve's shoulder
+// (common.glsl's toneCurve). The eye does what a baked curve had to fake.
+static float adaptedLight=-1,adaptedBright=-1,exposure=1;static uint64_t adaptTime=0;static unsigned adaptLevelSerial;
+// The light the picture is exposed for, as the frame's meter reads it (gpuFrameLight: the
+// geometric mean of the picture's luminance), and how far the exposure follows it: seven
+// tenths of the way in stops, since an eye adapts but does not make every place equally
+// bright. E1M1's lamp-lit start room reads 0.084 and opens to about 1.5; E1M6's court at noon,
+// drawn at twice the level's light, closes to about 0.55.
+constexpr float exposureLight=0.15f,exposureFollows=0.7f;
+constexpr float exposureLeast=0.4f,exposureMost=1.7f;   // the dark stays dark: no more than this is made up for
+constexpr float exposureBright=0.8f;   // and the bright end of the picture is held to this (updateExposure)
+float daylightScale() {return settings.eyeAdaptation&&settings.lightModel==1&&settings.skyLight&&settings.bounce?2.0f:1.0f;}
 void updateExposure(Uniforms &camera) {
     if(!settings.eyeAdaptation||camera.effects[2]!=0||!players[displayplayer].mo) {adaptedLight=-1;exposure=1;return;}
-    if(adaptLevelSerial!=r_levelserial||steadyLights.size()!=(size_t)numsectors) {
-        adaptedLight=-1;adaptLevelSerial=r_levelserial;steadyLights.assign(numsectors,{0.0f,-1});
+    uint64_t now=SDL_GetTicksNS();
+    if(adaptLevelSerial!=r_levelserial) {adaptedLight=adaptedBright=-1;exposure=1;adaptLevelSerial=r_levelserial;}
+    // The picture was drawn at the exposure of its frame; what it shows of the scene is that taken out again.
+    float frame=gpuFrameLight();
+    if(frame<0) {camera.fx[0]=exposure;return;}
+    float light=std::max(frame/std::max(exposure,0.1f),0.005f);
+    // The bright end of the scene, as the picture's is with its exposure and the tone curve taken out again.
+    float shown=std::clamp(gpuFrameBright(),0.0f,0.995f);
+    if(daylightScale()>1&&shown>0.7f)shown=0.7f-0.3f*std::log(1-(shown-0.7f)/0.3f);
+    float bright=std::max(shown/std::max(exposure,0.1f),0.02f);
+    if(adaptedLight<0) {adaptedLight=light;adaptedBright=bright;}
+    else {
+        float dt=std::min((now-adaptTime)/1e9f,0.25f),tau=light>adaptedLight?0.35f:1.5f;
+        adaptedLight+=(light-adaptedLight)*(1-std::exp(-dt/tau));
+        adaptedBright+=(bright-adaptedBright)*(1-std::exp(-dt/(bright>adaptedBright?0.35f:1.5f)));
     }
-    if(leveltime!=adaptTic) {
-        float target=viewLight(camera);
-        if(adaptedLight<0)adaptedLight=target;
-        else {
-            float dt=std::clamp((leveltime-adaptTic)/(float)TICRATE,0.0f,0.5f),tau=target>adaptedLight?0.5f:1.6f;
-            adaptedLight+=(target-adaptedLight)*(1-std::exp(-dt/tau));
-        }
-        adaptTic=leveltime;
-        float ratio=std::sqrt(target/std::max(adaptedLight,0.05f));
-        exposure=1+std::round((std::clamp(ratio,0.6f,1.5f)-1)*16)/16;
-    }
+    adaptTime=now;
+    exposure=std::clamp(std::pow(exposureLight/adaptedLight,exposureFollows),exposureLeast,exposureMost);
+    // Opened up for a dim room, the picture burned out wherever the room was lit: its bright
+    // end is held under white. Never below what the middle alone would close down to in daylight.
+    exposure=std::max(std::min(exposure,exposureBright/adaptedBright),exposureLeast);
     camera.fx[0]=exposure;
+#ifdef DOOM_DEVTOOLS
+    // DERP_EXPOSURE: prints the meter once a second.
+    static int said=-1;
+    if(getenv("DERP_EXPOSURE")&&leveltime/35!=said) {said=leveltime/35;fprintf(stderr,"exposure: frame %.3f scene %.3f settled %.3f exposure %.2f\n",frame,light,adaptedLight,exposure);}
+#endif
 }
 // Eyes settled to sunlit ground see no stars; settled to a dim room or a
 // shaded corner they come out. Without eye adaptation, a faint few.
 float starVisibility() {
     if(adaptedLight<0)return 0.35f;
-    float t=std::clamp((0.65f-adaptedLight)/0.3f,0.0f,1.0f);
+    float t=std::clamp((exposureLight*1.2f-adaptedLight)/(exposureLight*0.6f),0.0f,1.0f);
     return t*t*(3-2*t);
 }
 // One target-color ray at 30 Hz supplies a smooth, subtle ambient tint.
@@ -88,6 +98,7 @@ void updateFlashlightTint(Uniforms &camera) {
         float length=std::sqrt(dot(direction,direction));for(float &c:direction)c/=length;
         float nearest=900,nearestSurface=900;Vec reflected={};Bounce hit={};
         for(const auto &batch:batches) {
+            if(batch.second.empty())continue;   // a key left over from a dropped picture
             const auto &image=images.at(batch.first);const auto &vertices=batch.second;
             for(size_t i=0;i+2<vertices.size();i+=3) {
                 const auto &a=vertices[i],&b=vertices[i+1],&c=vertices[i+2];
@@ -171,6 +182,6 @@ bool flashlightBounce(float position[3],float normal[2],std::array<float,3> &col
 void exposureShutdown() {
     flashlightTint={};flashlightTargetTint={};flashlightTime=0;flashlightSampleTime=0;
     bounce={};targetBounce={};
-    steadyLights.clear();adaptedLight=-1;exposure=1;
+    adaptedLight=-1;exposure=1;
 }
 } // namespace doom3d

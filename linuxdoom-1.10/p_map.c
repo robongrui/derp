@@ -34,7 +34,13 @@ rcsid[] = "$Id: p_map.c,v 1.5 1997/02/03 22:45:11 b1 Exp $";
 
 #include "doomdef.h"
 #include "p_local.h"
+#include "p_hang.h"
+#include "p_bullets.h"
+#include "p_rounds.h"
 #include "p_phobos.h"
+#include "p_derp.h"
+#include "p_nav.h"
+#include "p_tactics.h"
 
 #include "s_sound.h"
 
@@ -220,15 +226,20 @@ boolean PIT_CheckLine (line_t* ld)
     {
 	// Whole window glass (Phobos, the renderer's panes) holds a body that flies at it,
 	// many a window being no wall in the map; shots and missiles break it their own way.
-	if ( (ld->flags & ML_BLOCKING && !(P_Carried (tmthing) && P_AirPasses (ld)))
-	     || (!(tmthing->flags & MF_MISSILE) && P_Phobos () && P_GlassWhole (ld)) )
+	if ( (ld->flags & ML_BLOCKING && !(P_Carried (tmthing) && P_AirPasses (ld))
+	      && !(P_DerpJumping (tmthing) && P_NavOpenAir (ld))	// DERP's imps, through a window
+	      && !P_DerpAstride (tmthing, ld))
+	     || (!(tmthing->flags & MF_MISSILE) && P_Phobos () && P_GlassWhole (ld)
+		 && !P_DerpJumping (tmthing)) )	// a leaping imp goes through it (P_DerpMantle)
 	{
 	    blockline = ld;	// what stopped it (Phobos: glass it may break, P_Strike)
 	    return false;	// explicitly blocking everything (but the air, Phobos)
 	}
 
-	if ( !tmthing->player && ld->flags & ML_BLOCKMONSTERS && !P_Loose (tmthing) )
-	    return false;	// block monsters only (not one a draft carries, Phobos)
+	if ( !tmthing->player && ld->flags & ML_BLOCKMONSTERS && !P_Loose (tmthing)
+	     && !P_DerpJumping (tmthing) && !P_DerpAstride (tmthing, ld) && !P_DerpThrown (tmthing) )
+	    return false;	// block monsters only (not one a draft carries, Phobos;
+				// nor one jumping or thrown through the air, DERP)
     }
 
     // set openrange, opentop, openbottom
@@ -264,6 +275,13 @@ boolean PIT_CheckLine (line_t* ld)
     return true;
 }
 
+// How tall th stands to by's shots: to the player's, as tall as it is drawn
+// (a kneeling soldier's head is well over its half body, p_tactics.c).
+static fixed_t ShotHeight (mobj_t* th, mobj_t* by)
+{
+    return by && by->player ? P_DerpShown (th) : th->height;
+}
+
 //
 // PIT_CheckThing
 //
@@ -287,6 +305,22 @@ boolean PIT_CheckThing (mobj_t* thing)
     
     // don't clip against self
     if (thing == tmthing)
+	return true;
+
+    // A DERP imp in a jump goes over the heads of its own side.
+    if (P_DerpJumping (tmthing) && (thing->flags & MF_COUNTKILL) && !thing->player && thing->health > 0)
+	return true;
+
+    // One hangs from the ceiling over the other's head.
+    if (P_HangAbove (tmthing, thing))
+	return true;
+
+    // Two come down on one spot get out of each other.
+    if (P_DerpParting (tmthing, thing, tmx, tmy))
+	return true;
+
+    // Nor does one going over the player touch him, or he it.
+    if (P_DerpOverHim (tmthing, thing) || P_DerpOverHim (thing, tmthing))
 	return true;
 
     // Two things the air carries (Phobos) don't jam each other in a breach.
@@ -313,7 +347,7 @@ boolean PIT_CheckThing (mobj_t* thing)
     if (tmthing->flags & MF_MISSILE)
     {
 	// see if it went over / under
-	if (tmthing->z > thing->z + thing->height)
+	if (tmthing->z > thing->z + ShotHeight (thing, tmthing->target))
 	    return true;		// overhead
 	if (tmthing->z+tmthing->height < thing->z)
 	    return true;		// underneath
@@ -525,6 +559,8 @@ P_TryMove
 
 	if ( !(thing->flags&(MF_DROPOFF|MF_FLOAT))
 	     && !P_Loose (thing)
+	     && !P_Shoved (thing)
+	     && !P_DerpStairs (thing, tmfloorz - tmdropoffz)
 	     && tmfloorz - tmdropoffz > 24*FRACUNIT )
 	    return false;	// don't stand over a dropoff
     }
@@ -915,7 +951,7 @@ PTR_AimTraverse (intercept_t* in)
 
     // check angles to see if the thing can be aimed at
     dist = FixedMul (attackrange, in->frac);
-    thingtopslope = FixedDiv (th->z+th->height - shootz , dist);
+    thingtopslope = FixedDiv (th->z + ShotHeight (th, shootthing) - shootz , dist);
 
     if (thingtopslope < bottomslope)
 	return true;			// shot over the thing
@@ -947,13 +983,17 @@ PTR_AimTraverse (intercept_t* in)
 // Returns false when it did.
 //
 boolean		la_freeaim;
+// The kind of round in this stretch (p_rounds.h), -1 for any other shot.
+int		la_round = -1;
+// Set when this stretch went through a body it had just killed (p_rounds.h).
+boolean		la_spent;
 static sector_t* la_sector;
 
 // Where the shot stopped, as a fraction of attackrange, and what it hit.
 void (*P_ShotTraced)(mobj_t *shooter, mobj_t *hit, fixed_t x1, fixed_t y1, fixed_t z1,
                      fixed_t x2, fixed_t y2, fixed_t z2);
 static fixed_t	la_endfrac;
-static mobj_t*	la_hit;
+mobj_t*		la_hit;
 
 static boolean PTR_ShootPlane (fixed_t frac)
 {
@@ -1076,7 +1116,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	// Spawn bullet puffs.
 	P_SpawnPuff (x,y,z);
 	if (R_WallImpact)
-	    R_WallImpact (li, P_PointOnLineSide (trace.x, trace.y, li), x, y, z);
+	    R_WallImpact (li, P_PointOnLineSide (trace.x, trace.y, li), x, y, z, shootthing, trace.dx, trace.dy, FixedMul (aimslope, attackrange));
 	
 	// don't go any farther
 	return false;	
@@ -1088,11 +1128,25 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	return true;		// can't shoot self
     
     if (!(th->flags&MF_SHOOTABLE))
+    {
+	// The rest of a volley, through the body it just killed: as tall as it
+	// stood (dying quarters it), and it soaks up most of the round.
+	if (la_round >= 0 && P_RoundFresh (th))
+	{
+	    dist = FixedMul (attackrange, in->frac);
+	    if (dist > 0 && FixedDiv (th->z + th->info->height - shootz, dist) >= aimslope
+		&& FixedDiv (th->z - shootz, dist) <= aimslope)
+	    {
+		la_damage = P_RoundThrough (la_damage);
+		la_spent = true;
+	    }
+	}
 	return true;		// corpse or something
+    }
 		
     // check angles to see if the thing can be aimed at
     dist = FixedMul (attackrange, in->frac);
-    thingtopslope = FixedDiv (th->z+th->height - shootz , dist);
+    thingtopslope = FixedDiv (th->z + ShotHeight (th, shootthing) - shootz , dist);
 
     if (thingtopslope < aimslope)
 	return true;		// shot over the thing
@@ -1125,8 +1179,15 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	    R_BloodHit (th, shootthing, x, y, z, trace.dx, trace.dy, aimslope, la_damage);
     }
 
+    // Where it hit (DERP: a head hit kills in silence).
+    P_DerpShotAt (th, shootthing, x, y, z, aimslope);
     if (la_damage)
-	P_DamageMobj (th, shootthing, shootthing, la_damage);
+    {
+	P_DamageMobj (th, shootthing, shootthing,
+		      la_round >= 0 ? P_RoundTaken (th, shootthing, la_round, la_damage) : la_damage);
+	if (la_round >= 0 && th->health <= 0)
+	    P_RoundKilled (th);
+    }
 
     // don't go any farther
     return false;
@@ -1179,6 +1240,75 @@ P_AimLineAttack
 //
 void
 P_LineAttack
+( mobj_t*	t1,
+  angle_t	angle,
+  fixed_t	distance,
+  fixed_t	slope,
+  int		damage )
+{
+    // DERP's rules: a gun's shot travels (p_bullets.c); a blade or a fist lands at once.
+    if (distance >= MISSILERANGE && P_BulletsTravel ())
+    {
+	boolean	freeaim = la_freeaim;
+	la_freeaim = false;
+	P_FireBullet (t1, angle, distance, slope, damage, freeaim);
+	return;
+    }
+    P_LineAttackNow (t1, angle, distance, slope, damage);
+}
+
+// One stretch of a travelling shot, by the same trace: from (x,y,z) on along angle for distance,
+// sector: where a free-aimed one is, kept up as it goes; end: where it got to. True: it stopped.
+boolean
+P_ShotStretch
+( mobj_t*	t1,
+  fixed_t	x,
+  fixed_t	y,
+  fixed_t	z,
+  angle_t	angle,
+  fixed_t	distance,
+  fixed_t	slope,
+  int		damage,
+  boolean	freeaim,
+  sector_t**	sector,
+  fixed_t	end[3] )
+{
+    fixed_t	x2;
+    fixed_t	y2;
+    boolean	stopped;
+
+    angle >>= ANGLETOFINESHIFT;
+    shootthing = t1;
+    la_damage = damage;
+    x2 = x + (distance>>FRACBITS)*finecosine[angle];
+    y2 = y + (distance>>FRACBITS)*finesine[angle];
+    shootz = z;
+    attackrange = distance;
+    aimslope = slope;
+    la_freeaim = freeaim;
+    if (freeaim)
+	la_sector = *sector;
+    la_hit = NULL;
+    stopped = !P_PathTraverse (x, y, x2, y2, PT_ADDLINES|PT_ADDTHINGS, PTR_ShootTraverse);
+    if (!stopped)
+    {
+	la_endfrac = FRACUNIT;
+	if (freeaim && !PTR_ShootPlane (FRACUNIT))
+	    stopped = true;
+    }
+    if (freeaim)
+	*sector = la_sector;
+    la_freeaim = false;
+    end[0] = x + FixedMul (x2 - x, la_endfrac);
+    end[1] = y + FixedMul (y2 - y, la_endfrac);
+    end[2] = z + FixedMul (slope, FixedMul (la_endfrac, distance));
+    if (P_ShotTraced && damage)
+	P_ShotTraced (t1, la_hit, x, y, z, end[0], end[1], end[2]);
+    return stopped;
+}
+
+void
+P_LineAttackNow
 ( mobj_t*	t1,
   angle_t	angle,
   fixed_t	distance,
@@ -1358,6 +1488,8 @@ P_RadiusAttack
     // fragments and the gas of the charge itself, half of it.
     if (P_Phobos ())
 	damage = (int)(damage*(0.5f + 0.5f*P_SectorAir (spot->subsector->sector)));
+    if (R_Explosion)
+	R_Explosion (spot, source, damage);
     dist = (damage+MAXRADIUS)<<FRACBITS;
     yh = (spot->y + dist - bmaporgy)>>MAPBLOCKSHIFT;
     yl = (spot->y - dist - bmaporgy)>>MAPBLOCKSHIFT;
@@ -1469,6 +1601,7 @@ P_ChangeSector
 	
     nofit = false;
     crushchange = crunch;
+    P_NavSectorMoved (sector);
 	
     // re-check heights for all things near the moving sector
     for (x=sector->blockbox[BOXLEFT] ; x<= sector->blockbox[BOXRIGHT] ; x++)

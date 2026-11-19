@@ -64,6 +64,7 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
 #include "dstrings.h"
 #include "sounds.h"
 #include "d_deh.h"
+#include "p_pickup_flash.h"
 
 //
 // STATUS BAR DATA
@@ -1062,7 +1063,10 @@ void ST_doPaletteStuff(void)
 	if (bzc > cnt)
 	    cnt = bzc;
     }
-	
+
+    // The pickup flash by what was picked up, when the pickup palette is the one shown.
+    P_PickupFlashShow (!cnt ? plyr->bonuscount : 0);
+
     if (cnt)
     {
 	palette = (cnt+7)>>3;
