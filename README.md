@@ -1146,7 +1146,9 @@ rippling air behind, colours pop, the sound drops and echoes ring longer.
 - **Key:** the Slow motion key (X, or F12) turns it on and off.
 - **When shooting:** the first shot slows the world, and it stays slow while
   you keep firing and for five seconds after, so deaths play out slowly. The
-  right mouse button starts it without a shot and ends it early.
+  right mouse button starts it without a shot and ends it early. Don't use it
+  in DERP mode, where it gets in the way of the hourglass and the shootslide;
+  use Key there.
 
 Your gun keeps closer to your own time: switching weapons takes as long as
 ever, and firing runs at half speed. In DERP mode slow motion has the price
