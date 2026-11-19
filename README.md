@@ -169,7 +169,7 @@ Skill levels change how sharply they aim and how fast they spot you.
 know, chat when they think they are alone, and die mid-sentence. Each keeps
 its own voice. Imps hiss and screech. The cries, pain and death sounds ship
 with the game in `derp-cries.wad`; the spoken lines are a separate download,
-`derp-voices.wad`, placed beside the game WAD. Without it the soldiers only
+[`derp-voices.wad`](https://github.com/robongrui/derp/releases/tag/v0.8), placed beside the game WAD. Without it the soldiers only
 cry out.
 
 **A player with legs.** You run at Quake's pace, 320 units a second, a

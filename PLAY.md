@@ -209,8 +209,8 @@ WAD, in the `wads` folder or dropped on the launcher: `HQPSXMUS.WAD` for the
 PlayStation soundtrack, the `*_3DO.wad` files for 3DO, and the 2024
 re-release's `extras.wad` for the IDKFA remix and the recorded originals.
 
-DERP mode's soldiers speak from `derp-voices.wad`, a separate download placed
-beside the game WAD. Without it they only cry out. The voice packs were
+DERP mode's soldiers speak from `derp-voices.wad`, a separate download from the
+[v0.8 release](https://github.com/robongrui/derp/releases/tag/v0.8) placed beside the game WAD. Without it they only cry out. The voice packs were
 generated with ElevenLabs and have their own licence,
 [`barks/VOICES-LICENSE.txt`](barks/VOICES-LICENSE.txt): use them with DERP and
 pass them on unmodified, but don't pull their sounds out to use on their own.
