@@ -86,7 +86,8 @@ game_surface Game_WallSurface(const char *name)
         "SHAWN", "DOOR", "BIGDOOR", "EXITDOOR", "LITE", "PIPE", "PLAT", "TEKWALL", "TEKGREN", "TEKLITE",
         "SLADWALL", "SILVER", "BRONZE", "SPACEW", "NUKE", "STEP", "MIDGRATE", "MIDBARS",
         "ICKDOOR", "TEKBRON", "BROWNPIP", "SPCDOOR", NULL};
-    static const char *const woods[] = {"WOOD", "PANEL", "PANBOOK", "PANBORD", "PANCASE", NULL};
+    /* CRAT: the UAC crates (CRATE1-3, CRATWIDE, CRATELIT, CRATINY), wooden (the user, 2026-11-20). */
+    static const char *const woods[] = {"WOOD", "PANEL", "PANBOOK", "PANBORD", "PANCASE", "CRAT", NULL};
     static const char *const fleshes[] = {"SKIN", "SKSNAKE", "SKSPINE", "SP_FACE", "FLESH", "SLOPPY", "DBRAIN", NULL};
     /* A switch is a plate set into a wall the rest of its name tells:
        SW1STON1 is stone, SW1WOOD and SW1PANEL wood, SW1COMP metal. */

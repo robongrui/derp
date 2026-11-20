@@ -526,8 +526,10 @@ Image &wallImage(int index) {
     // Masked walls (bars, fences) show what lies behind instead of tiles;
     // animated ones would change tiles every frame.
     int next;bool animated=P_PicAnimationNext(true,index,&next)>0;
-    // Oversized painted bricks laid anew at half the size (relaid_walls.cpp).
-    if(!glowing&&glass.empty()&&!animated) {
+    // Oversized painted bricks laid anew at half the size (relaid_walls.cpp). Stone only: the
+    // brick finder takes any one-size grid for bricks, and crates, computer panels, metal
+    // plates and wood planks came out cut up with their logos torn (2026-11-20, E2M2's crates).
+    if(!glowing&&glass.empty()&&!animated&&Game_WallSurface(name)==GAME_SURFACE_STONE) {
         std::vector<byte> smaller=rebrickedWall(w,h,pixels,2);
         if(!smaller.empty()) {rebrickable.insert(index);if(settings.rebrick)pixels.swap(smaller);}
     }
