@@ -91,7 +91,8 @@ int main() {
     check(!sunReachesSky(map,0,40,64,1,east),"A decoration must cast a sun shadow");
     check(sunReachesSky(map,0,40,20,1,east),"Rays beside a decoration must pass");
     BakeHit thingHit;
-    check(!traceRay(map,0,40,64,1,east,INFINITY,SkyCeiling::escape,&thingHit)&&thingHit.kind==BakeHit::thing&&thingHit.line==-1,
+    // (A thing hit's line is the decoration's index in BakeMap::things: its colour goes to the bounce.)
+    check(!traceRay(map,0,40,64,1,east,INFINITY,SkyCeiling::escape,&thingHit)&&thingHit.kind==BakeHit::thing&&thingHit.line==0,
           "A decoration must be reported as a thing hit");
 
     BakeHit hit;
