@@ -968,6 +968,8 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
         }
     }
     if(!self&&!ragdoll&&!figure&&volumeShadows()&&!volumeCast)addEnemyShadow(*thing,image,lump,flipped(rotation),x,y,z,camera);
+    // A barrel standing: a blob shadow under it, whatever the light (shadows.cpp).
+    if(!self&&!figure&&thing->health>0&&Game_ThingRole(thing->type)==GAME_THING_BARREL)addBlobShadow(*thing,x,y,z,camera);
 #ifdef DOOM_DEVTOOLS
     // DERP_SHADOWS: once a second, what each monster's shadow is cast by.
     if(getenv("DERP_SHADOWS")&&(thing->flags&MF_COUNTKILL)&&leveltime%35==0)

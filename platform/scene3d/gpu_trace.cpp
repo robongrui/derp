@@ -91,7 +91,8 @@ bool gpuUploadMap(const BakeMap &map,const OpenDoors *doors,const std::vector<ch
     }
     for(const BakeThing &t:map.things)
         things.insert(things.end(),{f2u(t.x),f2u(t.y),f2u(t.top),f2u(t.left),(uint32_t)t.width,(uint32_t)t.height,
-                                    t.pixels&&t.width>0&&t.height>0?picture(t.pixels,t.width,t.height):0,0});
+                                    t.pixels&&t.width>0&&t.height>0?picture(t.pixels,t.width,t.height):0,
+                                    f2u(t.albedo[0]),f2u(t.albedo[1]),f2u(t.albedo[2]),(uint32_t)t.sector,0});
     std::vector<uint32_t> sectorWords;sectorWords.reserve(sectorCount*12);
     for(size_t s=0;s<sectorCount;++s) {
         const BakeSector &b=map.sectors[s];

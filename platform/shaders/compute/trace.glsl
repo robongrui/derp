@@ -17,7 +17,8 @@
 //   mapA.w lists of ints (a sector's lines, its tree order, its things);
 //   mapB.x masks, 12 words: first coverage bit, width, height, -, u,
 //          direction, anchor, bottom, top, the line's length;
-//   mapB.y decorations, 8 words: x, y, top, left, width, height, first bit;
+//   mapB.y decorations, 12 words: x, y, top, left, width, height, first bit,
+//          albedo (three floats), sector, -;
 //   mapB.z coverage, one bit a texel.
 // Kept plain for the DXIL to come: no integer division or modulo of
 // negatives, every output written. precise keeps the compiler from fusing
@@ -54,7 +55,7 @@ bool maskBlocks(int line,float u,float height) {
     return coverBit(mapWords[m]+uint(y*width+x));
 }
 bool thingBlocks(int thing,vec3 o,vec3 d,float from,float to,inout float at) {
-    uint p=mapB.y+uint(thing)*8u;
+    uint p=mapB.y+uint(thing)*12u;
     float tx=mapF(p),ty=mapF(p+1u),top=mapF(p+2u),left=mapF(p+3u);
     int width=mapI(p+4u),rows=mapI(p+5u);
     precise float h2=d.x*d.x+d.y*d.y;
@@ -156,10 +157,12 @@ bool traceRay(int sector,vec3 o,vec3 d,float length,uint flags,out TraceHit hit)
         }
         float nearest=min(min(exitT,best),length),closest=traceInf,at=0.0;
         uint thingStart=mapWords[s+8u];
-        int thingCount=mapI(s+9u);
-        for(int k=0;k<thingCount;++k)
-            if(thingBlocks(mapI(mapA.w+thingStart+uint(k)),o,d,t,nearest,at)&&at<closest)closest=at;
-        if(closest<traceInf) {traceStop(hit,hitThing,sector,-1,0,closest);return false;}
+        int thingCount=mapI(s+9u),struck=-1;
+        for(int k=0;k<thingCount;++k) {
+            int thing=mapI(mapA.w+thingStart+uint(k));
+            if(thingBlocks(thing,o,d,t,nearest,at)&&at<closest) {closest=at;struck=thing;}
+        }
+        if(closest<traceInf) {traceStop(hit,hitThing,sector,struck,0,closest);return false;}
         if(length<=exitT&&length<=best)return true;
         if(exitT<=best) {
             if(d.z>0.0&&sSky&&escape) {hit.skyward=true;return true;}

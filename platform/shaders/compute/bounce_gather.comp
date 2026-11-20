@@ -109,9 +109,17 @@ void main() {
         }
         vec3 hitLight=vec3(0.0),hitDay=vec3(0.0);
         int sector=-1;
-        if(kind==rayWall||kind==rayFlat) {
+        if(kind==rayWall||kind==rayFlat||kind==rayThing) {
             vec3 albedo;vec4 light;vec3 before=vec3(0.0);float visible;
-            if(kind==rayWall) {
+            if(kind==rayThing) {
+                // A decoration: its drawing's color of the light on the floor in front of it.
+                uint p=mapB.y+surface*12u;
+                sector=mapI(p+10u);
+                albedo=vec3(mapF(p+7u),mapF(p+8u),mapF(p+9u));
+                light=lightAt(lights.x+at);
+                if(again)before=carry.w!=0u?carried(at):lightAt(lights.x+2u*layer+at).rgb/255.0*2.0;
+                visible=lightAt(lights.z+at).b/255.0*0.5;
+            } else if(kind==rayWall) {
                 sector=sideSector(surface/3u);
                 albedo=staticRGB(statics.x+3u*surface);
                 light=lightAt(lights.y+at);

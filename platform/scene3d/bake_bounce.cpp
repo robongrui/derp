@@ -62,7 +62,8 @@ using Runner=std::function<void(int,const std::function<void(int)>&)>;
 // surface (a wall: (line*2+side)*3+part, a flat: sector*2+ceiling) and the texel or cell.
 // A sample is a kilobyte so; at eight bytes a ray Doom 2's MAP13 ran past the budget and the
 // samples past it were traced each pass as before, which they still are on a map larger yet.
-enum : int { rayNothing, rayEscaped, raySky, rayBare, rayWall, rayFlat, rayWide=7 };   // a decoration; left the map; reached the sky; a wall with no strip
+// rayThing: a decoration (its index the surface, the floor cell in front of it the cell), only ever kept wide.
+enum : int { rayNothing, rayEscaped, raySky, rayBare, rayWall, rayFlat, rayThing, rayWide=7 };   // nothing kept; left the map; reached the sky; a wall with no strip
 struct RaySeen { int kind=rayNothing,sector=-1; uint64_t surface=0,at=0; };
 // Per texel of the atlas' left half, the strip it lies in (line*2+side), -1 for none: made with
 // the level's bounce (bakeBounce), read by every solve after it.
@@ -200,6 +201,7 @@ struct HitStore {
         seen.kind=(int)(word>>61);seen.surface=(word>>32)&0x1FFFFFFF;seen.at=word&0xFFFFFFFFu;
         if(seen.kind==rayBare||seen.kind==rayWall) {const BakeLine &line=map.lines[seen.surface/6];seen.sector=(seen.surface/3)&1?line.back:line.front;}
         else if(seen.kind==rayFlat)seen.sector=(int)(seen.surface/2);
+        else if(seen.kind==rayThing)seen.sector=seen.surface<map.things.size()?map.things[seen.surface].sector:-1;
         return seen;
     }
 };
@@ -463,9 +465,21 @@ void BounceSolve::run(const Runner &runner) {
     // out: what the surface the ray hit gives back of its lamps and of the bounce the pass before left on it
     // (true strength: see skyDome); day: of the sun on it, as drawn.
     // Where a ray stopped, as the passes read it: the surface and its texel or cell.
-    auto landed=[&](const BakeHit &hit) {
+    auto landed=[&](const BakeHit &hit,const float direction[3]) {
         RaySeen seen;
-        if(hit.kind==BakeHit::thing)return seen; // Decorations stay dark.
+        // A decoration gives back its drawing's color of the light on it, taken as the light on
+        // the floor in front of it, on the ray's side: a barrel by a lit wall, lit as the floor
+        // there is (bounce_rays.glsl's bounceTrace does the same).
+        if(hit.kind==BakeHit::thing) {
+            if(hit.line<0||hit.line>=(int)base.things.size()||base.things[hit.line].sector<0)return seen;
+            const BakeThing &thing=base.things[hit.line];
+            float flat=std::hypot(direction[0],direction[1]),back=thing.width*0.5f+mapCell;
+            float fx=hit.x-(flat>1e-6f?direction[0]/flat*back:0),fy=hit.y-(flat>1e-6f?direction[1]/flat*back:0);
+            int cx=std::clamp((int)std::floor((fx-mapOrigin[0])/mapCell),0,mapWidth-1);
+            int cy=std::clamp((int)std::floor((fy-mapOrigin[1])/mapCell),0,mapHeight-1);
+            seen.kind=rayThing;seen.sector=thing.sector;seen.surface=(uint64_t)hit.line;seen.at=(uint64_t)cy*mapWidth+cx;
+            return seen;
+        }
         seen.sector=hit.sector;
         if(hit.kind==BakeHit::wall) {
             const BakeLine &line=base.lines[hit.line];
@@ -486,11 +500,21 @@ void BounceSolve::run(const Runner &runner) {
         return seen;
     };
     auto radiance=[&](const RaySeen &hit,float out[3],float day[3]) {
-        if(hit.kind!=rayWall&&hit.kind!=rayFlat)return;
+        if(hit.kind!=rayWall&&hit.kind!=rayFlat&&hit.kind!=rayThing)return;
         const uint8_t *light=nullptr;float visible=0;const std::array<float,3> *albedo=nullptr;
         float again[3]={};   // the bounce the pass before left on it
         std::array<float,3> covered;
-        if(hit.kind==rayWall) {
+        if(hit.kind==rayThing) {
+            const BakeThing &thing=base.things[hit.surface];
+            covered={thing.albedo[0],thing.albedo[1],thing.albedo[2]};albedo=&covered;
+            size_t cell=hit.at;
+            light=flatAt(floorLight,cell);
+            if(bouncePass>0) {
+                if(carry.on())carry.read(carry.flatEntry(false,cell),again);
+                else for(int c=0;c<3;++c)again[c]=beforeFlat[4*((size_t)floorBounce*layer+cell)+c]/255.0f*2;
+            }
+            visible=contactCells[4*cell+2]/255.0f*0.5f;   // a round thing in the sun: half of what the ray sees of it is lit
+        } else if(hit.kind==rayWall) {
             albedo=&sideAlbedo[hit.surface];
             light=&wallCells[4*hit.at];
             if(bouncePass>0) {
@@ -586,7 +610,7 @@ void BounceSolve::run(const Runner &runner) {
                     BakeHit real;
                     bool reached=skyward&&skyDome&&(&traced==&base||(traceRay(base,sector,x,y,z,direction,bounceReach,SkyCeiling::escape,&real,nullptr,&skyward)&&skyward));
                     hit.kind=reached?raySky:rayEscaped;
-                } else hit=landed(stopped);
+                } else hit=landed(stopped,direction);
                 if(keeping&&!HitStore::pack(hit,base,words[n])) {
                     if(HitStore::packWide(hit,base,wide[wideCount]))words[n]=(uint32_t)rayWide<<29|(uint32_t)wideCount++;
                     else keeping=false;

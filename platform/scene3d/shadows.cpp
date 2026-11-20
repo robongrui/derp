@@ -15,6 +15,10 @@ namespace doom3d {
 // wide light), each thing's volume from the way its own light comes.
 // kind: 1 dynamic, 2 the baked light, 3 the sun, 4 the baked light where it is wide, 5 the flashlight (ShadowVolumeSet).
 ShadowVolumeSet shadowVolumes[shadowVolumeSets];
+// What casts as a monster does: monsters (and the player, the flashlight's silhouettes: see each caller).
+static bool castsAsMonster(const mobj_t &thing) {
+    return (thing.info->flags&MF_COUNTKILL)||Game_ThingRole(thing.type)==GAME_THING_UNCOUNTED_MONSTER;
+}
 // A picture's covered runs, slab by slab: found once a picture, not from its
 // pixels for every monster every frame.
 namespace {
@@ -90,7 +94,7 @@ bool shadowVolume(const mobj_t &thing,const Image &image,bool flip,float x,float
     float tall=card?(card->v1-card->v0)*squash:units(thing.height);
     // (In the flashlight anything solid casts, a barrel too, as its outlines did.)
     // (And the player, whose own shadow falls as the monsters' do: geometry.cpp's playerShadow.)
-    if(kind!=5&&!thing.player&&!(thing.info->flags&MF_COUNTKILL)&&Game_ThingRole(thing.type)!=GAME_THING_UNCOUNTED_MONSTER)return false;
+    if(kind!=5&&!thing.player&&!castsAsMonster(thing))return false;
     ShadowVolumeSet *set=nullptr;
     float reach=0;
     float dx=x-light.x,dy=y-light.y,horizontal=std::hypot(dx,dy);
@@ -323,9 +327,73 @@ float shadowLevel(float x,float y,const sector_t *sector) {
 float castOpacity(const ShadowLight &light,float level) {
     return std::clamp(0.8f*light.strength/std::max({level,light.strength,0.02f}),0.0f,0.75f);
 }
+// A footprint laid on the floors it covers: the sector's floor, and in whole-level lighting the
+// floor next door at the same height too (a sector's edge is no edge of the floor). vertex: the
+// vertex for a point of it.
+static void layOnFloors(const sector_t *sector,bool whole,const std::vector<Point> &footprint,
+                        const std::function<Vertex(Point)> &vertex,std::vector<Vertex> &out) {
+    std::array<float,4> bounds={1e9f,1e9f,-1e9f,-1e9f};
+    for(Point p:footprint) {
+        bounds[0]=std::min(bounds[0],p.x);bounds[1]=std::min(bounds[1],p.y);
+        bounds[2]=std::max(bounds[2],p.x);bounds[3]=std::max(bounds[3],p.y);
+    }
+    std::vector<int> leaves=sectorFloors[sector-sectors];
+    if(whole) {
+        std::vector<const sector_t*> beside;
+        for(int n=0;n<sector->linecount;++n) {
+            const line_t *line=sector->lines[n];
+            const sector_t *other=line->frontsector==sector?line->backsector:line->frontsector;
+            if(!other||other==sector||other->floorheight!=sector->floorheight||other->floorpic==skyflatnum)continue;
+            if(std::find(beside.begin(),beside.end(),other)!=beside.end())continue;
+            beside.push_back(other);
+            const auto &more=sectorFloors[other-sectors];leaves.insert(leaves.end(),more.begin(),more.end());
+        }
+    }
+    for(int leaf:leaves) {
+        const auto &b=floorBounds[leaf];
+        if(b[2]<bounds[0]||b[0]>bounds[2]||b[3]<bounds[1]||b[1]>bounds[3]) continue;
+        const auto &receiver=floors[leaf];if(receiver.size()<3) continue;
+        auto polygon=receiver;
+        for(size_t n=0;n<footprint.size()&&!polygon.empty();++n) {
+            Point a=footprint[n],b=footprint[(n+1)%footprint.size()];
+            polygon=clip(polygon,a,{b.x-a.x,b.y-a.y},false);
+        }
+        for(size_t n=1;n+1<polygon.size();++n)
+            for(Point p:{polygon[0],polygon[n],polygon[n+1]}) out.push_back(vertex(p));
+    }
+}
+// A blob shadow: a soft dark disc on the floor under a thing, the same from every light. For
+// barrels, which are in no bake (they blow up and get shoved): without it a barrel stood on the
+// floor as if pasted (2026-11-20: the bake's way and the monsters' lit shadows were both tried).
+// Drawn as a mark (the decal pass: plain coverage, not the contact shadow's fade along its length).
+constexpr int blobKey=-0x7A000000,blobSize=32;   // image key clear of the others (explosions' views end near -0x78...)
+static void blobImage() {
+    if(images.count(blobKey))return;
+    std::vector<byte> pixels((size_t)blobSize*blobSize*2,0);
+    for(int y=0;y<blobSize;++y)for(int x=0;x<blobSize;++x) {
+        float dx=(x+0.5f)/blobSize*2-1,dy=(y+0.5f)/blobSize*2-1,d=std::sqrt(dx*dx+dy*dy);
+        float t=std::clamp((d-0.5f)/0.5f,0.0f,1.0f),cover=1-t*t*(3-2*t);   // dark middle, soft rim
+        pixels[2*((size_t)y*blobSize+x)+1]=(byte)std::lround(cover*255);
+    }
+    images.emplace(blobKey,upload(blobSize,blobSize,pixels.data()));
+}
+void addBlobShadow(const mobj_t &thing,float x,float y,float z,const Uniforms &camera) {
+    const sector_t *sector=thing.subsector->sector;
+    if(sector->floorpic==skyflatnum)return;
+    float floor=floorZ(sector),height=std::max(0.0f,z-floor);
+    if(height>=48)return;
+    blobImage();
+    float radius=units(thing.radius)*1.35f,opacity=0.6f*(1-height/48);
+    std::vector<Point> footprint={{x-radius,y-radius},{x+radius,y-radius},{x+radius,y+radius},{x-radius,y+radius}};
+    auto vertex=[&](Point p) {
+        float u=(p.x-x)/(2*radius)+0.5f,v=(p.y-y)/(2*radius)+0.5f;
+        return Vertex{p.x,p.y,floor+2*decalLift(p.x,p.y,camera),u*blobSize,v*blobSize,opacity,0};
+    };
+    layOnFloors(sector,settings.lightModel==1&&bakedLightsActive,footprint,vertex,decalBatches[-1-blobKey]);
+}
 void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
                     float x,float y,float z,const Uniforms &camera,const ShadowLight *light,bool anyThing,const RagdollCard *card) {
-    if(!anyThing&&!(thing.info->flags&MF_COUNTKILL)&&Game_ThingRole(thing.type)!=GAME_THING_UNCOUNTED_MONSTER) return;
+    if(!anyThing&&!castsAsMonster(thing)) return;
     float u0=0,v0=0,u1=image.width,v1=image.height;
     if(card) {
         if(card->u1<=card->u0||card->v1<=card->v0)return;
@@ -367,45 +435,14 @@ void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
     auto point=[&](float u,float v) {return Point{x+across.x*u+away.x*v,y+across.y*u+away.y*v};};
     std::vector<Point> footprint={point(-width/2,start),point(width/2,start),
                                   point(width/2,start+length),point(-width/2,start+length)};
-    std::array<float,4> bounds={1e9f,1e9f,-1e9f,-1e9f};
-    for(Point p:footprint) {
-        bounds[0]=std::min(bounds[0],p.x);bounds[1]=std::min(bounds[1],p.y);
-        bounds[2]=std::max(bounds[2],p.x);bounds[3]=std::max(bounds[3],p.y);
-    }
-    auto &out=shadowBatches[lump];
-    // Whole-level lighting: the shadow also falls on the floor next door at the same height;
-    // a sector's edge is no edge of the floor.
-    std::vector<int> leaves=sectorFloors[sector-sectors];
-    if(whole) {
-        std::vector<const sector_t*> beside;
-        for(int n=0;n<sector->linecount;++n) {
-            const line_t *line=sector->lines[n];
-            const sector_t *other=line->frontsector==sector?line->backsector:line->frontsector;
-            if(!other||other==sector||other->floorheight!=sector->floorheight||other->floorpic==skyflatnum)continue;
-            if(std::find(beside.begin(),beside.end(),other)!=beside.end())continue;
-            beside.push_back(other);
-            const auto &more=sectorFloors[other-sectors];leaves.insert(leaves.end(),more.begin(),more.end());
-        }
-    }
-    for(int leaf:leaves) {
-        const auto &b=floorBounds[leaf];
-        if(b[2]<bounds[0]||b[0]>bounds[2]||b[3]<bounds[1]||b[1]>bounds[3]) continue;
-        const auto &receiver=floors[leaf];if(receiver.size()<3) continue;
-        auto polygon=receiver;
-        for(size_t n=0;n<footprint.size()&&!polygon.empty();++n) {
-            Point a=footprint[n],b=footprint[(n+1)%footprint.size()];
-            polygon=clip(polygon,a,{b.x-a.x,b.y-a.y},false);
-        }
-        auto vertex=[&](Point p) {
-            float dx=p.x-x,dy=p.y-y;
-            float u=(dx*across.x+dy*across.y)/width+0.5f;
-            float v=1.0f-((dx*away.x+dy*away.y)-start)/length;
-            // Twice the blood's lift, so shadows fall on top of blood decals.
-            return Vertex{p.x,p.y,floor+2*decalLift(p.x,p.y,camera),u0+(flip?1-u:u)*(u1-u0),v0+v*(v1-v0),opacity,0};
-        };
-        for(size_t n=1;n+1<polygon.size();++n)
-            for(Point p:{polygon[0],polygon[n],polygon[n+1]}) out.push_back(vertex(p));
-    }
+    auto vertex=[&](Point p) {
+        float dx=p.x-x,dy=p.y-y;
+        float u=(dx*across.x+dy*across.y)/width+0.5f;
+        float v=1.0f-((dx*away.x+dy*away.y)-start)/length;
+        // Twice the blood's lift, so shadows fall on top of blood decals.
+        return Vertex{p.x,p.y,floor+2*decalLift(p.x,p.y,camera),u0+(flip?1-u:u)*(u1-u0),v0+v*(v1-v0),opacity,0};
+    };
+    layOnFloors(sector,whole,footprint,vertex,shadowBatches[lump]);
 }
 
 struct WallPoint { float s,z,u,v; };
@@ -432,7 +469,7 @@ static std::vector<WallPoint> clipWallPolygon(const std::vector<WallPoint> &poly
 // runs over the floor and up the wall in one piece, and never hangs on a wall by itself (a
 // low light threw it high up a far wall, a lintel caught a piece of it).
 void wallShadow(const mobj_t &thing,const Image &image,int lump,bool flip,float x,float y,float z,const Uniforms &camera,const ShadowLight &light,float opacity) {
-    if(!(thing.info->flags&MF_COUNTKILL)&&Game_ThingRole(thing.type)!=GAME_THING_UNCOUNTED_MONSTER)return;
+    if(!castsAsMonster(thing))return;
     const float lamp[3]={light.x,light.y,light.z};
     float cz=z+units(thing.height)*0.5f,dx=x-lamp[0],dy=y-lamp[1],horizontal=std::hypot(dx,dy);
     if(horizontal<16||opacity<0.03f||lamp[2]<=z+8)return;

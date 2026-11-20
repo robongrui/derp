@@ -26,12 +26,13 @@ struct BakeLine { float ax,ay,bx,by; int front,back; BakeMask mask={}; }; // -1:
 // A decoration's sprite as an occluder: a billboard standing at (x,y) that
 // turns to face each ray, so its shadow is the outline seen from the light.
 // One texel per unit, columns from left (relative to x), rows down from top;
-// pixels are palette index/coverage pairs.
-struct BakeThing { float x,y,top,left; int width,height; const unsigned char *pixels; };
+// pixels are palette index/coverage pairs. albedo: its drawing's average color, what it gives back of the
+// light on it to the bounce; sector: where it stands.
+struct BakeThing { float x,y,top,left; int width,height; const unsigned char *pixels; float albedo[3]={0.5f,0.5f,0.5f}; int sector=-1; };
 struct BakeMap { std::vector<BakeSector> sectors; std::vector<BakeLine> lines; std::vector<BakeThing> things={}; };
 // What stopped a ray. Walls belong to the side facing sector, the one the ray
 // came from; part is 0 for middle (one-sided or masked), 1 upper, 2 lower.
-// A thing hit has no line.
+// A thing hit has no line: line is the decoration's index in BakeMap::things.
 struct BakeHit { enum Kind { none, floor, ceiling, wall, thing } kind=none; int sector=-1,line=-1,part=0; float x=0,y=0,z=0; };
 
 // True where the line's middle texture covers the point at fraction u along it.
@@ -178,10 +179,10 @@ inline bool traceRay(const BakeMap &map,int sector,float x,float y,float z,const
                 stack[depth++]=aFirst?node.first+1:node.first;stack[depth++]=aFirst?node.first:node.first+1;
             }
         }
-        float nearest=std::min({exit,best,length}),hitThing=INFINITY,at;
+        float nearest=std::min({exit,best,length}),hitThing=INFINITY,at;int struck=-1;
         for(int index:s.things)
-            if(thingBlocks(map.things[index],x,y,z,direction,t,nearest,at)&&at<hitThing)hitThing=at;
-        if(hitThing<INFINITY)return stop(BakeHit::thing,hitThing,-1,0);
+            if(thingBlocks(map.things[index],x,y,z,direction,t,nearest,at)&&at<hitThing) {hitThing=at;struck=index;}
+        if(hitThing<INFINITY)return stop(BakeHit::thing,hitThing,struck,0);
         if(length<=exit&&length<=best)return true;
         if(exit<=best) {
             if(direction[2]>0&&sSky&&sky==SkyCeiling::escape) {if(skyward)*skyward=true;return true;}

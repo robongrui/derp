@@ -722,6 +722,7 @@ void geometry(const Uniforms &camera,float fraction);
 struct RagdollCard;
 void addEnemyShadow(const mobj_t &thing,const Image &image,int lump,bool flip,
                     float x,float y,float z,const Uniforms &camera,const ShadowLight *light=nullptr,bool anyThing=false,const RagdollCard *card=nullptr);
+void addBlobShadow(const mobj_t &thing,float x,float y,float z,const Uniforms &camera);   // a soft dark disc under it (barrels)
 // Whole-level lighting: the light a thing's shadow is seen against where it stands (lamps,
 // bounce, sun, fill), how dark a light's shadow is against it (the light's share of it), and
 // the thing's outline thrown by a light onto the walls behind it.

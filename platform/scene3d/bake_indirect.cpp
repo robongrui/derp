@@ -11,8 +11,11 @@ std::array<float,3> skyTint={1,1,1};
 // Decorations in the bakes: static, non-glowing things that stand on the
 // floor or hang from the ceiling (columns, trees, hanging bodies) occlude
 // the sun, baked lights, bounce, sky and flow rays with their spawn-state
-// sprite. Glowing ones are light sources and stay out, so a lamp never
+// sprite, and give back their drawing's color of the light on them to the
+// bounce. Glowing ones are light sources and stay out, so a lamp never
 // shadows its own light. Changing the setting re-bakes the level.
+// (Barrels stay out: they blow up and get shoved. They cast the monsters'
+// contact shadow under them instead: shadows.cpp's addEnemyShadow.)
 void syncBakeThings() {
     int key=settings.thingShadows;
     if(key==bakeThingsKey)return;
@@ -24,10 +27,12 @@ void syncBakeThings() {
         if(thing->player||(thing->flags&(MF_COUNTKILL|MF_SPECIAL|MF_MISSILE|MF_NOBLOCKMAP|MF_SHOOTABLE|MF_CORPSE)))continue;
         if(!(thing->flags&(MF_SOLID|MF_SPAWNCEILING))||(thing->frame&FF_FULLBRIGHT))continue;
         if(thing->sprite<0||thing->sprite>=numsprites||(thing->frame&FF_FRAMEMASK)>=sprites[thing->sprite].numframes)continue;
-        const Image &image=lumpImage(firstspritelump+sprites[thing->sprite].spriteframes[thing->frame&FF_FRAMEMASK].lump[0],false);
+        Image &image=lumpImage(firstspritelump+sprites[thing->sprite].spriteframes[thing->frame&FF_FRAMEMASK].lump[0],false);
         float x=units(thing->x),y=units(thing->y),half=image.width*0.5f;
         int index=(int)bakeMap.things.size();
-        bakeMap.things.push_back({x,y,units(thing->z)+image.top,-(float)image.left,image.width,image.height,image.pixels.data()});
+        const auto &albedo=averageColor(image);
+        bakeMap.things.push_back({x,y,units(thing->z)+image.top,-(float)image.left,image.width,image.height,image.pixels.data(),
+                                  {albedo[0],albedo[1],albedo[2]},i});
         // Also list it in neighbors its sprite reaches across a line.
         std::vector<int> reach={i};
         for(int j=0;j<sectors[i].linecount;++j) {

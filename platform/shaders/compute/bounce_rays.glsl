@@ -4,7 +4,7 @@
 // the samples, the table and the strips, and the uniforms grid (the map's
 // origin, its cell, the rays' reach) and dims (map width and height, atlas
 // stride and width).
-const uint rayNothing=0u,rayEscaped=1u,raySky=2u,rayBare=3u,rayWall=4u,rayFlat=5u;
+const uint rayNothing=0u,rayEscaped=1u,raySky=2u,rayBare=3u,rayWall=4u,rayFlat=5u,rayThing=6u;
 
 struct BounceSample { vec3 o,normal,tangent,bitangent; int sector; uint flags,turn; };
 BounceSample bounceSample(uint s) {
@@ -59,6 +59,17 @@ uvec2 bounceTrace(BounceSample bs,vec3 d,bool skyDome) {
         precise float fx=floor((h.x-grid.x)/grid.z),fy=floor((h.y-grid.y)/grid.z);
         int cx=clamp(int(fx),0,int(dims.x)-1),cy=clamp(int(fy),0,int(dims.y)-1);
         kind=rayFlat;surface=uint(hit.sector)*2u+(hit.kind==hitCeiling?1u:0u);at=uint(cy)*dims.x+uint(cx);
+    } else if(hit.kind==hitThing&&hit.line>=0) {
+        // A decoration: lit as the floor in front of it on the ray's side (the gather's landed).
+        uint p=mapB.y+uint(hit.line)*12u;
+        if(mapI(p+10u)>=0) {
+            precise vec3 h=o+d*hit.at;
+            precise float across=sqrt(d.x*d.x+d.y*d.y),back=float(mapI(p+4u))*0.5+grid.z;
+            precise float bx=across>1e-6?h.x-d.x/across*back:h.x,by=across>1e-6?h.y-d.y/across*back:h.y;
+            precise float fx=floor((bx-grid.x)/grid.z),fy=floor((by-grid.y)/grid.z);
+            int cx=clamp(int(fx),0,int(dims.x)-1),cy=clamp(int(fy),0,int(dims.y)-1);
+            kind=rayThing;surface=uint(hit.line);at=uint(cy)*dims.x+uint(cx);
+        }
     }
     return uvec2(at,kind<<29|surface);
 }
