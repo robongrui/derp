@@ -2,6 +2,11 @@
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
 layout(set=2,binding=0) uniform sampler2D image;
+// The exposed picture (the shrink only): what burns out over the tone curve's shoulder glows
+// too, by direction.x, so a yard seen from a dark room spills over its doorway's edges, as
+// Lost Coast's bloom from the finished frame does. 0: off (Classic, where Doom's full-bright
+// rooms sit at white and would glow everywhere).
+layout(set=2,binding=1) uniform sampler2D scene;
 // direction.xy: one blur step along an axis, a texel of the image apart (the weights below are made for
 // that: spread wider they leave gaps, and the blur is a few copies of the image). direction.zw, when
 // set: no blur, the image shrunk instead, zw the size of one texel of the target; 4x4 taps spread over
@@ -11,8 +16,15 @@ layout(location=0) out vec4 outColor;
 void main() {
     vec3 glow=vec3(0);
     if(direction.z>0.0) {
-        for(int y=0;y<4;++y)for(int x=0;x<4;++x)
-            glow+=textureLod(image,vUV+(vec2(x,y)-1.5)*0.25*direction.zw,0.0).rgb;
+        for(int y=0;y<4;++y)for(int x=0;x<4;++x) {
+            vec2 at=vUV+(vec2(x,y)-1.5)*0.25*direction.zw;
+            glow+=textureLod(image,at,0.0).rgb;
+            if(direction.x>0.0) {
+                // From the shoulder's last stretch (scene 1.0 lands at 0.89) to white.
+                vec3 shown=textureLod(scene,at,0.0).rgb;
+                glow+=shown*smoothstep(0.86,1.0,max(shown.r,max(shown.g,shown.b)))*direction.x;
+            }
+        }
         outColor=vec4(glow/16.0,1);
         return;
     }

@@ -315,6 +315,7 @@ void surfaceLight(SectorLit lit,bool mapped,vec3 normal,vec3 screenNormal,bool g
         else {
             vec3 added=lights[i].color.rgb*amount*(flashFacing(vWorld,bumped,i)-bakedShare*flashFacing(vWorld,normal,i));
             pulse+=added;addedLight+=max(added,vec3(0));
+            if(rollsOff(i)) rolledLight+=max(added,vec3(0));
         }
         if(gloss>0.0) {
             vec3 toLight=highlightFrom(i,view,bumped);

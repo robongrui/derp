@@ -120,7 +120,13 @@ void main() {
     if(c.materials.y>0.0) {
         float coverage=layer.a;
         // Screen-like additive glow retains detail without clipping to white.
-        vec3 glow=textureLod(bloom,vUV,0.0).rgb*(1.0-coverage)*0.8;
+        // And a wider halo from its smaller mips (half and a quarter size, the quarter as four
+        // taps half a texel apart so it doesn't show its texels), so a burned-out opening glows
+        // well into the dark round it. Lamps' halos widen with it.
+        vec2 quarter=0.5/vec2(textureSize(bloom,2));
+        vec3 wide=textureLod(bloom,vUV,1.0).rgb*0.5+(textureLod(bloom,vUV+quarter,2.0).rgb+textureLod(bloom,vUV-quarter,2.0).rgb+
+                  textureLod(bloom,vUV+vec2(quarter.x,-quarter.y),2.0).rgb+textureLod(bloom,vUV+vec2(-quarter.x,quarter.y),2.0).rgb)*0.125;
+        vec3 glow=(textureLod(bloom,vUV,0.0).rgb+0.35*wide)*(1.0-coverage)*0.8;
         if(hdr.x>0.5) above+=max(color.rgb+glow*vBloomKept-1.0,0.0)*hdr.w*vHdrRoom;
         color.rgb=1.0-(1.0-color.rgb)*exp(-glow*vBloomKept);
     }

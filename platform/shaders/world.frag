@@ -138,6 +138,17 @@ float spriteFacing=1.0;
 // What dynamic lights add to walls and flats on top of the static light, for
 // the saturation lift and highlight rolloff.
 vec3 addedLight=vec3(0);
+// How much of addedLight the illumination keeps under its cap (2.2 a channel). A bright warm
+// room is near the cap in red already: a shot's light got only partly in there, and the
+// rolloff, taking the whole of it back out, put red below where it stood before the shot.
+vec3 addedShown=vec3(0);
+// The part of addedLight that rolls off (flashRollsOff: the flashlight's). Under the tone curve
+// (Whole level lighting) that alone does: a shot's light in a bright room went through the
+// rolloff before the exposure and then the curve's shoulder after it, and the first took all
+// of it on texels already near 1, so guns stopped flashing in bright rooms. Without the curve
+// everything rolls off, as before.
+vec3 rolledLight=vec3(0);
+bool rollsOff(uint i) {return ((i<32u?flashRollsOff0>>i:flashRollsOff1>>(i-32u))&1u)!=0u;}
 // The light a shadow volume's redraw takes away (c.shadowSkip.y): the baked lamp's part of the
 // static light (surface_light.glsl) or the sun's part of the level.
 vec3 shadowRemoved=vec3(0);
@@ -400,7 +411,9 @@ void main() {
         if(weapon) weaponLight(relit,light,pulse,specular);
         if(!sprite) surfaceLight(lit,mapped,normal,screenNormal,glassy,blood,color,dp1,dp2,duv1,duv2,pulse,specular);
         illumination*=daylightShade;   // the sun's and sky's share on the bump detail (surface_light.glsl)
-        illumination=clamp(illumination+pulse+c.flashlightTint.rgb,vec3(0),vec3(2.2));
+        vec3 uncapped=illumination+pulse+c.flashlightTint.rgb;
+        illumination=clamp(uncapped,vec3(0),vec3(2.2));
+        addedShown=illumination-clamp(uncapped-addedLight,vec3(0),vec3(2.2));
         // A sprite in the redraw of what stands in a light's shadow volumes (c.shadowSkip.w): only
         // what is lit by its silhouette normals (a monster, a corpse, a barrel), nothing that glows
         // by itself, dissolves or is a spectre's fuzz. In a dynamic light's it is drawn again
@@ -442,7 +455,7 @@ void main() {
         // Like extralight, the classic beam brightens toward a little past
         // the palette's own colors and never beyond that.
         vec3 beam=beamLight*max(BEAM_CEILING-illumination,vec3(0));
-        illumination+=beam;addedLight+=beam;
+        illumination+=beam;addedLight+=beam;addedShown+=beam;rolledLight+=beam;
         // F4 "Hero light" (c.farFogRange.w, its ceiling): a help in the dark,
         // not a lamp. It sits at the eye, where no shadow it cast could be
         // seen, and lifts what is near and nearly black toward a low floor in
@@ -579,12 +592,17 @@ void main() {
     color.rgb+=lampSpill;
     if(c.effects.z==0.0&&!sprite&&any(greaterThan(addedLight,vec3(0)))) {
         // Dynamic light: the flashlight, shots, fireballs.
-        if(!blood) color.rgb+=addedLight*chroma*0.6*(1.0-emission);
+        vec3 lift=blood?vec3(0):addedLight*chroma*0.6*(1.0-emission);
+        color.rgb+=lift;
         // What it adds rolls off on bright texels, as an eye or camera keeps
         // a hotspot from blowing out: a bright wall in the beam no longer
         // jumps far ahead of the dark floor beside it. Dark texels and the
-        // light without it keep their values.
-        vec3 unlit=albedo*max(illumination-addedLight,vec3(emission))+lampSpill;
+        // light without it keep their values. Under the tone curve only the
+        // flashlight's share rolls off (rolledLight); the rest counts as
+        // the light without it.
+        bool curve=c.bake.x>1.5||c.phobos.w>1.0;   // as toneCurve's day below
+        vec3 share=curve?saturate(rolledLight/max(addedLight,vec3(1e-4))):vec3(1);
+        vec3 unlit=albedo*max(illumination-addedShown*share,vec3(emission))+lampSpill+lift*(1.0-share);
         float lit=dot(color.rgb,vec3(0.299,0.587,0.114)),base=dot(unlit,vec3(0.299,0.587,0.114));
         const float knee=0.45;
         if(lit>knee&&lit>base+0.001) {
@@ -678,7 +696,26 @@ void main() {
     }
     // Eye adaptation: the exposure the view has settled to, and the tone curve over it.
     // (In whole-level lighting always: its lamps reach past white whether the eye adapts or not.)
-    if(c.effects.z==0.0) color.rgb=toneCurve(color.rgb*c.fx.x,c.bake.x>1.5?2.0:c.phobos.w,c.shadowSkip.z>0.0);
+    // The weapon's own fullbright frame (its flash, MODE_WEAPON_FLASH) is never exposed below its
+    // paint: closed down for a sunlit room, the eye had halved the gun's own flash.
+    float exposure=c.fx.x;
+    if(sprite&&(vMode&(MODE_SCREEN|MODE_WEAPON_FLASH))==(MODE_SCREEN|MODE_WEAPON_FLASH)) exposure=max(exposure,1.0);
+    float day=c.bake.x>1.5?2.0:c.phobos.w;
+    if(c.effects.z==0.0) color.rgb=toneCurve(color.rgb*exposure,day,c.shadowSkip.z>0.0);
+    // Where the light itself burns out (a lit room seen from a dark one), the paint's dark texels
+    // burn with the bright ones: the shoulder alone took the bright paint to white and left the
+    // dark between it, and Doom's contrasty art stood rough in the glare. By the light on the
+    // texel, not its own value: by that the bright texels went first and the contrast grew.
+    // Lost Coast's clip flattened such places to white outright; this only leans that way.
+    if(c.effects.z==0.0&&day>1.0) {
+        // (From 1.2 to 3.2 and up to the fourth power a well-lit corridor seen from a dark room
+        // went white as the sun.)
+        float burn=smoothstep(2.2,4.5,dot(illumination,vec3(0.299,0.587,0.114))*exposure);
+        if(burn>0.0) {
+            vec3 under=min(color.rgb,vec3(1.0));
+            color.rgb=1.0-pow(1.0-under,vec3(1.0+burn))+(color.rgb-under);
+        }
+    }
     if(c.effects.z==32.0) color.rgb=1.0-color.rgb;
     // A distance fog as in Turok (DERPINFO farfog): everything fades to one
     // colour, which is also all there is behind it; past its far end nothing

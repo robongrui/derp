@@ -236,7 +236,7 @@ bool createPipelines() {
     SDL_GPUShader *skyBake=FRAGMENT_SHADER(sky_bake_frag,6,0,3),*skyCached=FRAGMENT_SHADER(sky_cached_frag,7,0,3),*skyCachedSurface=FRAGMENT_SHADER(sky_cached_surface_frag,7,0,3);
     SDL_GPUShader *particle=FRAGMENT_SHADER(particle_frag,0,0,1),*solid=FRAGMENT_SHADER(solid_frag,0,0,0);
     SDL_GPUShader *heat=FRAGMENT_SHADER(heat_frag,0,0,0),*glass=FRAGMENT_SHADER(glass_frag,4,1,4);
-    SDL_GPUShader *emission=FRAGMENT_SHADER(emission_frag,5,1,2),*blur=FRAGMENT_SHADER(blur_frag,1,0,1);
+    SDL_GPUShader *emission=FRAGMENT_SHADER(emission_frag,5,1,2),*blur=FRAGMENT_SHADER(blur_frag,2,0,1);
     SDL_GPUShader *mist=FRAGMENT_SHADER(mist_frag,2,0,1),*depth=FRAGMENT_SHADER(depth_frag,1,0,0);
     // The main view draws in sceneFormat (float for HDR in the scene); mirrors and probes stay 8-bit.
     const auto color=sceneFormat,mirror=SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,glow=SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;

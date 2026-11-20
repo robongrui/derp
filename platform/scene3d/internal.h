@@ -618,6 +618,7 @@ bool staticShadow(const StaticSample &sample,float z,ShadowLight &light);
 
 // lights.cpp
 void clearFlashPulses();
+bool ownFlashLit();
 void lightsShutdown();
 extern std::array<const mobj_t*,maxLights> lightSources;
 // Lights kept only for the fog glow (bake-only static lights): no surface,

@@ -151,7 +151,7 @@ std::vector<SpriteDraw> weaponDraws(const Uniforms &camera) {
                 flowLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,
                 seamLightAt(camera.eye[0],camera.eye[1],player->mo->subsector->sector,roomPulse(player->mo->subsector->sector,lighting(player->mo->subsector->sector)))));
         screenQuad(weapon,x/160-1,1-y/100,image.width/160.0f,image.height/100.0f,u0,0,u1,image.height,light,
-            MODE_SCREEN|MODE_SPRITE|fuzz|(relit?MODE_RELIT|(flipped?MODE_FLIPPED:0u):0u));
+            MODE_SCREEN|MODE_SPRITE|fuzz|(relit?MODE_RELIT|(flipped?MODE_FLIPPED:0u):0u)|(bright?MODE_WEAPON_FLASH:0u));
         // The weapon takes a restrained, capped share of the light around the
         // eye so nearby lamps tint it without washing out the artwork.
         if(!bright) {

@@ -55,7 +55,9 @@ struct LightBlocker { vec4 line,opening; };
 #define WEATHER_DRY_ICE 7.0
 #define WEATHER_FIRESTORM 8.0
 #define CAMERA_BLOCK { vec4 eye,right,forward,up,projection,effects,materials,flashlightTint,fog,map,water,sun,bake,fx,fx2,texFilter,outdoor,haze,mood,weather,phobos,weatherTint,fallColor,settleColor,bank,bankColor,climate,beam,beamAim,beamLight,farFog,farFogRange; vec4 flicker[4]; vec4 clearing[8]; vec4 rush; vec4 eyes; vec4 skyLayers; vec4 skyShape; vec4 skyExtent; vec4 skyWind; vec4 skyCloud; vec4 skyState; vec4 shadowSkip; }
-#define FLASH_BLOCK { uint flashCount,flashReserved0,flashReserved1,flashReserved2; Flash lights[63]; }
+// flashRollsOff: the lights whose added light rolls off on bright texels, a bit each (FlashSet in scene3d.h).
+// (Two uints, not a uvec2: std140 would align that to 8 and move it off the C++ layout.)
+#define FLASH_BLOCK { uint flashCount,flashRollsOff0,flashRollsOff1,flashReserved; Flash lights[63]; }
 // count, then four light indices, then padding (see doom3d::FogLights).
 #define FOG_BLOCK { uvec4 fogA,fogB; }
 // Fog haze: the cool grey under a neutral sky, leaning toward the sky's

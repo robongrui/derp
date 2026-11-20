@@ -85,7 +85,9 @@ static_assert(sizeof(Vertex)==68&&sizeof(Uniforms)==848,"Shader buffer layout");
 using Flash=doom_flash_t;
 // 63 lights keep the FlashSet uniform block under 4 KB and fit the 64-bit light masks.
 constexpr unsigned maxLights=63;
-struct FlashSet { unsigned count=0,reserved[3]={}; Flash lights[maxLights]={}; };
+// rollsOff: the lights whose added light rolls off on bright texels (the flashlight and its
+// bounce), a bit each; the rest (shots, fire, barrels) leave the bright end to the tone curve.
+struct FlashSet { unsigned count=0,rollsOff[2]={},reserved=0; Flash lights[maxLights]={}; };
 using LightBlocker=doom_light_blocker_t;
 static_assert(sizeof(Flash)==64&&sizeof(FlashSet)==4048&&sizeof(LightBlocker)==32,"Flash shader layout");
 struct FogLights { unsigned count=0,indices[4]={},padding[3]={}; };

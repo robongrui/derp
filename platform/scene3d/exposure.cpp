@@ -23,15 +23,15 @@ static Bounce bounce={},targetBounce={};
 // the darker, as eyes do. The light is read off the picture itself, as a
 // camera meters (gpu3d/frame.cpp's thumbnail of the 3D view): by the light
 // in the level alone a lamp-lit room measured nearly as bright as a yard,
-// when Doom's dark textures make it look a quarter of that. The easing rides
-// out a muzzle flash; the status bar is not in the view.
+// when Doom's dark textures make it look a quarter of that. The player's own
+// shots it holds still through (shotHold); the status bar is not in the view.
 // With whole-level lighting daylight is then drawn at twice the level's
 // light (daylightScale: the sky's light in the bounce bake, the sun, the sky
 // itself), and plain, in proportion to the sky a place sees: out there the
 // picture closes down to about what it is with the switch off, and from a
 // room the yard through the door burns out, over the tone curve's shoulder
 // (common.glsl's toneCurve). The eye does what a baked curve had to fake.
-static float adaptedLight=-1,adaptedBright=-1,exposure=1;static uint64_t adaptTime=0;static unsigned adaptLevelSerial;
+static float adaptedLight=-1,adaptedBright=-1,exposure=1;static uint64_t adaptTime=0,shotHold=0;static unsigned adaptLevelSerial;
 // The light the picture is exposed for, as the frame's meter reads it (gpuFrameLight: the
 // geometric mean of the picture's luminance), and how far the exposure follows it: seven
 // tenths of the way in stops, since an eye adapts but does not make every place equally
@@ -44,7 +44,7 @@ float daylightScale() {return settings.eyeAdaptation&&settings.lightModel==1&&se
 void updateExposure(Uniforms &camera) {
     if(!settings.eyeAdaptation||camera.effects[2]!=0||!players[displayplayer].mo) {adaptedLight=-1;exposure=1;return;}
     uint64_t now=SDL_GetTicksNS();
-    if(adaptLevelSerial!=r_levelserial) {adaptedLight=adaptedBright=-1;exposure=1;adaptLevelSerial=r_levelserial;}
+    if(adaptLevelSerial!=r_levelserial) {adaptedLight=adaptedBright=-1;exposure=1;shotHold=0;adaptLevelSerial=r_levelserial;}
     // The picture was drawn at the exposure of its frame; what it shows of the scene is that taken out again.
     float frame=gpuFrameLight();
     if(frame<0) {camera.fx[0]=exposure;return;}
@@ -53,8 +53,12 @@ void updateExposure(Uniforms &camera) {
     float shown=std::clamp(gpuFrameBright(),0.0f,0.995f);
     if(daylightScale()>1&&shown>0.7f)shown=0.7f-0.3f*std::log(1-(shown-0.7f)/0.3f);
     float bright=std::max(shown/std::max(exposure,0.1f),0.02f);
+    // The player's own shot is too brief for the eye: it holds still while the flash lights the
+    // view and a little after, the meter reading a frame or two behind. Following it, the eye
+    // closed for every shot and held closed under the chaingun, and the flash put itself out.
+    if(ownFlashLit()) shotHold=now+150000000ull;
     if(adaptedLight<0) {adaptedLight=light;adaptedBright=bright;}
-    else {
+    else if(now>=shotHold) {
         float dt=std::min((now-adaptTime)/1e9f,0.25f),tau=light>adaptedLight?0.35f:1.5f;
         adaptedLight+=(light-adaptedLight)*(1-std::exp(-dt/tau));
         adaptedBright+=(bright-adaptedBright)*(1-std::exp(-dt/(bright>adaptedBright?0.35f:1.5f)));

@@ -84,6 +84,8 @@ static SDL_GPUTexture *meterTexture=nullptr;
 static SDL_GPUTransferBuffer *meterBuffer=nullptr;
 static SDL_GPUFence *meterFence=nullptr;
 static float meterLight=-1,meterBright=-1;
+static std::vector<SDL_GPUTexture*> meterSteps;   // the halving steps down to the thumbnail (meterQueue)
+static int meterStepsW=0,meterStepsH=0;
 static void meterRead() {
     if(!meterFence||!SDL_QueryGPUFence(device,meterFence))return;
     SDL_ReleaseGPUFence(device,meterFence);meterFence=nullptr;
@@ -112,11 +114,35 @@ static bool meterQueue(SDL_GPUCommandBuffer *command) {
         meterBuffer=SDL_CreateGPUTransferBuffer(device,&info);
     }
     if(!meterTexture||!meterBuffer)return false;
-    SDL_GPUBlitInfo blit={};
-    blit.source.texture=colorTexture;blit.source.w=(Uint32)width;blit.source.h=(Uint32)height;
-    blit.destination.texture=meterTexture;blit.destination.w=meterWidth;blit.destination.h=meterHeight;
-    blit.load_op=SDL_GPU_LOADOP_DONT_CARE;blit.filter=SDL_GPU_FILTER_LINEAR;
-    SDL_BlitGPUTexture(command,&blit);
+    // The centre of the view (nine tenths across, 85 hundredths down, as Source meters), halved
+    // step by step: a linear blit at half size averages four texels, so every pixel counts. In one
+    // blit to 32x18 it read four pixels of every 60x60, and a bright edge passing those few
+    // jolted the exposure.
+    int x0=width/20,y0=height*3/40,rw=std::max(1,width-2*x0),rh=std::max(1,height-2*y0);
+    if(meterStepsW!=rw||meterStepsH!=rh) {
+        for(SDL_GPUTexture *&t:meterSteps)release(t);
+        meterSteps.clear();meterStepsW=rw;meterStepsH=rh;
+        for(int w=rw,h=rh;w>2*meterWidth||h>2*meterHeight;) {
+            w=std::max(meterWidth,(w+1)/2);h=std::max(meterHeight,(h+1)/2);
+            SDL_GPUTexture *step=createTexture(sceneFormat,w,h,SDL_GPU_TEXTUREUSAGE_COLOR_TARGET|SDL_GPU_TEXTUREUSAGE_SAMPLER);
+            if(!step)break;
+            meterSteps.push_back(step);
+        }
+    }
+    SDL_GPUBlitRegion from={};from.texture=colorTexture;from.x=(Uint32)x0;from.y=(Uint32)y0;from.w=(Uint32)rw;from.h=(Uint32)rh;
+    auto shrink=[&](SDL_GPUTexture *to,int w,int h) {
+        SDL_GPUBlitInfo blit={};
+        blit.source=from;
+        blit.destination.texture=to;blit.destination.w=(Uint32)w;blit.destination.h=(Uint32)h;
+        blit.load_op=SDL_GPU_LOADOP_DONT_CARE;blit.filter=SDL_GPU_FILTER_LINEAR;
+        SDL_BlitGPUTexture(command,&blit);
+        from={};from.texture=to;from.w=(Uint32)w;from.h=(Uint32)h;
+    };
+    for(int i=0,w=rw,h=rh;i<(int)meterSteps.size();++i) {
+        w=std::max(meterWidth,(w+1)/2);h=std::max(meterHeight,(h+1)/2);
+        shrink(meterSteps[i],w,h);
+    }
+    shrink(meterTexture,meterWidth,meterHeight);
     SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(command);
     SDL_GPUTextureRegion source={};source.texture=meterTexture;source.w=meterWidth;source.h=meterHeight;source.d=1;
     SDL_GPUTextureTransferInfo target={meterBuffer,0,meterWidth,meterHeight};
@@ -592,7 +618,7 @@ static void drawMainView(SDL_GPUCommandBuffer *&render,const FrameView &view,con
     SDL_EndGPURenderPass(pass);
     pieceDone(render,I_RENDER3D_PIECE_OVERLAYS);
 }
-// Bloom: emissive texels drawn at half resolution, then blurred.
+// Bloom: emissive texels drawn at half resolution, with what the picture burns out, then blurred.
 static void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const Uniforms &camera,const std::vector<SpriteDraw> &weapons) {
     int bw=std::max(1,width/2),bh=std::max(1,height/2);
     float sx=(float)bw/width,sy=(float)bh/height;
@@ -645,6 +671,9 @@ static void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const U
     // 0.1 ms whatever it drew, and the blur 0.44 ms of the bloom's 0.8.)
     int gw,gh;bloomSize(width,height,&gw,&gh);
     float across=1.0f/((float)BLOOM_ROWS*bw/bh),down=1.0f/BLOOM_ROWS;
+    // What the exposed picture burns out over the tone curve's shoulder glows as well (blur.frag),
+    // under the curve only: without it (Classic) Doom's full-bright rooms sit at white.
+    const float burnout=camera.bake[0]>1.5f||camera.phobos[3]>1?0.6f:0.0f;
 #ifdef DOOM_DEVTOOLS
     const bool separate=abSkips(4);   // DERP_AB=blur2d: every other frame the four passes, to time the two against them
 #else
@@ -656,9 +685,11 @@ static void drawBloom(SDL_GPUCommandBuffer *render,const FrameView &view,const U
         blur.texture=toScratch?bloomScratch:bloomTexture;blur.load_op=SDL_GPU_LOADOP_DONT_CARE;blur.store_op=SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass *blurPass=SDL_BeginGPURenderPass(render,&blur,1,nullptr);
         SDL_BindGPUGraphicsPipeline(blurPass,blurPipeline);
-        SDL_GPUTextureSamplerBinding source={step==0?emissionTexture:toScratch?bloomTexture:bloomScratch,linearClamp};
-        SDL_BindGPUFragmentSamplers(blurPass,0,&source,1);
+        // The exposed picture rides along on every pass (the shrink reads it: burnout below).
+        SDL_GPUTextureSamplerBinding source[]={{step==0?emissionTexture:toScratch?bloomTexture:bloomScratch,linearClamp},{colorTexture,linearClamp}};
+        SDL_BindGPUFragmentSamplers(blurPass,0,source,2);
         float direction[4]={step&&(toScratch||!separate)?across:0,step&&(!toScratch||!separate)?down:0,step?0:1.0f/gw,step?0:1.0f/gh};
+        if(step==0)direction[0]=burnout;
         SDL_PushGPUFragmentUniformData(render,0,direction,sizeof(direction));
         SDL_DrawGPUPrimitives(blurPass,3,1,0,0);
         SDL_EndGPURenderPass(blurPass);

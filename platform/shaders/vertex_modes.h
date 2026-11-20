@@ -50,6 +50,9 @@
 // Monster sprites only (not soft ones, whose sector reaches this bit): a firing frame (firingFlash in indexed.glsl).
 #define MODE_RIM             (1u<<21) // a lit sprite (not soft, wound paint or pickup: their bits 14 to 21 are taken): the edges that face a light are picked out (explosions.cpp's Flashbulb)
 #define MODE_FIRING          (1u<<23)
+// With MODE_SCREEN: a weapon frame Doom draws fullbright (its flash), which the eye's exposure never
+// dims below its own paint (world.frag; scene3d/weapon.cpp).
+#define MODE_WEAPON_FLASH    (1u<<23)
 // Monster sprites only (not soft ones): Phobos' rime on a body left in vacuum, 0-255 (decompression.cpp).
 #define MODE_FROST_SHIFT     24
 

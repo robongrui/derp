@@ -25,7 +25,25 @@ bool adaptiveUncapped=false;   // Adaptive: running uncapped since frames kept r
 int late=0,early=0,counted=0;  // Adaptive: frames over the refresh, frames well under it, of those counted
 uint64_t lastFrame=0;          // when the last frame started (ns)
 uint64_t nextFrame=0;          // the limit: when the next frame may start (ns), 0 none set
-bool supports(SDL_GPUPresentMode mode) {return SDL_WindowSupportsGPUPresentMode(device,gameWindow,mode);}
+// The driver's answers, asked once per device, window and display. On Vulkan each question
+// re-reads the surface's capabilities, formats and present modes: asked every frame (Fast,
+// Adaptive uncapped, Off) it cost 2.2 ms a frame on an RTX 2080 and stalled 50-60 ms every
+// 2-8 s, hitches with nothing else going on (2026-11-20).
+bool supports(SDL_GPUPresentMode mode) {
+    static SDL_GPUDevice *askedDevice=nullptr;
+    static SDL_Window *askedWindow=nullptr;
+    static SDL_DisplayID askedDisplay=0;
+    static signed char known[3]={-1,-1,-1};   // per present mode: -1 not asked yet, else the answer
+    SDL_DisplayID display=SDL_GetDisplayForWindow(gameWindow);
+    if(device!=askedDevice||gameWindow!=askedWindow||display!=askedDisplay) {
+        askedDevice=device;askedWindow=gameWindow;askedDisplay=display;
+        std::fill(known,known+3,(signed char)-1);
+    }
+    int m=(int)mode;
+    if(m<0||m>=3)return SDL_WindowSupportsGPUPresentMode(device,gameWindow,mode);
+    if(known[m]<0)known[m]=SDL_WindowSupportsGPUPresentMode(device,gameWindow,mode)?1:0;
+    return known[m]==1;
+}
 // The display's refresh period (ns), 60 Hz where it doesn't say.
 uint64_t refreshPeriod() {
     const SDL_DisplayMode *mode=SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(gameWindow));

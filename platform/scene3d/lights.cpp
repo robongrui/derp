@@ -760,6 +760,9 @@ std::array<float,maxLights> lightSliceCost={}; // Profiling: blockers a pixel te
 void buildLightWords() {
     static std::vector<uint16_t> indices(65535);
     gpuFlashes=flashes;lightWords.clear();
+    gpuFlashes.rollsOff[0]=gpuFlashes.rollsOff[1]=0;
+    for(unsigned i=0;i<flashes.count;++i)
+        if(lightKinds[i]==I_RENDER3D_LIGHT_FLASHLIGHT)gpuFlashes.rollsOff[i/32]|=1u<<(i%32);
     for(unsigned i=0;i<flashes.count;++i) {
         const Flash &f=flashes.lights[i];Flash &g=gpuFlashes.lights[i];
         const LightBlocker *own=lightBlockers.data()+f.first;
@@ -801,6 +804,13 @@ void buildLightWords() {
     if(lightWords.empty())lightWords.push_back({});
 }
 void clearFlashPulses() {flashPulses.clear();}
+// The view's own shot still lighting the scene, for the eye to hold still through (exposure.cpp).
+bool ownFlashLit() {
+    const mobj_t *own=players[displayplayer].mo;
+    if(!own) return false;
+    for(const auto &p:flashPulses) if(p.source==own&&doom_flash_fade(leveltime-p.tic,0)>0) return true;
+    return false;
+}
 void lightsShutdown() {
     flashPulses.clear();glowColors.clear();burstBarrels.clear();staticFog.clear();doorPortals.clear();roomPulseShutdown();
     blockerCache.clear();lightCache={};sectorSeen.clear();sectorChanged.clear();
