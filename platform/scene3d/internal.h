@@ -2106,6 +2106,8 @@ float starVisibility();
 float daylightScale();
 void exposureShutdown();
 void updateExposure(Uniforms &camera);
+// The exposure the eye has settled to (1 without eye adaptation), as last set for the shaders.
+float eyeExposure();
 void updateFlashlightTint(Uniforms &camera);
 bool flashlightBounce(float position[3],float normal[2],std::array<float,3> &color,float &strength);
 

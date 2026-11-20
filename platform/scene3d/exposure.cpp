@@ -40,6 +40,7 @@ static float adaptedLight=-1,adaptedBright=-1,exposure=1;static uint64_t adaptTi
 constexpr float exposureLight=0.15f,exposureFollows=0.7f;
 constexpr float exposureLeast=0.4f,exposureMost=1.7f;   // the dark stays dark: no more than this is made up for
 constexpr float exposureBright=0.8f;   // and the bright end of the picture is held to this (updateExposure)
+float eyeExposure() {return exposure;}
 float daylightScale() {return settings.eyeAdaptation&&settings.lightModel==1&&settings.skyLight&&settings.bounce?2.0f:1.0f;}
 void updateExposure(Uniforms &camera) {
     if(!settings.eyeAdaptation||camera.effects[2]!=0||!players[displayplayer].mo) {adaptedLight=-1;exposure=1;return;}

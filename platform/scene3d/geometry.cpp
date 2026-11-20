@@ -992,6 +992,11 @@ static void addThing(mobj_t *thing,int i,const Uniforms &camera,float fraction,c
     // A barrel's slime top glows as the nukage on the floor does (its mask: spriteSlime, images.cpp).
     if(settings.emissive&&Game_ThingRole(thing->type)==GAME_THING_BARREL)mode|=MODE_GLOWING_EYES;
     if(!bright)light=sunLightAt(x,y,&sectors[i],flowLightAt(x,y,&sectors[i],seamLightAt(x,y,&sectors[i],light)));
+    // An effect Doom draws fullbright (an imp's fireball, plasma, a puff, an explosion) is its own
+    // light: the eye closing down for a bright room never dims it below its paint (as the
+    // weapon's flash, MODE_WEAPON_FLASH). The shader multiplies by the exposure; this takes it out.
+    if(bright&&((thing->flags&MF_MISSILE)||((thing->flags&MF_NOBLOCKMAP)&&(thing->flags&MF_NOGRAVITY))))
+        light/=std::min(eyeExposure(),1.0f);
     // MODE_SOFT: effect sprites (shots, puffs, fogs) dither out at floors
     // and ceilings and draw in front of walls within half their width.
     bool soft=settings.softSprites&&((thing->flags&MF_MISSILE)||((thing->flags&MF_NOBLOCKMAP)&&(thing->flags&MF_NOGRAVITY)));
