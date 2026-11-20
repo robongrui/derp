@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DERP
+Comment=DOOM Engine Remaster Project
+Exec=play-derp
+Icon=io.github.robongrui.DERP
+Terminal=false
+Categories=Game;
