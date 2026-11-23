@@ -58,7 +58,9 @@ patch_t*		sttminus;
 
 void STlib_init(void)
 {
-    sttminus = (patch_t *) W_CacheLumpName("STTMINUS", PU_STATIC);
+    // DOOM v1.0-v1.2 IWADs have no STTMINUS: draw no minus sign there.
+    int lump = W_CheckNumForName("STTMINUS");
+    sttminus = lump >= 0 ? (patch_t *) W_CacheLumpNum(lump, PU_STATIC) : NULL;
 }
 
 
@@ -144,7 +146,7 @@ STlib_drawNum
     }
 
     // draw a minus sign if necessary
-    if (neg)
+    if (neg && sttminus)
 	V_DrawPatch(x - 8, n->y, FG, sttminus);
 }
 
